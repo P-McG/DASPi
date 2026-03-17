@@ -1,0 +1,36 @@
+[binaries]
+c = 'aarch64-linux-gnu-gcc'
+cpp = 'aarch64-linux-gnu-g++'
+ar = 'aarch64-linux-gnu-ar'
+strip = 'aarch64-linux-gnu-strip'
+pkgconfig = 'pkg-config'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'aarch64'
+cpu = 'aarch64'
+endian = 'little'
+
+[properties]
+sys_root = '/home/pmcgrath/aperturecomputemodule-sysroot'
+pkg_config_libdir = [
+  '/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/aarch64-linux-gnu/pkgconfig',
+  '/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/pkgconfig',
+  '/home/pmcgrath/aperturecomputemodule-sysroot/usr/share/pkgconfig']
+
+[built-in options]
+c_args = ['--sysroot=/home/pmcgrath/aperturecomputemodule-sysroot']
+cpp_args = ['--sysroot=/home/pmcgrath/aperturecomputemodule-sysroot']
+c_link_args = [
+  '--sysroot=/home/pmcgrath/aperturecomputemodule-sysroot',
+  '-L/home/pmcgrath/aperturecomputemodule-sysroot/lib/aarch64-linux-gnu',
+  '-L/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/aperturecomputemodule-sysroot/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/aarch64-linux-gnu']
+
+cpp_link_args = [
+  '--sysroot=/home/pmcgrath/aperturecomputemodule-sysroot',
+  '-L/home/pmcgrath/aperturecomputemodule-sysroot/lib/aarch64-linux-gnu',
+  '-L/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/aperturecomputemodule-sysroot/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/aarch64-linux-gnu']
