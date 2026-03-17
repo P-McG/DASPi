@@ -34,7 +34,7 @@ rsync -a --delete $USER@computemodule000:/opt/      ~/computemodule-sysroot/opt/
 rsync -a --delete $USER@computemodule000:/etc/ld.so.conf* ~/computemodule-sysroot/etc/
 
 ## Cross-compiling aperturecomputemodule
-cd ~/DASPi/software
+cd ~/DASPi/src
 rm -rf build
 meson setup build-aperturecomputemodule \
   --cross-file aperturecomputemodule/cross-aperturecomputemodule.txt \
@@ -42,7 +42,7 @@ meson setup build-aperturecomputemodule \
   -Dbuild_computemodule=false
 meson compile -C build-aperturecomputemodule
 cp -r ./build-aperturecomputemodule/aperturecomputemodule ./bin-aperturecomputemodule
-~/DASPi/software/distribute_and_run_aperturecomputemodule_code.sh  
+~/DASPi/src/distribute_and_run_aperturecomputemodule_code.sh  
 
 ninja -C build-aperture
 
@@ -53,7 +53,7 @@ meson setup build-computemodule \
   -Dbuild_computemodule=true
 meson compile -C build-computemodule
 cp -r ./build-computemodule/computemodule ./bin-computemodule
-~/DASPi/software/distribute_and_run_computemodule_code.sh
+~/DASPi/src/distribute_and_run_computemodule_code.sh
 ## Deployment
 To copy output from the computemodule
 scp computemodule000:~/DASPi/src/computemodule/bin/output-10.0.2.3_0.bayer ~/output-10.0.2.3_0.bayer
