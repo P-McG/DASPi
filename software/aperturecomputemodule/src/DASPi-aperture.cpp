@@ -193,28 +193,53 @@ void Aperture::Stream(){
  * A Camera produces a CameraConfigration based on a set of intended
  * roles for each Stream the application requires.
  */
-void Aperture::CameraConfiguration(){
+void Aperture::CameraConfiguration() {
+    log_verbose("[Aperture::CameraConfiguration]");
 
-	log_verbose("[Aperture::CameraConfiguration]");
-	config_ = camera_->generateConfiguration( { libcamera::StreamRole::Raw } );
-	
-	std::string cameraId = camera_->id(); // e.g., "imx296 10-001a"
-    std::string boardSerial = GetBoardSerial(); // Pi's unique CPU serial
-    std::string cameraUniqueId_ = boardSerial + "_" + cameraId;
-	std::cout << "Board serial : " << boardSerial << "\n";
-    std::cout << "Camera ID    : " << cameraId << "\n";
+    config_ = camera_->generateConfiguration({ libcamera::StreamRole::Raw });
+    if (!config_) {
+        throw std::runtime_error("camera_->generateConfiguration returned null");
+    }
+
+    boardSerial_ = GetBoardSerial();
+
+    const std::string libcameraId = camera_->id();
+    const std::string cameraBusAddr = ExtractCameraBusAddr(libcameraId);
+    cameraId_ = ParseBusAndAddressCameraId(libcameraId);
+    cameraUniqueId_ = boardSerial_ + "_" + cameraBusAddr;
+
+    std::cout << "Board serial : " << boardSerial_ << "\n";
+    std::cout << "Camera ID    : " << cameraId_ << "\n";
     std::cout << "Unique ID    : " << cameraUniqueId_ << "\n";
 }
 
-void Aperture::StreamConfiguration(unsigned int index){
-    log_verbose("[Aperture::StreamConfiguration]");
-	// Modify the viewfinder configuration
-	libcamera::StreamConfiguration &streamConfig = config_->at(index);
-	streamConfig.size.width = sensorWidthValue_;  // Desired width
-	streamConfig.size.height = sensorHeightValue_; // Desired height
-	streamConfig.pixelFormat = codec_; // Desired pixel format
-	streamConfig.bufferCount = numBuffers_;
+void Aperture::StreamConfiguration(unsigned int index) {
+    log_verbose("[Aperture::StreamConfiguration] enter");
+    std::cout << "[StreamConfiguration] index=" << index << std::endl;
+
+    if (!config_) {
+        throw std::runtime_error("config_ is null in StreamConfiguration");
+    }
+    if (index >= config_->size()) {
+        throw std::runtime_error("StreamConfiguration index out of range");
+    }
+
+    libcamera::StreamConfiguration &streamConfig = config_->at(index);
+    streamConfig.size.width = sensorWidthValue_;
+    streamConfig.size.height = sensorHeightValue_;
+    streamConfig.pixelFormat = codec_;
+    streamConfig.bufferCount = numBuffers_;
 }
+
+//void Aperture::StreamConfiguration(unsigned int index){
+    //log_verbose("[Aperture::StreamConfiguration]");
+	// Modify the viewfinder configuration
+	//libcamera::StreamConfiguration &streamConfig = config_->at(index);
+	//streamConfig.size.width = sensorWidthValue_;  // Desired width
+	//streamConfig.size.height = sensorHeightValue_; // Desired height
+	//streamConfig.pixelFormat = codec_; // Desired pixel format
+	//streamConfig.bufferCount = numBuffers_;
+//}
 
 // StreamConfigurationValidation
 /*
@@ -504,8 +529,8 @@ void Aperture::ProcessRequestImpl(libcamera::Request *request)
     const uint64_t completedFrameId = request->sequence();
 
     GainMsg gainMsg{};
-    gainMsg.camera_id = static_cast<uint32_t>(cameraId_);
-    gainMsg.frame_id = static_cast<uint32_t>(completedFrameId);
+    gainMsg.camera_id = cameraId_;
+    gainMsg.frame_id = completedFrameId;
     gainMsg.r_gain = 1.0f;
     gainMsg.b_gain = 1.0f;
     gainMsg.exposure_us = 0.0f;
@@ -570,27 +595,52 @@ void Aperture::ProcessRequestImpl(libcamera::Request *request)
     }
 }
 
+
 void Aperture::PostProcessingThread()
 {
-    for (;;) {
-        PostProcessItem item{};
+    while (true) {
+        PostProcessItem item;
 
         {
             std::unique_lock<std::mutex> lock(postProcessingQueueMutex_);
+
             postProcessingQueueCV_.wait(lock, [this] {
                 return stopPostProcessing_ || !postProcessingQueue_.empty();
             });
 
-            if (stopPostProcessing_ && postProcessingQueue_.empty())
+            if (stopPostProcessing_ && postProcessingQueue_.empty()) {
                 return;
+            }
 
-            item = postProcessingQueue_.front();
+            item = std::move(postProcessingQueue_.front());
             postProcessingQueue_.pop();
         }
 
-        FrameBufferToUDP(item.frameNumber, item.buffer, item.gainMsg);
+        FrameBufferToUDP(item.frameNumber, item.buffer);
     }
 }
+
+//void Aperture::PostProcessingThread()
+//{
+    //for (;;) {
+        //PostProcessItem item{};
+
+        //{
+            //std::unique_lock<std::mutex> lock(postProcessingQueueMutex_);
+            //postProcessingQueueCV_.wait(lock, [this] {
+                //return stopPostProcessing_ || !postProcessingQueue_.empty();
+            //});
+
+            //if (stopPostProcessing_ && postProcessingQueue_.empty())
+                //return;
+
+            //item = postProcessingQueue_.front();
+            //postProcessingQueue_.pop();
+        //}
+
+        //FrameBufferToUDP(item.frameNumber, item.buffer, item.gainMsg);
+    //}
+//}
 // ProcessRequest
 /*
  * When a request has completed, it is populated with a metadata control
@@ -832,13 +882,11 @@ void Aperture::FrameBufferToUDP(const uint64_t frameNumber, const libcamera::Fra
 		exit(1);
 	}
 	
-
-	
-	FrameBufferTransformation(mappedDataSpan, gainMsg, sfdp, chunkThreads_);
+	FrameBufferTransformation(mappedDataSpan, gainMsg_, sfdp, chunkThreads_);
 	
 	udpSrv_.SubmitFrameOutput(
 		frameNumber,
-		udpSrv_.CreateFramePacket(gainMsg, sfdp.TakeContiguousMemory())
+		udpSrv_.CreateFramePacket(gainMsg_, sfdp.TakeContiguousMemory())
 	);
 
 	if (munmap(mappedData, plane.length) != 0) {
@@ -980,59 +1028,104 @@ void Aperture::StopUDPSender() {
 		udpSenderThread_.join();
 }
 
-void Aperture::StartPostProcessingThreads(int numThreads) {
-	log_verbose("[StartPostProcessingThreads]");
-    for (int i = 0; i < numThreads; ++i) {
-		std::cout << "[PostThread] Thread " << i << " started." << std::endl;
+void Aperture::StartPostProcessingThreads(int numThreads)
+{
+    stopPostProcessing_ = false;
 
-        postProcessingThreads_.emplace_back([this, i]() {
-            pthread_setname_np(pthread_self(), ("PostProc" + std::to_string(i)).c_str());
-			cpu_set_t cpuset;
-			CPU_ZERO(&cpuset);
-			//CPU_SET(0, &cpuset);  // Pin to CPU core 2
-			CPU_SET(0 + (i % 4), &cpuset);  // Spread across cores 1–3
-			//pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
-			pthread_setname_np(pthread_self(), "Post");
-            while (running_) {
-                std::function<void()> job;
+    for (int i = 0; i < numThreads; ++i) {
+        postProcessingThreads_.emplace_back([this]
+        {
+            while (true) {
+                PostProcessItem item;
 
                 {
-                    std::unique_lock lock(postProcessingQueueMutex_);
-                    postProcessingQueueCV_.wait(lock, [&]() {
-                        return !postProcessingQueue_.empty() || !running_;
+                    std::unique_lock<std::mutex> lock(postProcessingQueueMutex_);
+
+                    postProcessingQueueCV_.wait(lock, [this] {
+                        return stopPostProcessing_ || !postProcessingQueue_.empty();
                     });
 
-                    if (!running_ && postProcessingQueue_.empty())
+                    if (stopPostProcessing_ && postProcessingQueue_.empty()) {
                         return;
+                    }
 
-                    job = std::move(postProcessingQueue_.front());
+                    item = std::move(postProcessingQueue_.front());
                     postProcessingQueue_.pop();
                 }
-				try {
-					std::cout << "[PostThread] Executing job..." << std::endl;
-					job();
-					std::cout << "[PostThread] Job completed" << std::endl;
-				} catch (const std::exception& e) {
-					std::cerr << "[PostThread] Exception in job: " << e.what() << std::endl;
-				} catch (...) {
-					std::cerr << "[PostThread] Unknown exception in job!" << std::endl;
-				}
+
+                FrameBufferToUDP(item.frameNumber, item.buffer);
             }
         });
     }
 }
 
-void Aperture::StopPostProcessingThreads() {
-	log_verbose("[Aperture::StopPostProcessingThreads]");
-    {
-        std::lock_guard lock(postProcessingQueueMutex_);
-        running_ = false;
-    }
+//void Aperture::StartPostProcessingThreads(int numThreads) {
+	//log_verbose("[StartPostProcessingThreads]");
+    //for (int i = 0; i < numThreads; ++i) {
+		//std::cout << "[PostThread] Thread " << i << " started." << std::endl;
+
+        //postProcessingThreads_.emplace_back([this, i]() {
+            //pthread_setname_np(pthread_self(), ("PostProc" + std::to_string(i)).c_str());
+			//cpu_set_t cpuset;
+			//CPU_ZERO(&cpuset);
+			////CPU_SET(0, &cpuset);  // Pin to CPU core 2
+			//CPU_SET(0 + (i % 4), &cpuset);  // Spread across cores 1–3
+			////pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+			//pthread_setname_np(pthread_self(), "Post");
+            //while (running_) {
+                //std::function<void()> job;
+
+                //{
+                    //std::unique_lock lock(postProcessingQueueMutex_);
+                    //postProcessingQueueCV_.wait(lock, [&]() {
+                        //return !postProcessingQueue_.empty() || !running_;
+                    //});
+
+                    //if (!running_ && postProcessingQueue_.empty())
+                        //return;
+
+                    //job = std::move(postProcessingQueue_.front());
+                    //postProcessingQueue_.pop();
+                //}
+				//try {
+					//std::cout << "[PostThread] Executing job..." << std::endl;
+					//job();
+					//std::cout << "[PostThread] Job completed" << std::endl;
+				//} catch (const std::exception& e) {
+					//std::cerr << "[PostThread] Exception in job: " << e.what() << std::endl;
+				//} catch (...) {
+					//std::cerr << "[PostThread] Unknown exception in job!" << std::endl;
+				//}
+            //}
+        //});
+    //}
+//}
+
+void Aperture::StopPostProcessingThreads()
+{
+    stopPostProcessing_ = true;
     postProcessingQueueCV_.notify_all();
 
-    for (auto& t : postProcessingThreads_)
-        if (t.joinable()) t.join();
+    for (auto& t : postProcessingThreads_) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+
+    postProcessingThreads_.clear();
 }
+
+//void Aperture::StopPostProcessingThreads() {
+	//log_verbose("[Aperture::StopPostProcessingThreads]");
+    //{
+        //std::lock_guard lock(postProcessingQueueMutex_);
+        //running_ = false;
+    //}
+    //postProcessingQueueCV_.notify_all();
+
+    //for (auto& t : postProcessingThreads_)
+        //if (t.joinable()) t.join();
+//}
 
 /// Apply white balance gains to a RAW16 Bayer BGGR mosaic in-place.
 /// Layout BGGR:
@@ -1240,3 +1333,66 @@ std::string Aperture::GetBoardSerial()
     return "UNKNOWN";
 }
 
+std::string Aperture::ExtractCameraBusAddr(const std::string& libcameraId)
+{
+    // Format 1:
+    //   "imx296 10-001a"
+    {
+        std::istringstream iss(libcameraId);
+        std::string first;
+        std::string second;
+        if ((iss >> first) && (iss >> second)) {
+            if (second.find('-') != std::string::npos) {
+                return second; // e.g. "10-001a"
+            }
+        }
+    }
+
+    // Format 2:
+    //   "/base/soc/i2c0mux/i2c@1/imx296@1a"
+    {
+        const auto lastSlash = libcameraId.rfind('/');
+        if (lastSlash == std::string::npos) {
+            throw std::runtime_error("Unexpected camera id format: " + libcameraId);
+        }
+
+        const std::string tail = libcameraId.substr(lastSlash + 1); // "imx296@1a"
+        const auto atTail = tail.rfind('@');
+        if (atTail == std::string::npos || atTail + 1 >= tail.size()) {
+            throw std::runtime_error("Missing sensor address in camera id: " + libcameraId);
+        }
+        const std::string addrPart = tail.substr(atTail + 1); // "1a"
+
+        const std::string prefix = libcameraId.substr(0, lastSlash);
+        const auto prevSlash = prefix.rfind('/');
+        const std::string parent = (prevSlash == std::string::npos)
+            ? prefix
+            : prefix.substr(prevSlash + 1);                   // "i2c@1"
+
+        const auto atParent = parent.rfind('@');
+        if (atParent == std::string::npos || atParent + 1 >= parent.size()) {
+            throw std::runtime_error("Missing bus id in camera id: " + libcameraId);
+        }
+        const std::string busPart = parent.substr(atParent + 1); // "1"
+
+        return busPart + "-" + addrPart; // "1-1a"
+    }
+}
+
+uint32_t Aperture::ParseBusAndAddressCameraId(const std::string& libcameraId)
+{
+    const std::string busAddr = ExtractCameraBusAddr(libcameraId);
+
+    const auto dashPos = busAddr.find('-');
+    if (dashPos == std::string::npos) {
+        throw std::runtime_error("Camera bus/address missing '-': " + busAddr);
+    }
+
+    const std::string busPart  = busAddr.substr(0, dashPos);
+    const std::string addrPart = busAddr.substr(dashPos + 1);
+
+    const uint32_t bus  = static_cast<uint32_t>(std::stoul(busPart, nullptr, 10));
+    const uint32_t addr = static_cast<uint32_t>(std::stoul(addrPart, nullptr, 16));
+
+    return (bus << 16) | addr;
+}

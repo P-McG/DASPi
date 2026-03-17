@@ -8,13 +8,29 @@ pkgconfig = 'pkg-config'
 [host_machine]
 system = 'linux'
 cpu_family = 'aarch64'
-cpu = 'cortex-a53'
+cpu = 'aarch64'
 endian = 'little'
 
 [properties]
-sys_root = '$SYSROOT'
+sys_root = '/home/pmcgrath/aperturecomputemodule-sysroot'
+pkg_config_libdir = [
+  '/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/aarch64-linux-gnu/pkgconfig',
+  '/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/pkgconfig',
+  '/home/pmcgrath/aperturecomputemodule-sysroot/usr/share/pkgconfig']
 
 [built-in options]
-c_args = ['-O3', '-march=armv8-a+simd', '-fopenmp']
-cpp_args = ['-O3', '-march=armv8-a+simd', '-fopenmp']
-pkg_config_path = ['$SYSROOT/usr/lib/aarch64-linux-gnu/pkgconfig', '$SYSROOT/usr/share/pkgconfig']
+c_args = ['--sysroot=/home/pmcgrath/aperturecomputemodule-sysroot']
+cpp_args = ['--sysroot=/home/pmcgrath/aperturecomputemodule-sysroot']
+c_link_args = [
+  '--sysroot=/home/pmcgrath/aperturecomputemodule-sysroot',
+  '-L/home/pmcgrath/aperturecomputemodule-sysroot/lib/aarch64-linux-gnu',
+  '-L/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/aperturecomputemodule-sysroot/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/aarch64-linux-gnu']
+
+cpp_link_args = [
+  '--sysroot=/home/pmcgrath/aperturecomputemodule-sysroot',
+  '-L/home/pmcgrath/aperturecomputemodule-sysroot/lib/aarch64-linux-gnu',
+  '-L/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/aperturecomputemodule-sysroot/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/aperturecomputemodule-sysroot/usr/lib/aarch64-linux-gnu']

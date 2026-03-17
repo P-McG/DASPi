@@ -8,13 +8,15 @@ pkgconfig = 'pkg-config'
 [host_machine]
 system = 'linux'
 cpu_family = 'aarch64'
-cpu = 'cortex-a76'
+cpu = 'cortex-a53'
 endian = 'little'
 
 [properties]
-sys_root = '$SYSROOT'
+sys_root = '/home/pmcgrath/computemodule-sysroot'
 
 [built-in options]
-c_args = ['-O3', '-march=armv8-a+simd', '-fopenmp']
-cpp_args = ['-O3', '-march=armv8-a+simd', '-fopenmp']
-pkg_config_path = ['$SYSROOT/usr/lib/aarch64-linux-gnu/pkgconfig', '$SYSROOT/usr/share/pkgconfig']
+c_args = ['-O3', '-march=armv8-a+simd', '-fopenmp', '--sysroot=/home/pmcgrath/computemodule-sysroot']
+cpp_args = ['-O3', '-march=armv8-a+simd', '-fopenmp', '--sysroot=/home/pmcgrath/computemodule-sysroot']
+c_link_args = ['--sysroot=/home/pmcgrath/computemodule-sysroot']
+cpp_link_args = ['--sysroot=/home/pmcgrath/computemodule-sysroot']
+pkg_config_path = ['/home/pmcgrath/computemodule-sysroot/usr/lib/aarch64-linux-gnu/pkgconfig', '/home/pmcgrath/computemodule-sysroot/usr/share/pkgconfig']

@@ -28,6 +28,7 @@
 #include "DASPi-udpframe.h"
 #include "DASPi-shapefunctiondatapacket.h"
 #include "DASPi-overlapshapefunction.h"
+#include "DASPi-postprocessitem.h"
 
 namespace DASPi{
     class Aperture {
@@ -57,6 +58,8 @@ namespace DASPi{
         const int chunkThreads_{4};
         const int numBuffers_{4};
         std::atomic<uint64_t> globalFrameCounter_ = 0;
+        std::string boardSerial_;
+        uint32_t cameraId_;//<-need to come from the camera
         std::string cameraUniqueId_;
         GainMsg gainMsg_;
     
@@ -95,12 +98,17 @@ namespace DASPi{
         std::mutex mutex_;
         std::condition_variable condition_;
         
-        std::queue<std::function<void()>> postProcessingQueue_;
+        // Post-processing queue
+        std::queue<PostProcessItem> postProcessingQueue_;
         std::mutex postProcessingQueueMutex_;
         std::condition_variable postProcessingQueueCV_;
+        
         std::vector<std::thread> postProcessingThreads_;
+        
         bool running_ = true;
         bool postProcessingRunning_ = false;
+        std::atomic<bool> stopPostProcessing_{false};
+        
         
         static constexpr size_t n_ = sf_t::n_;
         static constexpr double nonOverlapScale_ = sf_t::nonOverlapScale_;
@@ -151,12 +159,16 @@ namespace DASPi{
         void neon_copy_and_brighten_u16(uint16_t* dest, const uint16_t* src, size_t count);
         void StartUDPSender();
         void StopUDPSender();
-
     
+        void StartPostProcessingThreads();
         void StopPostProcessingThreads();
         inline void ApplyWhiteBalanceToMosaic_BGGR(size_t region, const sf_t &sf, std::span<uint16_t> data, const GainMsg& gainMsg);
         std::string GetBoardSerial();
+        //uint32_t ParseCameraAddressId(const std::string& libcameraId);
+        std::string ExtractCameraBusAddr(const std::string& libcameraId);
+        uint32_t ParseBusAndAddressCameraId(const std::string& libcameraId);
 
+        
     };
 
 };//end namespace DASPi

@@ -1,6 +1,6 @@
 //postprocessitem.h
 #pragma once
-#include "gainmsg.h"
+#include "DASPi-gainmsg.h"
 
 struct PostProcessItem {
     uint64_t frameNumber;

@@ -7,10 +7,17 @@ project('DASPi', 'c', 'cpp',
   ]
 )
 
-#subdir('common/imagemapping')
+add_project_arguments('-Wno-unused-parameter', language : 'cpp')
+
 subdir('common/logger')
 subdir('common/scopedtimer')
 subdir('common/shapefunction')
 subdir('common/udp')
-subdir('aperturecomputemodule')
-subdir('computemodule')
+
+if get_option('build_aperturecomputemodule')
+  subdir('aperturecomputemodule')
+endif
+
+if get_option('build_computemodule')
+  subdir('computemodule')
+endif

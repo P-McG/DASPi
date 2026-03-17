@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+#distribute_and_run_computemodule.sh
+
 set -euo pipefail
 
 # Usage:
@@ -15,9 +17,9 @@ if [ "${#HOSTS[@]}" -eq 0 ]; then
     HOSTS=("computemodule000")
 fi
 
-REMOTE_BASE_DIR="${REMOTE_BASE_DIR:-$HOME/DASPi/computemodule}"
-LOCAL_BUILD_DIR="${LOCAL_BUILD_DIR:-$HOME/DASPi/src/computemodule/trial_1f}"
-REMOTE_RUN_CMD="${REMOTE_RUN_CMD:-./trial --verbose --nApertureComputeModules=2 --usbSubnets='10.0.2.0' --port=5000}"
+REMOTE_BASE_DIR="${REMOTE_BASE_DIR:-$HOME/DASPi/software/bin_computemodule}"
+LOCAL_BUILD_DIR="${LOCAL_BUILD_DIR:-$HOME/DASPi/software/build-computemodule}"
+REMOTE_RUN_CMD="${REMOTE_RUN_CMD:-./computemodule --verbose --nApertureComputeModules=2 --usbSubnets='10.0.2.0' --port=5000}"
 
 for HOST in "${HOSTS[@]}"; do
     echo "Connecting to ${USER}@${HOST}..."
@@ -27,7 +29,7 @@ for HOST in "${HOSTS[@]}"; do
     ssh "${USER}@${HOST}" "rm -rf '${REMOTE_BASE_DIR}'"
     scp -r "${LOCAL_BUILD_DIR}" "${USER}@${HOST}:${REMOTE_BASE_DIR}"
 
-    ssh -t "${USER}@${HOST}" "cd '${REMOTE_BASE_DIR}/bin' && ${REMOTE_RUN_CMD}"
+    ssh -t "${USER}@${HOST}" "cd '${REMOTE_BASE_DIR}/computemodule' && ${REMOTE_RUN_CMD}"
 
     echo "Finished with ${HOST}"
     echo "-----------------------"
