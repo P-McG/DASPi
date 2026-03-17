@@ -1,7 +1,7 @@
 build/
 bin/
-software/bin-aperturecomputemodule/
-software/bin-computemodule/
+src/bin-aperturecomputemodule/
+src/bin-computemodule/
 *.o
 *.a
 *.so
