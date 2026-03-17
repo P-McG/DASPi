@@ -1,2 +1,0 @@
-option('build_aperturecomputemodule', type : 'boolean', value : true)
-option('build_computemodule', type : 'boolean', value : true)
