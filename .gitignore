@@ -1,0 +1,10 @@
+build/
+bin/
+software/bin-aperturecomputemodule/
+software/bin-computemodule/
+*.o
+*.a
+*.so
+*.log
+*.bayer
+*-sysroot/
