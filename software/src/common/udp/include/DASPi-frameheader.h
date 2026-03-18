@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-#include "DASPi-gainmsg.h"
+#include "DASPi-messages.h"
 
 namespace DASPi{
 	

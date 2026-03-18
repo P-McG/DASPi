@@ -3,7 +3,7 @@ compute_inc = include_directories(
 )
 
 compute_src = files(
-  'src/DASPi-aperture-client.cpp',
+  'src/DASPi-aperture-peer.cpp',
   'src/main.cpp',
 )
 

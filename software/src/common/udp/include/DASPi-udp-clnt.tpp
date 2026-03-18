@@ -16,34 +16,41 @@
 
 namespace DASPi{
 
-     //template<class T>
-     //ssize_t UDPClnt::SendToServer(T *buffer, const size_t bufferLength ){
-//#ifdef VERBATIUM_COUT
-        //std::cout << "Send to server" << std::endl;
-//#endif
-        //ssize_t sendN = sendto(sockfd_, buffer, bufferLength,
-            //MSG_CONFIRM, (const struct sockaddr *) &srvAddr_,
-            //sizeof(srvAddr_));
-        //return sendN;
-    //}
+     template<class T>
+     ssize_t UDPClnt::SendToServer(T *buffer, const size_t bufferLength ){
+         
+     static_assert(std::is_standard_layout_v<T>, "T must be standard layout");
+     static_assert(std::is_trivially_copyable_v<T>, "T must be trivially copyable");
+
+#ifdef VERBATIUM_COUT
+        std::cout << "Send to server" << std::endl;
+#endif
+        return sendto(sockfd_,
+                      buffer,
+                      bufferLength,
+                      MSG_CONFIRM,
+                      (const struct sockaddr*)&srvAddr_,
+                      sizeof(srvAddr_));
+    }
     
     template<class T>
     ssize_t UDPClnt::ReceiveFromServer(T &buffer){
 #ifdef VERBATIUM_COUT
 //    std::cout << "Receive from server" << std::endl;
 #endif
-   // connect to server 
-        if(connect(sockfd_, (struct sockaddr *)&srvAddr_, sizeof(srvAddr_)) < 0) 
-        { 
-            printf("\n Error : Connect Failed \n"); 
-            exit(0); 
-        } 
     
-        socklen_t len{sizeof(srvAddr_)};
-        ssize_t recvN = recvfrom(sockfd_, (char *)buffer.data(), buffer.size()*sizeof(char),
-                MSG_WAITALL, (struct sockaddr *) &srvAddr_,
-                &len);
-        return recvN;
+        static_assert(std::is_standard_layout_v<T>, "T must be standard layout");
+        static_assert(std::is_trivially_copyable_v<T>, "T must be trivially copyable");
+    
+        sockaddr_in sender{};
+        socklen_t senderLen = sizeof(sender);
+    
+        return recvfrom(sockfd_,
+                        &buffer,
+                        sizeof(T),
+                        0,
+                        reinterpret_cast<sockaddr*>(&sender),
+                        &senderLen);
     }
 
 };//ending namespace DASPi

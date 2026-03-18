@@ -1,234 +1,264 @@
 #include <chrono>
-#include <thread>
 #include <execution>
 #include <iostream>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
+#include <cstdlib>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include "DASPi-logger.h"
-#include "DASPi-aperture-client.h"
-#include <sys/epoll.h>
 
-//#define MAX_EVENTS 10
-#define VERBATIUM_COUT
+#include "DASPi-logger.h"
+#include "DASPi-aperture-peer.h"
 
 using namespace DASPi;
 
-std::string IncrementIp(std::string& ipStr) {
-    struct in_addr addr;
-    
+namespace {
+
+std::string IncrementIp(std::string& ipStr)
+{
+    struct in_addr addr{};
+
     if (inet_aton(ipStr.c_str(), &addr) == 0) {
-        std::cerr << "Invalid IP address format!\n";
+        std::cerr << "Invalid IP address format\n";
         return ipStr;
     }
 
-    // Convert to host byte order, increment, and convert back to network byte order
     uint32_t ip = ntohl(addr.s_addr);
-    ip++;  // Increment IP address
+    ++ip;
     addr.s_addr = htonl(ip);
 
-    // Convert back to string
     ipStr = inet_ntoa(addr);
-    
     return ipStr;
 }
 
-std::string IncrementSubnet(std::string ipStr) {
-    struct in_addr addr;
+std::string IncrementSubnet(std::string ipStr)
+{
+    struct in_addr addr{};
 
     if (inet_aton(ipStr.c_str(), &addr) == 0) {
-        std::cerr << "Invalid IP address format!\n";
+        std::cerr << "Invalid IP address format\n";
         return ipStr;
     }
 
     uint32_t ip = ntohl(addr.s_addr);
 
-    // Extract each octet
-    uint8_t octet1 = (ip >> 24) & 0xFF;
-    uint8_t octet2 = (ip >> 16) & 0xFF;
-    uint8_t octet3 = (ip >> 8) & 0xFF;
-    uint8_t octet4 = ip & 0xFF;
+    uint8_t octet1 = static_cast<uint8_t>((ip >> 24) & 0xFF);
+    uint8_t octet2 = static_cast<uint8_t>((ip >> 16) & 0xFF);
+    uint8_t octet3 = static_cast<uint8_t>((ip >> 8)  & 0xFF);
+    uint8_t octet4 = static_cast<uint8_t>(ip & 0xFF);
 
-    // Increment the 3rd octet (subnet)
-    octet3++;
+    ++octet3;
 
-    // Reconstruct the IP
-    ip = (octet1 << 24) | (octet2 << 16) | (octet3 << 8) | octet4;
+    ip = (static_cast<uint32_t>(octet1) << 24) |
+         (static_cast<uint32_t>(octet2) << 16) |
+         (static_cast<uint32_t>(octet3) << 8)  |
+         static_cast<uint32_t>(octet4);
+
     addr.s_addr = htonl(ip);
-
     return std::string(inet_ntoa(addr));
 }
 
-in_addr_t stringToInAddrT(const std::string& ipStr) {
-    struct in_addr addr;
-    
+in_addr_t StringToInAddrT(const std::string& ipStr)
+{
+    struct in_addr addr{};
+
     if (inet_pton(AF_INET, ipStr.c_str(), &addr) != 1) {
-        std::cerr << "Invalid IP address format: " << ipStr << std::endl;
-        return INADDR_NONE;  // Return 0xFFFFFFFF if conversion fails
+        std::cerr << "Invalid IP address format: " << ipStr << '\n';
+        return INADDR_NONE;
     }
 
-    return addr.s_addr;  // Return in network byte order
+    return addr.s_addr;
 }
 
-std::string inAddrTToString(in_addr_t addrNetOrder) {
-    char str[INET_ADDRSTRLEN];
-    struct in_addr addr;
+std::string InAddrTToString(in_addr_t addrNetOrder)
+{
+    char str[INET_ADDRSTRLEN]{};
+    struct in_addr addr{};
     addr.s_addr = addrNetOrder;
 
     if (inet_ntop(AF_INET, &addr, str, INET_ADDRSTRLEN) == nullptr) {
-        std::cerr << "inet_ntop failed!" << std::endl;
-        return "";
+        std::cerr << "inet_ntop failed\n";
+        return {};
     }
 
     return std::string(str);
 }
 
+void PrintUsage(const char* programName)
+{
+    std::cerr
+        << "Usage: " << programName
+        << " [--verbose]"
+        << " --nApertureComputeModules=<N>"
+        << " --usbSubnets=<subnet>"
+        << " --port=<frame_port>\n";
+}
 
-//void log(LogLevel level, const std::string& msg) {
-    //if (static_cast<int>(level) <= static_cast<int>(logLevel)) {
-        //std::cerr << msg << std::endl;
-    //}
-//}
+} // namespace
 
-/* main()
- * 
- * Arguments:
- * N Aperture Compute Modules
- * USB Subnet
- * Port Number Start
- * 
- * The following assumes the network is setup in the following
- * way:
- * e.g.
- *    10.0.2.1 - gateway
- *    10.0.2.2 - Compute Module
- *    10.0.2.3 - Aperture Compute Module
- *       ...
- *    10.0.2.(n+3) - n-Aperture Compute Module starting at ApertureComputeModule000;
- */
-int main(int argc, char* argv[]){
-    std::cout << "Program - started" << std::endl;
-    
-    // Parse input arguments
-    int nApertureComputeModules{0};  // Number of Aperture Compute Modules
-    std::string usbSubnet{""};
-    int port{0}; // Port number
-    
+int main(int argc, char* argv[])
+{
+    std::cout << "Program - started\n";
+
+    int nApertureComputeModules{0};
+    std::string usbSubnet;
+    int framePort{0};
+
     if (argc < 4) {
-        std::cerr << "Usage: " << argv[0] << "[--verbose] <nApertureComputeModules> <usbSubnet> <portStart>\n";
-        return 1;
+        PrintUsage(argv[0]);
+        return EXIT_FAILURE;
     }
-    
+
     for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        
-        if (arg.rfind("--verbose", 0) == 0) {
+        const std::string arg{argv[i]};
+
+        if (arg == "--verbose") {
             verbosity = Verbosity::Verbose;
+            continue;
         }
 
-        // Check if argument starts with "--nApertureComputeModule="
         if (arg.rfind("--nApertureComputeModules=", 0) == 0) {
-            try {                
-
-                nApertureComputeModules = std::stoi(arg.substr(26)); // Extract and convert port number
-            } catch (const std::exception& e) {
-                std::cerr << "Invalid nApertureComputeModules number: " << e.what() << std::endl;
-                return 1; // Exit with error
-            }
-        }
-
-        // Check if argument starts with "--usbSubnet="
-        if (arg.rfind("--usbSubnets=", 0) == 0) {
             try {
-                usbSubnet = arg.substr(13);
+                nApertureComputeModules = std::stoi(arg.substr(27));
             } catch (const std::exception& e) {
-                std::cerr << "Invalid usbSubnets number: " << e.what() << std::endl;
-                return 1; // Exit with error
+                std::cerr << "Invalid nApertureComputeModules: " << e.what() << '\n';
+                return EXIT_FAILURE;
             }
+            continue;
         }
 
-        // Check if argument starts with "--port="
+        if (arg.rfind("--usbSubnets=", 0) == 0) {
+            usbSubnet = arg.substr(13);
+            continue;
+        }
+
         if (arg.rfind("--port=", 0) == 0) {
             try {
-                port = std::stoi(arg.substr(7)); // Extract and convert port number
+                framePort = std::stoi(arg.substr(7));
             } catch (const std::exception& e) {
-                std::cerr << "Invalid port number: " << e.what() << std::endl;
-                return 1; // Exit with error
+                std::cerr << "Invalid port: " << e.what() << '\n';
+                return EXIT_FAILURE;
             }
+            continue;
         }
     }
 
-    if (nApertureComputeModules == 0) {
-        std::cerr << "No valid --nApertureComputeModules argument provided." << std::endl;
-        return 1;
-    }
-   
-    if (usbSubnet == "") {
-        std::cerr << "No valid --usbSubnet argument provided." << std::endl;
-        return 1;
-    }
-    
-    if (port == 0) {
-        std::cerr << "No valid --port argument provided." << std::endl;
-        return 1;
+    if (nApertureComputeModules <= 0) {
+        std::cerr << "No valid --nApertureComputeModules argument provided.\n";
+        return EXIT_FAILURE;
     }
 
-    // Output results
-    std::cout << "Number of Aperture Compute Modules: " << nApertureComputeModules << std::endl;
-    std::cout << "USB Subnet: " << usbSubnet << std::endl;
-    std::cout << "Port Number : " << port << std::endl;
-  
-    //Setting up the IP addresses
+    if (usbSubnet.empty()) {
+        std::cerr << "No valid --usbSubnets argument provided.\n";
+        return EXIT_FAILURE;
+    }
+
+    if (framePort <= 0) {
+        std::cerr << "No valid --port argument provided.\n";
+        return EXIT_FAILURE;
+    }
+
+    constexpr int controlPortOffset = 1;
+    const int controlPort = framePort + controlPortOffset;
+
+    std::cout << "Number of Aperture Compute Modules: " << nApertureComputeModules << '\n';
+    std::cout << "USB Subnet: " << usbSubnet << '\n';
+    std::cout << "Frame Port: " << framePort << '\n';
+    std::cout << "Control Port: " << controlPort << '\n';
+
+    std::vector<in_addr_t> gatewayAddrs(static_cast<size_t>(nApertureComputeModules));
+    std::vector<in_addr_t> clntAddrs(static_cast<size_t>(nApertureComputeModules));
+    std::vector<in_addr_t> srvAddrs(static_cast<size_t>(nApertureComputeModules));
+
     std::string subnetBase = usbSubnet;
-      
-    std::vector<in_addr_t> gatewayAddrs(nApertureComputeModules);
-    std::vector<in_addr_t> srvAddrs(nApertureComputeModules);
-    std::vector<in_addr_t> clntAddrs(nApertureComputeModules);
-    
-    // Increment the ip's 4th octet (host)
+
     std::string gatewayAddr = IncrementIp(subnetBase);
-    gatewayAddrs[0] = stringToInAddrT(gatewayAddr); // Gateway 10.0.x.1
+    gatewayAddrs[0] = StringToInAddrT(gatewayAddr);   // 10.0.x.1
+
     std::string clntAddr = IncrementIp(gatewayAddr);
-    clntAddrs[0] = stringToInAddrT(clntAddr); // ComputeModule 10.0.x.2
+    clntAddrs[0] = StringToInAddrT(clntAddr);         // 10.0.x.2 (computemodule)
+
     std::string srvAddr = IncrementIp(clntAddr);
-    srvAddrs[0] = stringToInAddrT(srvAddr); // ApertureComputeModule 10.0.x.3
-    
-    // Increment the ip's 3rd octet (subnet)
-    for(int i = 1; i < nApertureComputeModules; i++) {
-        gatewayAddrs[i] = stringToInAddrT(IncrementSubnet(inAddrTToString(gatewayAddrs[i-1])));
-        clntAddrs[i] = stringToInAddrT(IncrementSubnet(inAddrTToString(clntAddrs[i-1]))); 
-        srvAddrs[i] = stringToInAddrT(IncrementSubnet(inAddrTToString(srvAddrs[i-1])));
-    }
-    
-    std::cout << "[main] Setting up ApertureClients" << std::endl;
-    const size_t n=3;
-    std::vector<std::unique_ptr<ApertureClient<n>>> apertureClients(nApertureComputeModules);
-    for (size_t i = 0; i < static_cast<size_t>(nApertureComputeModules); ++i) {
-        struct in_addr srv_ip_addr, clnt_ip_addr;
-        srv_ip_addr.s_addr = srvAddrs[i];
-        clnt_ip_addr.s_addr = clntAddrs[i];
+    srvAddrs[0] = StringToInAddrT(srvAddr);           // 10.0.x.3 (aperturecomputemodule)
 
-        std::cout << "[main] Creating ApertureClient " << i
-                  << ", port=" << (port/* + i*/) 
-                  << ", srvAddr=" << ((i < srvAddrs.size()) ? inet_ntoa(srv_ip_addr) : "INVALID")
-                  << ", clntAddr=" << ((i < srvAddrs.size()) ? inet_ntoa(clnt_ip_addr) : "INVALID")
-                  << std::endl;
-        apertureClients[i] = std::make_unique<ApertureClient<n>>(clntAddrs[i], port, srvAddrs[i]);
+    for (int i = 1; i < nApertureComputeModules; ++i) {
+        gatewayAddrs[static_cast<size_t>(i)] =
+            StringToInAddrT(IncrementSubnet(InAddrTToString(gatewayAddrs[static_cast<size_t>(i - 1)])));
 
+        clntAddrs[static_cast<size_t>(i)] =
+            StringToInAddrT(IncrementSubnet(InAddrTToString(clntAddrs[static_cast<size_t>(i - 1)])));
+
+        srvAddrs[static_cast<size_t>(i)] =
+            StringToInAddrT(IncrementSubnet(InAddrTToString(srvAddrs[static_cast<size_t>(i - 1)])));
     }
-    
-    std::cout << "[main] Setting up ReceiveApertureCapture" << std::endl;
-    auto start = std::chrono::high_resolution_clock::now();
-    for_each(std::execution::par, apertureClients.begin(), apertureClients.end(),
-    [](const std::unique_ptr<ApertureClient<n>>& client){
-        if(!client->ReceiveApertureCapture()){
-            std::cerr << "ReceiveApertureCapture - FAILED" << std:: endl;
-            exit(1);
-        }
-    });
-	auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::micro> elapsed = end - start;
-    std::cout << "Elapsed time: " << elapsed.count() << " microseconds\n";
-    
-    std::cout << "Program - finished" << std::endl;
-    return 0; 
+
+    std::cout << "[main] Setting up AperturePeers\n";
+
+    constexpr size_t n = 3;
+    std::vector<std::unique_ptr<AperturePeer<n>>> aperturePeers(
+        static_cast<size_t>(nApertureComputeModules));
+
+    for (size_t i = 0; i < aperturePeers.size(); ++i) {
+        struct in_addr srvIpAddr{};
+        struct in_addr clntIpAddr{};
+        srvIpAddr.s_addr = srvAddrs[i];
+        clntIpAddr.s_addr = clntAddrs[i];
+
+        std::cout << "[main] Creating AperturePeer " << i
+                  << ", framePort=" << framePort
+                  << ", controlPort=" << controlPort
+                  << ", srvAddr=" << inet_ntoa(srvIpAddr)
+                  << ", clntAddr=" << inet_ntoa(clntIpAddr)
+                  << '\n';
+
+        aperturePeers[i] = std::make_unique<AperturePeer<n>>(
+            clntAddrs[i],
+            framePort,
+            controlPort,
+            srvAddrs[i]
+        );
+    }
+
+    std::cout << "[main] Starting per-peer frame/control threads\n";
+
+    std::vector<std::jthread> frameThreads;
+    std::vector<std::jthread> controlThreads;
+
+    frameThreads.reserve(aperturePeers.size());
+    controlThreads.reserve(aperturePeers.size());
+
+    for (auto& peerPtr : aperturePeers) {
+        AperturePeer<n>* peer = peerPtr.get();
+
+        frameThreads.emplace_back([peer]() {
+            for (;;) {
+                if (!peer->RunFrameLoop()) {
+                    std::cerr << "[frame thread] ReceiveApertureCapture failed\n";
+                    break;
+                }
+            }
+        });
+
+        controlThreads.emplace_back([peer]() {
+            for (;;) {
+                if (!peer->RunControlLoop()) {
+                    std::cerr << "[control thread] ReceiveGainMsg failed\n";
+                    break;
+                }
+            }
+        });
+    }
+
+    std::cout << "[main] Threads running\n";
+
+    // Keep main alive. std::jthread joins on destruction, but these loops
+    // are intended to run continuously, so sleep forever here.
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::seconds(60));
+    }
+
+    return EXIT_SUCCESS;
 }
