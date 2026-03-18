@@ -1,10 +1,15 @@
+dist/
 build/
 bin/
-src/bin-aperturecomputemodule/
-src/bin-computemodule/
+
 *.o
 *.a
 *.so
+
+# logs
 *.log
+
+# Raw data output
 *.bayer
+
 *-sysroot/
