@@ -74,45 +74,39 @@ Place in host file:
 sudo apt update
 sudo apt install -y tmux
 
-###Cross-Compiling Sources for the Aperture-Compute-Module
+###Cross-Compiling Sources for the Compute-Module and Aperture-Compute-Module
 Set up the cross compiling sources for the aperturecomputemodule000. 
 This needs to be performed every major change, or update, to the aperturecomputemodules. 
 Only one of the aperturecomputemodules is needed to be synced if all of the aperturecomputemodules are the same. 
-mkdir -p ~/aperturecomputemodule-sysroot
-rsync -a --delete $USER@aperturecomputemodule000:/lib/      ~/aperturecomputemodule-sysroot/lib/
-rsync -a --delete $USER@aperturecomputemodule000:/usr/      ~/aperturecomputemodule-sysroot/usr/
-rsync -a --delete $USER@aperturecomputemodule000:/opt/      ~/aperturecomputemodule-sysroot/opt/      # if needed
-rsync -a --delete $USER@aperturecomputemodule000:/etc/ld.so.conf* ~/aperturecomputemodule-sysroot/etc/
 
-###Cross Compiling Sources for the Compute-Module
-Set up the cross compiling sources for the computemodule000. This needs to be performed every major change, or update, to the computemodules.
-mkdir -p ~/computemodule-sysroot
-rsync -a --delete $USER@computemodule000:/lib/      ~/computemodule-sysroot/lib/
-rsync -a --delete $USER@computemodule000:/usr/      ~/computemodule-sysroot/usr/
-rsync -a --delete $USER@computemodule000:/opt/      ~/computemodule-sysroot/opt/      # if needed
-rsync -a --delete $USER@computemodule000:/etc/ld.so.conf* ~/computemodule-sysroot/etc/
+~/DASPi/software/scripts/update_sysroot.sh
 
 ## Cross-Compiling aperturecomputemodule
-cd ~/DASPi
-meson setup software/build/aperturecomputemodule \
-  software/src \
-  --cross-file software/src/aperturecomputemodule/cross-aperturecomputemodule.txt \
+rm -rf ~/DASPi/software/build/aperturecomputemodule
+
+meson setup ~/DASPi/software/build/aperturecomputemodule \
+  ~/DASPi/software/src \
+  --cross-file ~/DASPi/software/src/aperturecomputemodule/cross-aperturecomputemodule.txt \
   -Dbuild_aperturecomputemodule=true \
   -Dbuild_computemodule=false
-meson compile -C software/build/aperturecomputemodule
-cp -r ./build-aperturecomputemodule/aperturecomputemodule ./bin-aperturecomputemodule
+
+meson compile -C ~/DASPi/software/build/aperturecomputemodule
+
 ~/DASPi/src/distribute_and_run_aperturecomputemodule_code.sh  
 
 ninja -C build-aperture
 
 ## Cross-compiling computemodule 
-meson setup software/build/computemodule \
-  software/src \
-  --cross-file software/src/computemodule/cross-computemodule.txt \
+rm -rf ~/DASPi/software/build/computemodule
+
+meson setup ~/DASPi/software/build/computemodule \
+  ~/DASPi/software/src \
+  --cross-file ~/DASPi/software/src/computemodule/cross-computemodule.txt \
   -Dbuild_aperturecomputemodule=false \
   -Dbuild_computemodule=true
-meson compile -C software/build/computemodule
-cp -r ./build-computemodule/computemodule ./bin-computemodule
+
+meson compile -C ~/DASPi/software/build/computemodule
+
 ~/DASPi/src/distribute_and_run_computemodule_code.sh
 ## Deployment
 To copy output from the computemodule

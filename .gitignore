@@ -1,0 +1,14 @@
+# Build + staging
+build/
+dist/
+
+# Sysroots
+*-sysroot/
+sysroots/
+
+# Generated data
+*.bayer
+*.log
+
+# Optional
+*.core

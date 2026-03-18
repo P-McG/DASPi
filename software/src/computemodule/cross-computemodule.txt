@@ -8,15 +8,30 @@ pkgconfig = 'pkg-config'
 [host_machine]
 system = 'linux'
 cpu_family = 'aarch64'
-cpu = 'cortex-a53'
+cpu = 'aarch64'
 endian = 'little'
 
 [properties]
-sys_root = '/home/pmcgrath/computemodule-sysroot'
+sys_root = '/home/pmcgrath/DASPi/sysroots/computemodule'
+pkg_config_libdir = [
+  '/home/pmcgrath/DASPi/sysroots/computemodule/usr/lib/aarch64-linux-gnu/pkgconfig',
+  '/home/pmcgrath/DASPi/sysroots/computemodule/usr/lib/pkgconfig',
+  '/home/pmcgrath/DASPi/sysroots/computemodule/usr/share/pkgconfig']
 
 [built-in options]
-c_args = ['-O3', '-march=armv8-a+simd', '-fopenmp', '--sysroot=/home/pmcgrath/computemodule-sysroot']
-cpp_args = ['-O3', '-march=armv8-a+simd', '-fopenmp', '--sysroot=/home/pmcgrath/computemodule-sysroot']
-c_link_args = ['--sysroot=/home/pmcgrath/computemodule-sysroot']
-cpp_link_args = ['--sysroot=/home/pmcgrath/computemodule-sysroot']
-pkg_config_path = ['/home/pmcgrath/computemodule-sysroot/usr/lib/aarch64-linux-gnu/pkgconfig', '/home/pmcgrath/computemodule-sysroot/usr/share/pkgconfig']
+c_args = [
+  '--sysroot=/home/pmcgrath/DASPi/sysroots/computemodule']
+cpp_args = [
+  '--sysroot=/home/pmcgrath/DASPi/sysroots/computemodule']
+c_link_args = [
+  '--sysroot=/home/pmcgrath/DASPi/sysroots/computemodule',
+  '-L/home/pmcgrath/DASPi/sysroots/computemodule/lib/aarch64-linux-gnu',
+  '-L/home/pmcgrath/DASPi/sysroots/computemodule/usr/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/DASPi/sysroots/computemodule/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/DASPi/sysroots/computemodule/usr/lib/aarch64-linux-gnu']
+cpp_link_args = [
+  '--sysroot=/home/pmcgrath/DASPi/sysroots/computemodule',
+  '-L/home/pmcgrath/DASPi/sysroots/computemodule/lib/aarch64-linux-gnu',
+  '-L/home/pmcgrath/DASPi/sysroots/computemodule/usr/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/DASPi/sysroots/computemodule/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,/home/pmcgrath/DASPi/sysroots/computemodule/usr/lib/aarch64-linux-gnu']
