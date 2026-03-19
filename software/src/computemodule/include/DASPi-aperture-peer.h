@@ -54,7 +54,8 @@ class AperturePeer {
 
     // 🔒 Shared state (future-safe)
     std::mutex gainMutex_;
-    float latestGain_{1.0f};
+    float latestRGainApply_{1.0f};
+    float latestBGainApply_{1.0f};
     uint32_t latestFrameId_{0};
     bool gainValid_{false};
 

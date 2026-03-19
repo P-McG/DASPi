@@ -26,6 +26,15 @@ struct GainMsg {
 
     float mean_brightness{};
     float target_brightness{};
+
+    float r_gain{};
+    float b_gain{};
+
+    float r_gain_apply{};
+    float b_gain_apply{};
+
+    float exposure_us{};
+    float analogue_gain{};
 };
 
 struct GainReply {
@@ -35,11 +44,18 @@ struct GainReply {
     uint32_t frame_id{};
 
     float requested_gain{};
+    float r_gain_apply{};
+    float b_gain_apply{};
+
     uint32_t status{}; // 0 = OK
 };
 
 static_assert(std::is_standard_layout_v<MessageHeader>);
 static_assert(std::is_standard_layout_v<GainMsg>);
 static_assert(std::is_standard_layout_v<GainReply>);
+static_assert(std::is_trivially_copyable_v<MessageHeader>);
+static_assert(std::is_trivially_copyable_v<GainMsg>);
+static_assert(std::is_trivially_copyable_v<GainReply>);
+
 
 } // namespace DASPi

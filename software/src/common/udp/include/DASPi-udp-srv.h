@@ -70,8 +70,8 @@ namespace DASPi{
         //FramePacket CreateFramePacket(std::vector<uint8_t>&& buffer);
         //void FrameBufferToUDP(std::vector<uint8_t> &&buffer);
     
-        template <typename T >
-        ssize_t SendUDPPacketToClient(const T *buffer, const size_t bufferLength=maximumTransmittableUnits_ );
+        template <typename T > ssize_t SendUDPPacketToClient(const T *buffer, const size_t bufferLength=maximumTransmittableUnits_ );
+        template<class T> bool Receive(T& msg);
     };
 }//end namespace DASPi
 

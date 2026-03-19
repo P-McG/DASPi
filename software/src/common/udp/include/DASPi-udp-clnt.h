@@ -68,6 +68,7 @@ namespace DASPi{
 		void PrintSockaddr_in(const struct sockaddr_in *addr);
 		int BindSocketWithClientAddress();
 		void FlushSocket();
+		int SetNonBlocking(bool enabled);
 
 	};
 };//ending namespace DASPi

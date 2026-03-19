@@ -505,15 +505,18 @@ namespace DASPi{
 		GainReply reply{};
 		reply.camera_id = msg.camera_id;
 		reply.frame_id = msg.frame_id;
+	
 		reply.requested_gain = ComputeRequestedGain(msg);
+		reply.r_gain_apply = reply.requested_gain;
+		reply.b_gain_apply = reply.requested_gain;
 		reply.status = 0;
 	
 		SendGainReply(reply);
 	
-		// Optional: store locally (for diagnostics / later use)
 		{
 			std::lock_guard<std::mutex> lock(gainMutex_);
-			latestGain_ = reply.requested_gain;
+			latestRGainApply_ = reply.r_gain_apply;
+			latestBGainApply_ = reply.b_gain_apply;
 			latestFrameId_ = reply.frame_id;
 			gainValid_ = true;
 		}

@@ -101,3 +101,35 @@ ssize_t UDPSrv::SendUDPPacketToClient(const T *buffer, const size_t bufferLength
 			len);
 	   return sendN;
 }
+
+template<class T>
+bool UDPSrv::Receive(T& msg)
+{
+    static_assert(std::is_standard_layout_v<T>);
+    static_assert(std::is_trivially_copyable_v<T>);
+
+    sockaddr_in sender{};
+    socklen_t len = sizeof(sender);
+
+    const ssize_t received = recvfrom(
+        sockfd_,
+        &msg,
+        sizeof(T),
+        0,
+        reinterpret_cast<sockaddr*>(&sender),
+        &len
+    );
+
+    if (received < 0) {
+        perror("recvfrom failed");
+        return false;
+    }
+
+    if (received != static_cast<ssize_t>(sizeof(T))) {
+        std::cerr << "Receive: wrong size, got " << received
+                  << ", expected " << sizeof(T) << std::endl;
+        return false;
+    }
+
+    return true;
+}

@@ -1,0 +1,9 @@
+-[✔] aperturecomputemodule should measure frame brightness
+-[✔] send a GainMsg on the control socket
+-[✔] receive a GainReply on the control socket
+-[✔] store the latest gain safely
+-[✔] apply that gain in the camera/image pipeline at the right point
+-[✔] Add non-blocking receive (avoid thread sleep)
+-[ ] Add timeout-based control loop
+-[ ] Validate struct packing across machines (ARM vs x86 ⚠️)
+-[ ] poll() or epoll() on the control socket

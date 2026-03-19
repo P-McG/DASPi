@@ -27,9 +27,18 @@ using namespace libcamera;
 
 // Constructor
 Aperture::Aperture(const std::string clientIp, const size_t port)
-:udpSrv_{UDPSrv(clientIp, port)} 
+	:frameSrv_{UDPSrv(clientIp, port)},
+	  controlClnt_{UDPClnt(INADDR_ANY /* or local control IP */,
+						   static_cast<int>(port + 1),
+						   inet_addr(clientIp.c_str()))} 
 {
 	 log_verbose("[Aperture::Aperture]");
+	 
+	 if (controlClnt_.SetNonBlocking(true) < 0) {
+		std::cerr << "Failed to set control socket non-blocking\n";
+	 }
+	 running_ = true;
+	 
 	 CreateCameraManager();
 	 AquireCamera();
 	 Stream();
@@ -45,7 +54,11 @@ Aperture::Aperture(const std::string clientIp, const size_t port)
 */
 Aperture::~Aperture(){
     log_verbose("[Aperture::~Aperture]");
-    
+    running_ = false;
+	
+	if (controlThread_.joinable())
+		controlThread_.join();
+	
     CleanupCamera();
 	StopUDPSender();
 	StopPostProcessingThreads();
@@ -616,7 +629,7 @@ void Aperture::PostProcessingThread()
             postProcessingQueue_.pop();
         }
 
-        FrameBufferToUDP(item.frameNumber, item.buffer);
+        FrameBufferToUDP(item.frameNumber, item.buffer, item.gainMsg);
     }
 }
 
@@ -847,51 +860,71 @@ void Aperture::RunEventLoop(int timeout){
 	
 }
 
-void Aperture::FrameBufferToUDP(const uint64_t frameNumber, const libcamera::FrameBuffer *buffer) {
-	log_verbose("[FrameBufferToUDP]");
+void Aperture::FrameBufferToUDP(const uint64_t frameNumber,
+                                const libcamera::FrameBuffer *buffer,
+                                const GainMsg& gainMsg)
+{
+    log_verbose("[FrameBufferToUDP]");
 
-	static int producedFrames = 0;
-	producedFrames++;
-	if (producedFrames % 10 == 0) {
-		std::cout << "[Produced] " << producedFrames << " frames buffered for UDP" << std::endl;
+    static int producedFrames = 0;
+    producedFrames++;
+    if (producedFrames % 10 == 0) {
+        std::cout << "[Produced] " << producedFrames
+                  << " frames buffered for UDP" << std::endl;
+    }
+
+    const auto &plane = buffer->planes().back();
+    if (!plane.fd.isValid()) {
+        std::cerr << "Invalid file descriptor for plane" << std::endl;
+        std::exit(1);
+    }
+
+    uint16_t *mappedData = static_cast<uint16_t *>(
+        mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0));
+
+    if (mappedData == MAP_FAILED) {
+        perror("Failed to mmap plane data");
+        std::exit(1);
+    }
+
+    std::span<uint16_t> mappedDataSpan(mappedData, plane.length / sizeof(uint16_t));
+
+    sfdp_t sfdp(sf_);
+
+    if (mappedDataSpan.size() != sf_.GlobalLinearShapeFunction_t::size()) {
+        std::cerr << "mappedDataSpan.size():" << mappedDataSpan.size()
+                  << " sf_.GlobalLinearShapeFunction_t::size():"
+                  << sf_.GlobalLinearShapeFunction_t::size()
+                  << " sfdp.size():" << sfdp.size() << std::endl;
+        std::cerr << "mappedDataSpan not the correct size" << std::endl;
+        std::exit(1);
+    }
+
+    // Start from the per-frame metadata captured in ProcessRequestImpl().
+	GainMsg appliedGainMsg = gainMsg;
+	
+	// default apply values
+	appliedGainMsg.r_gain_apply = appliedGainMsg.r_gain;
+	appliedGainMsg.b_gain_apply = appliedGainMsg.b_gain;
+	
+	{
+		std::lock_guard<std::mutex> lock(gainMutex_);
+		if (gainValid_) {
+			appliedGainMsg.r_gain_apply = latestRGainApply_;
+			appliedGainMsg.b_gain_apply = latestBGainApply_;
+		}
 	}
 
-	const auto &plane = buffer->planes().back();
-	if (!plane.fd.isValid()) {
-		std::cerr << "Invalid file descriptor for plane" << std::endl;
-		exit(1);
-	}
-	
-	// Map the plane data into memory
-	//uint8_t *mappedData = static_cast<uint8_t*>(mmap(nullptr, plane.length, PROT_READ | PROT_WRITE, MAP_PRIVATE, plane.fd.get(), 0));
-	uint16_t *mappedData = static_cast<uint16_t*>(mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0));
+    FrameBufferTransformation(mappedDataSpan, appliedGainMsg, sfdp, chunkThreads_);
 
-	if (mappedData == MAP_FAILED) {
-		perror("Failed to mmap plane data");
-		exit(1);
-	}
-	std::span<uint16_t> mappedDataSpan(mappedData, plane.length / sizeof(uint16_t));
-	 
-	sfdp_t sfdp(sf_);
-	
-	// Resize the output to the largest data size because the smaller regions data size is not known. 
-	// Selected the size of facet which is the largest size the overlap can be.
-	if(mappedDataSpan.size() !=  sf_.GlobalLinearShapeFunction_t::size()){
-		std::cerr << "mappedDataSpan.size():" << mappedDataSpan.size() << " sf_.GlobalLinearShapeFunction_t::size():" << sf_.GlobalLinearShapeFunction_t::size() << " sfdp.size():" << sfdp.size();
-		std::cerr << "mappedDataSpan not the correct size" << std::endl;
-		exit(1);
-	}
-	
-	FrameBufferTransformation(mappedDataSpan, gainMsg_, sfdp, chunkThreads_);
-	
-	udpSrv_.SubmitFrameOutput(
+	frameSrv_.SubmitFrameOutput(
 		frameNumber,
-		udpSrv_.CreateFramePacket(gainMsg_, sfdp.TakeContiguousMemory())
+		frameSrv_.CreateFramePacket(appliedGainMsg, sfdp.TakeContiguousMemory())
 	);
 
-	if (munmap(mappedData, plane.length) != 0) {
-		perror("Failed to unmap plane data");
-	}
+    if (munmap(mappedData, plane.length) != 0) {
+        perror("Failed to unmap plane data");
+    }
 }
 
 void* Aperture::StartCaptureThread(void* arg){
@@ -919,6 +952,12 @@ bool Aperture::ContinuousCapture(unsigned int index){
 	StartUDPSender();
     StartRequestProcessingThreads(processingThreads_); // before capture starts'
 	StartPostProcessingThreads(processingThreads_);
+	
+	// Start control-reply loop
+	controlThread_ = std::thread([this]() {
+		pthread_setname_np(pthread_self(), "GainCtrl");
+		this->RunControlLoop();
+	});
 		   
     std::thread t1([this]() {
 		cpu_set_t cpuset;
@@ -1007,8 +1046,8 @@ void Aperture::StartUDPSender() {
         while (udpSending_) {
 			 bool sent = false;
 			{
-				std::lock_guard<std::mutex> lock(udpSrv_.outputMutex_);
-				sent = udpSrv_.TrySendFramesInOrder();  // return true if at least 1 frame was sent
+				std::lock_guard<std::mutex> lock(frameSrv_.outputMutex_);
+				sent = frameSrv_.TrySendFramesInOrder();
 			}
 			if (!sent)
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -1053,7 +1092,7 @@ void Aperture::StartPostProcessingThreads(int numThreads)
                     postProcessingQueue_.pop();
                 }
 
-                FrameBufferToUDP(item.frameNumber, item.buffer);
+                FrameBufferToUDP(item.frameNumber, item.buffer, item.gainMsg);
             }
         });
     }
@@ -1265,9 +1304,9 @@ inline void Aperture::ApplyWhiteBalanceToMosaic_BGGR(
 		if (g < 0.0) g = 0.0;
 		return static_cast<uint32_t>(std::lround(g * 1024.0));
 	};
-	const uint32_t rQ = toQ10(gainMsg.r_gain);
+	const uint32_t rQ = toQ10(gainMsg.r_gain_apply);
 	const uint32_t gQ = toQ10(1.0);
-	const uint32_t bQ = toQ10(gainMsg.b_gain);
+	const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
 
 	// Saturating multiply: (v * gainQ + 512) >> 10, clamped to 65535
 	auto mulSatQ10 = [](uint32_t v, uint32_t gainQ) -> uint16_t {
@@ -1395,4 +1434,58 @@ uint32_t Aperture::ParseBusAndAddressCameraId(const std::string& libcameraId)
     const uint32_t addr = static_cast<uint32_t>(std::stoul(addrPart, nullptr, 16));
 
     return (bus << 16) | addr;
+}
+
+bool Aperture::ReceiveGainReply()
+{
+    GainReply reply{};
+
+    const ssize_t bytes = controlClnt_.ReceiveFromServer(reply);
+
+    if (bytes == 0) {
+        return false; // nothing available
+    }
+
+    if (bytes < 0) {
+        return false; // real error
+    }
+
+    if (bytes != static_cast<ssize_t>(sizeof(GainReply))) {
+        std::cerr << "ReceiveGainReply: wrong size: " << bytes << '\n';
+        return false;
+    }
+
+    if (reply.header.type != MessageType::GainReply) {
+        return false;
+    }
+
+    if (reply.header.version != 1) {
+        return false;
+    }
+
+    HandleGainReply(reply);
+    return true;
+}
+
+void Aperture::HandleGainReply(const GainReply& reply)
+{
+    if (reply.status != 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(gainMutex_);
+	latestRGainApply_ = reply.r_gain_apply;
+	latestBGainApply_ = reply.b_gain_apply;
+	latestGainFrameId_ = reply.frame_id;
+	gainValid_ = true;
+}
+
+bool Aperture::RunControlLoop()
+{
+    while (running_) {
+        if (!ReceiveGainReply()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    return true;
 }

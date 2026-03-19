@@ -34,23 +34,52 @@ namespace DASPi{
     }
     
     template<class T>
-    ssize_t UDPClnt::ReceiveFromServer(T &buffer){
-#ifdef VERBATIUM_COUT
-//    std::cout << "Receive from server" << std::endl;
-#endif
-    
-        static_assert(std::is_standard_layout_v<T>, "T must be standard layout");
-        static_assert(std::is_trivially_copyable_v<T>, "T must be trivially copyable");
+    ssize_t UDPClnt::ReceiveFromServer(T& buffer)
+    {
+        static_assert(std::is_standard_layout_v<T>);
+        static_assert(std::is_trivially_copyable_v<T>);
     
         sockaddr_in sender{};
         socklen_t senderLen = sizeof(sender);
     
-        return recvfrom(sockfd_,
-                        &buffer,
-                        sizeof(T),
-                        0,
-                        reinterpret_cast<sockaddr*>(&sender),
-                        &senderLen);
+        const ssize_t received = recvfrom(
+            sockfd_,
+            &buffer,
+            sizeof(T),
+            0,
+            reinterpret_cast<sockaddr*>(&sender),
+            &senderLen
+        );
+    
+        if (received < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return 0; // no data available right now
+            }
+            perror("recvfrom failed");
+            return -1;
+        }
+    
+        return received;
     }
+    
+    //template<class T>
+    //ssize_t UDPClnt::ReceiveFromServer(T &buffer){
+//#ifdef VERBATIUM_COUT
+////    std::cout << "Receive from server" << std::endl;
+//#endif
+    
+        //static_assert(std::is_standard_layout_v<T>, "T must be standard layout");
+        //static_assert(std::is_trivially_copyable_v<T>, "T must be trivially copyable");
+    
+        //sockaddr_in sender{};
+        //socklen_t senderLen = sizeof(sender);
+    
+        //return recvfrom(sockfd_,
+                        //&buffer,
+                        //sizeof(T),
+                        //0,
+                        //reinterpret_cast<sockaddr*>(&sender),
+                        //&senderLen);
+    //}
 
 };//ending namespace DASPi

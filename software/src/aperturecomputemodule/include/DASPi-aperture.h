@@ -25,6 +25,7 @@
 #include "event_loop.h"
 #include "DASPi-logger.h"
 #include "DASPi-udp-srv.h"
+#include "DASPi-udp-clnt.h"
 #include "DASPi-udpframe.h"
 #include "DASPi-shapefunctiondatapacket.h"
 #include "DASPi-overlapshapefunction.h"
@@ -114,7 +115,8 @@ namespace DASPi{
         static constexpr double nonOverlapScale_ = sf_t::nonOverlapScale_;
       
     public:
-        UDPSrv udpSrv_;
+        UDPSrv frameSrv_;
+        UDPClnt controlClnt_;
     
     public:
         Aperture(const std::string clientIp, const size_t port);
@@ -151,7 +153,9 @@ namespace DASPi{
             void constexpr FrameBufferTransformation(input_t&& input, const GainMsg &gainMsg, sfdp_t& output, const size_t numThreads);
         //template<typename T0> void constexpr FrameBufferTransformation2(T0&& input, std::vector<uint16_t>& output, const size_t numThreads);
         
-        void FrameBufferToUDP(const uint64_t frameNumber, const libcamera::FrameBuffer *buffer);
+        void FrameBufferToUDP(const uint64_t frameNumber,
+                      const libcamera::FrameBuffer *buffer,
+                      const GainMsg& gainMsg);
         void* StartCaptureThread(void* arg);
         bool ContinuousCapture(unsigned int index=0);
         void CaptureLoop(unsigned int index);
@@ -168,6 +172,19 @@ namespace DASPi{
         std::string ExtractCameraBusAddr(const std::string& libcameraId);
         uint32_t ParseBusAndAddressCameraId(const std::string& libcameraId);
 
+    private:
+        std::thread controlThread_;
+        
+        mutable std::mutex gainMutex_;
+        //float latestGain_{1.0f};
+        float latestRGainApply_{1.0f};
+        float latestBGainApply_{1.0f};
+        uint32_t latestGainFrameId_{0};
+        bool gainValid_{false};
+        
+        bool ReceiveGainReply();
+        void HandleGainReply(const GainReply& reply);
+        bool RunControlLoop();
         
     };
 

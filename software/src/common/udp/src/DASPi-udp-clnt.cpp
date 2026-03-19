@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <fcntl.h>
 #include "DASPi-udp-clnt.h"
 #include "DASPi-framepacket.h"
 
@@ -585,4 +586,26 @@ void UDPClnt::FlushSocket()
         std::cout << "Flushed " << received << " bytes from socket" << std::endl;
 #endif
     }
+}
+
+int UDPClnt::SetNonBlocking(bool enabled)
+{
+    int flags = fcntl(sockfd_, F_GETFL, 0);
+    if (flags < 0) {
+        perror("fcntl(F_GETFL) failed");
+        return -1;
+    }
+
+    if (enabled) {
+        flags |= O_NONBLOCK;
+    } else {
+        flags &= ~O_NONBLOCK;
+    }
+
+    if (fcntl(sockfd_, F_SETFL, flags) < 0) {
+        perror("fcntl(F_SETFL) failed");
+        return -1;
+    }
+
+    return 0;
 }
