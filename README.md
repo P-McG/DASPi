@@ -18,33 +18,52 @@ Raspberry Pi Camera Cable Standard - Mini - 200mm V2
 ### USB-hub
 USB 2.0 Hub Type-C Multi Safety 10 Ports Powered, with AC Adapter, Aluminum USB Splitter with Cooling Fan - Type C
 ## Repo layout
-~/DASPi
-└── software
-    ├── build
-    ├── dist
-    ├── docs
-    ├── scripts
-    └── src
-        ├── aperturecomputemodule
-        │   ├── include
-        │   ├── pch
-        │   └── src
-        ├── common
-        │   ├── logger
-        │   │   └── include
-        │   ├── scopedtimer
-        │   │   └── include
-        │   ├── shapefunction
-        │   │   ├── include
-        │   │   └── src
-        │   └── udp
-        │       ├── include
-        │       └── src
-        └── computemodule
-            ├── include
-            └── src
-                └── bittransformation
-                    └── include
+```.
+├── LICENSE
+├── README.md
+├── software
+│   ├── build
+│   ├── dist
+│   │   ├── aperturecomputemodule
+│   │   │   └── aperturecomputemodule
+│   │   └── computemodule
+│   │       └── computemodule
+│   ├── docs
+│   ├── scripts
+│   │   ├── camera_dashboard.sh
+│   │   ├── common_deploy.sh
+│   │   ├── distribute_and_run_aperturecomputemodule_code.sh
+│   │   ├── distribute_and_run_computemodule_code.sh
+│   │   ├── fetch_files.sh
+│   │   ├── monitor_aperture_nodes.sh
+│   │   └── update_sysroot.sh
+│   └── src
+│       ├── aperturecomputemodule
+│       │   ├── cross-aperturecomputemodule.txt
+│       │   ├── include
+│       │   ├── meson.build
+│       │   ├── pch
+│       │   ├── src
+│       │   └── TODO.md
+│       ├── common
+│       │   ├── include
+│       │   ├── logger
+│       │   ├── meson.build
+│       │   ├── scopedtimer
+│       │   ├── shapefunction
+│       │   └── udp
+│       ├── computemodule
+│       │   ├── cross-computemodule.txt
+│       │   ├── include
+│       │   ├── meson.build
+│       │   ├── src
+│       │   └── TODO.md
+│       ├── meson.build
+│       └── meson_options.txt
+├── structure.txt
+└── TODO.md
+
+250 directories, 132 files
 
 
 ## Build prerequisites for Compute-Module
