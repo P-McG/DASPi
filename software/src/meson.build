@@ -9,6 +9,7 @@ project('DASPi', 'c', 'cpp',
 
 add_project_arguments('-Wno-unused-parameter', language : 'cpp')
 
+subdir('common')
 subdir('common/logger')
 subdir('common/scopedtimer')
 subdir('common/shapefunction')

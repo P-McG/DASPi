@@ -1,6 +1,5 @@
-aperture_inc = include_directories(
-  'include',
-)
+common_inc = include_directories('../common/include')
+aperture_inc = include_directories('include')
 
 aperture_src = files(
   'src/main.cpp',
@@ -24,6 +23,6 @@ aperture_deps = [
 executable(
   'aperturecomputemodule',
   aperture_src,
-  include_directories : aperture_inc,
+  include_directories : [common_inc, aperture_inc],
   dependencies : aperture_deps,
 )
