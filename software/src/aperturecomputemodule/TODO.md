@@ -7,3 +7,5 @@
 -[ ] Add timeout-based control loop
 -[ ] Validate struct packing across machines (ARM vs x86 ⚠️)
 -[ ] poll() or epoll() on the control socket
+-[ ] add per-region valid sizes to ShapeFunctionDataPacket and have TakeContiguousMemory() serialize only valid elements, or switch the masking function to write directly into the fixed-size destination layout.
+-[ ] next best step is to update GainMsg/FrameHeader or FramePacket to carry std::array<uint32_t, 4> region_sizes.

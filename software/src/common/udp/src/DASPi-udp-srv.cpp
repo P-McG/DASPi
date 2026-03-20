@@ -495,25 +495,28 @@ bool UDPSrv::TrySendFramesInOrder() {
     //return framePacket;
 //}
 
-FramePacket UDPSrv::CreateFramePacket(const GainMsg &gainMsg, std::vector<uint16_t>&& buffer) {
-    log_verbose("[USPSrv::CreateFramePacket]");
+FramePacket UDPSrv::CreateFramePacket(
+    const GainMsg& gainMsg,
+    const std::array<uint32_t, NUM_REGIONS>& regionSizes,
+    std::vector<uint16_t>&& buffer)
+{
+    FramePacket pkt{};
 
-    FramePacket framePacket;
-    framePacket.payload_ = std::move(buffer);
+    pkt.payload = std::move(buffer);
 
-    framePacket.header_.magic_  = htonl(MAGIC_NUMBER);
-    framePacket.header_.gainMsg = gainMsg;
-    
-    std::cout << "framePacket.payload_.size():" << framePacket.payload_.size() << std::endl;
+    pkt.header.magic_ = htonl(MAGIC_NUMBER);
+    pkt.header.gainMsg = gainMsg;
 
-    // BYTES, not elements:
-    const uint32_t payloadBytes = static_cast<uint32_t>(framePacket.payload_.size() * sizeof(uint16_t));
-    framePacket.header_.payloadSize_ = htonl(payloadBytes);
+    pkt.header.payloadSize_ =
+        htonl(static_cast<uint32_t>(pkt.payload.size() * sizeof(uint16_t)));
 
-    // Checksum over the BYTES you will transmit:
-    const uint32_t checksum = SimpleChecksum(framePacket.payload_as_bytes());
-    framePacket.header_.checksum_ = htonl(checksum);
+    for (size_t i = 0; i < NUM_REGIONS; ++i) {
+        pkt.header.regionSizes_[i] = htonl(regionSizes[i]);
+    }
 
-    return framePacket;
+    pkt.header.checksum_ =
+        htonl(SimpleChecksum(pkt.payload_as_bytes()));
+
+    return pkt;
 }
 

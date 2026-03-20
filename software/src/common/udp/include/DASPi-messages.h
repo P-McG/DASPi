@@ -14,48 +14,47 @@ enum class MessageType : uint16_t {
 };
 
 struct MessageHeader {
-    MessageType type{MessageType::Unknown};
-    uint16_t    version{1};
-};
+    MessageType type{MessageType::Unknown}; // 2
+    uint16_t    version{1};                 // 2
+};                                          // total 4
 
 struct GainMsg {
-    MessageHeader header{MessageType::GainMsg, 1};
-
-    uint32_t camera_id{};
-    uint32_t frame_id{};
-
-    float mean_brightness{};
-    float target_brightness{};
-
-    float r_gain{};
-    float b_gain{};
-
-    float r_gain_apply{};
-    float b_gain_apply{};
-
-    float exposure_us{};
-    float analogue_gain{};
-};
+    MessageHeader header;       // 4
+    uint32_t camera_id;         // 4
+    uint32_t frame_id;          // 4
+    float mean_brightness;      // 4
+    float target_brightness;    // 4
+    float r_gain;               // 4
+    float b_gain;               // 4
+    float r_gain_apply;         // 4
+    float b_gain_apply;         // 4
+    float exposure_us;          // 4
+    float analogue_gain;        // 4
+};                              // total 44
 
 struct GainReply {
-    MessageHeader header{MessageType::GainReply, 1};
-
-    uint32_t camera_id{};
-    uint32_t frame_id{};
-
-    float requested_gain{};
-    float r_gain_apply{};
-    float b_gain_apply{};
-
-    uint32_t status{}; // 0 = OK
-};
+    MessageHeader header;       // 4
+    uint32_t camera_id;         // 4
+    uint32_t frame_id;          // 4
+    float requested_gain;       // 4
+    float r_gain_apply;         // 4
+    float b_gain_apply;         // 4
+    uint32_t status;            // 4
+};                              // total 28
 
 static_assert(std::is_standard_layout_v<MessageHeader>);
 static_assert(std::is_standard_layout_v<GainMsg>);
 static_assert(std::is_standard_layout_v<GainReply>);
+
 static_assert(std::is_trivially_copyable_v<MessageHeader>);
 static_assert(std::is_trivially_copyable_v<GainMsg>);
 static_assert(std::is_trivially_copyable_v<GainReply>);
 
+static_assert(sizeof(MessageHeader) == 4);
+static_assert(sizeof(GainMsg) == 44);
+static_assert(sizeof(GainReply) == 28);
+
+static_assert(alignof(GainMsg) == 4);
+static_assert(alignof(GainReply) == 4);
 
 } // namespace DASPi

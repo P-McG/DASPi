@@ -63,8 +63,7 @@ namespace DASPi{
         void SubmitFrameOutput(uint64_t, FramePacket&&);
         bool TrySendFramesInOrder();
         void SendToServer(const uint8_t* buffer, size_t bufferLength);
-        FramePacket CreateFramePacket(const GainMsg &gainMsg, std::vector<uint16_t>&& buffer);
-        //template<typename T0>
+        FramePacket CreateFramePacket(const GainMsg& gainMsg, const std::array<uint32_t, sfdp_t::NUM_REGIONS>& regionSizes, std::vector<uint16_t>&& buffer);        //template<typename T0>
         //FramePacket CreateFramePacket(T0&& buffer);
         
         //FramePacket CreateFramePacket(std::vector<uint8_t>&& buffer);

@@ -54,6 +54,8 @@ namespace DASPi{
                     },
                     0.75
                 >;
+        static_assert(NUM_REGIONS == sfdp_t::NumberOfRegions(),
+          "NUM_REGIONS must match ShapeFunctionDataPacket regions");
     
         const int processingThreads_{4};
         const int chunkThreads_{4};
@@ -176,7 +178,6 @@ namespace DASPi{
         std::thread controlThread_;
         
         mutable std::mutex gainMutex_;
-        //float latestGain_{1.0f};
         float latestRGainApply_{1.0f};
         float latestBGainApply_{1.0f};
         uint32_t latestGainFrameId_{0};

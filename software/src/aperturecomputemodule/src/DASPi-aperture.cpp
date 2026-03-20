@@ -27,22 +27,16 @@ using namespace libcamera;
 
 // Constructor
 Aperture::Aperture(const std::string clientIp, const size_t port)
-	:frameSrv_{UDPSrv(clientIp, port)},
-	  controlClnt_{UDPClnt(INADDR_ANY /* or local control IP */,
-						   static_cast<int>(port + 1),
-						   inet_addr(clientIp.c_str()))} 
+    : frameSrv_{clientIp, port},
+      controlClnt_{INADDR_ANY,
+                   static_cast<int>(port + 1),
+                   inet_addr(clientIp.c_str())}
 {
-	 log_verbose("[Aperture::Aperture]");
-	 
-	 if (controlClnt_.SetNonBlocking(true) < 0) {
-		std::cerr << "Failed to set control socket non-blocking\n";
-	 }
-	 running_ = true;
-	 
-	 CreateCameraManager();
-	 AquireCamera();
-	 Stream();
-	 fpsTimer_=std::chrono::high_resolution_clock::now();
+    log_verbose("[Aperture::Aperture]");
+    CreateCameraManager();
+    AquireCamera();
+    Stream();
+    fpsTimer_ = std::chrono::high_resolution_clock::now();
 }
 
 // Destructor
@@ -54,8 +48,8 @@ Aperture::Aperture(const std::string clientIp, const size_t port)
 */
 Aperture::~Aperture(){
     log_verbose("[Aperture::~Aperture]");
-    running_ = false;
 	
+    running_ = false;
 	if (controlThread_.joinable())
 		controlThread_.join();
 	
@@ -385,48 +379,91 @@ std::unique_ptr<libcamera::Request> Aperture::CreateRequestWithControls(){
 }
 
 
-void Aperture::FrameCapture(unsigned int index) {
-	log_verbose("[FrameCapture]");
+void Aperture::FrameCapture(unsigned int index)
+{
+    log_verbose("[FrameCapture]");
 
     if (!camera_) {
-        std::cerr << "camera_ is NULL, aborting FrameCapture!" << std::endl;
-        exit(EXIT_FAILURE);
+        std::cerr << "[FrameCapture] camera_ is null" << std::endl;
+        std::exit(EXIT_FAILURE);
     }
 
-    const auto &buffers = allocator_->buffers(config_->at(index).stream());
-    std::cout << "buffers.size: " << buffers.size() << std::endl;
+    if (!config_) {
+        std::cerr << "[FrameCapture] config_ is null" << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
 
-    for (auto &buffer : buffers) {
-        std::cout << "Creating Request..." << std::endl;
-		
+    if (!allocator_) {
+        std::cerr << "[FrameCapture] allocator_ is null" << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+
+    if (index >= config_->size()) {
+        std::cerr << "[FrameCapture] invalid stream index: " << index
+                  << " config_->size()=" << config_->size() << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+
+    auto *stream = config_->at(index).stream();
+    if (!stream) {
+        std::cerr << "[FrameCapture] stream is null for index " << index << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+
+    const auto &buffers = allocator_->buffers(stream);
+    std::cout << "[FrameCapture] buffers.size()=" << buffers.size() << std::endl;
+
+    if (buffers.empty()) {
+        std::cerr << "[FrameCapture] no buffers allocated for stream" << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+
+    requests_.clear();
+    bufferMap_.clear();
+    requests_.reserve(buffers.size());
+
+    for (const auto &buffer : buffers) {
+        if (!buffer) {
+            std::cerr << "[FrameCapture] encountered null buffer" << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+
+        std::cout << "[FrameCapture] Creating Request..." << std::endl;
 
         auto request = camera_->createRequest();
         if (!request) {
-            std::cerr << "Can't create request" << std::endl;
-            exit(EXIT_FAILURE);
+            std::cerr << "[FrameCapture] createRequest() failed" << std::endl;
+            std::exit(EXIT_FAILURE);
         }
 
-        int ret = request->addBuffer(config_->at(index).stream(), buffer.get());
-        if (ret < 0) {
-            std::cerr << "Can't set buffer for request" << std::endl;
-            exit(EXIT_FAILURE);
-        }
-		
-		//const std::array<int64_t, 2> duration = {33333, 33333}; // min = max = 1/30 s
-		//request->controls().set(libcamera::controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(duration));
-	
-		//// Change the exposure
-		//SetAeCompensationOnRequest(request.get(), +3.0f);
+        std::cout << "[FrameCapture] created request=" << request.get() << std::endl;
 
-		bufferMap_[request.get()] = buffer.get();
+        const int addRet = request->addBuffer(stream, buffer.get());
+        std::cout << "[FrameCapture] addBuffer req=" << request.get()
+                  << " stream=" << stream
+                  << " buffer=" << buffer.get()
+                  << " ret=" << addRet
+                  << std::endl;
+
+        if (addRet < 0) {
+            std::cerr << "[FrameCapture] addBuffer failed for request=" << request.get()
+                      << " ret=" << addRet << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+
+        std::cout << "[FrameCapture] request->buffers().size()="
+                  << request->buffers().size() << std::endl;
+
+        bufferMap_[request.get()] = buffer.get();
         requests_.push_back(std::move(request));
     }
-	
-	std::cout << "Stored request pointers in requests_:" << std::endl;
-	for (const auto& req : requests_) {
-		std::cout << "  Request at: " << req.get() << std::endl;
-	}
-	
+
+    std::cout << "[FrameCapture] Stored request pointers in requests_:" << std::endl;
+    for (const auto &req : requests_) {
+        std::cout << "  Request at: " << req.get()
+                  << " buffers=" << req->buffers().size()
+                  << std::endl;
+    }
 }
 
 //Not used
@@ -452,14 +489,28 @@ void Aperture::QueueCameraRequests(bool isRequests){
  *
  * The Slot receives the Request as a parameter.
  */
-void Aperture::RequestComplete(libcamera::Request *request){
-	log_verbose("[RequestComplete]");
-	if (request->status() == libcamera::Request::RequestCancelled)
-		return;
-
-    loop_.callLater(std::bind([this, request]() { this->ProcessRequest(request); }));
+ void Aperture::RequestComplete(libcamera::Request *request){
+    std::cout << "[RequestComplete] req=" << request
+              << " status=" << static_cast<int>(request->status())
+              << " seq=" << request->sequence() << std::endl;
+			  
+	std::cout << ">>> REQUEST COMPLETE FIRED <<<" << std::endl;
 	
+    if (request->status() == libcamera::Request::RequestCancelled)
+        return;
+
+    ProcessRequestImpl(request);
 }
+//void Aperture::RequestComplete(libcamera::Request *request){
+    //std::cout << "[RequestComplete] req=" << request
+              //<< " status=" << static_cast<int>(request->status())
+              //<< " seq=" << request->sequence() << std::endl;
+
+    //if (request->status() == libcamera::Request::RequestCancelled)
+        //return;
+
+    //loop_.callLater(std::bind([this, request]() { this->ProcessRequest(request); }));
+//}
 
 
 void Aperture::StartRequestProcessingThreads(int numThreads) {
@@ -538,6 +589,7 @@ void Aperture::ProcessRequestImpl(libcamera::Request *request)
         std::cerr << "ProcessRequestImpl: null request\n";
         return;
     }
+	
 
     const uint64_t completedFrameId = request->sequence();
 
@@ -572,18 +624,28 @@ void Aperture::ProcessRequestImpl(libcamera::Request *request)
         constexpr size_t MAX_QUEUE_SIZE = 256;
         const size_t needed = completedBuffers.size();
 
-        if (postProcessingQueue_.size() + needed <= MAX_QUEUE_SIZE) {
-            for (const auto &[stream, buffer] : completedBuffers) {
-                postProcessingQueue_.push(PostProcessItem{
-                    .frameNumber = completedFrameId,
-                    .buffer = buffer,
-                    .gainMsg = gainMsg
-                });
-            }
-            postProcessingQueueCV_.notify_all();
-        }
-    }
-
+		 if (postProcessingQueue_.size() + needed <= MAX_QUEUE_SIZE) {
+			for (const auto &[stream, buffer] : completedBuffers) {
+				std::cout << "[PostQueuePush] frame=" << completedFrameId
+						  << " buffers=" << completedBuffers.size()
+						  << " queue_size_before=" << postProcessingQueue_.size()
+						  << " buffer=" << buffer
+						  << std::endl;
+		
+				postProcessingQueue_.push(PostProcessItem{
+					.frameNumber = completedFrameId,
+					.buffer = buffer,
+					.gainMsg = gainMsg
+				});
+			}
+			postProcessingQueueCV_.notify_all();
+		} else {
+			std::cerr << "[ProcessRequestImpl] postProcessingQueue full, dropping frame "
+					  << completedFrameId
+					  << " queue_size=" << postProcessingQueue_.size()
+					  << " needed=" << needed << std::endl;
+		}
+	}
     request->reuse();
 
     auto it = bufferMap_.find(request);
@@ -611,6 +673,7 @@ void Aperture::ProcessRequestImpl(libcamera::Request *request)
 
 void Aperture::PostProcessingThread()
 {
+	log_verbose("[Aperture::PostProcessingThread]");
     while (true) {
         PostProcessItem item;
 
@@ -627,6 +690,9 @@ void Aperture::PostProcessingThread()
 
             item = std::move(postProcessingQueue_.front());
             postProcessingQueue_.pop();
+			
+			std::cout << "[PostProcessingThread] frame=" << item.frameNumber
+					  << " buffer=" << item.buffer << std::endl;			
         }
 
         FrameBufferToUDP(item.frameNumber, item.buffer, item.gainMsg);
@@ -730,7 +796,9 @@ void Aperture::PostProcessingThread()
 
 
 void Aperture::ProcessRequest(libcamera::Request* request) {
-	log_verbose("[Aperture::ProcessingRequest]");
+    std::cout << "[ProcessRequest] req=" << request
+              << " seq=" << request->sequence() << std::endl;
+
     {
         std::lock_guard<std::mutex> lock(queueMutex_);
         requestQueue_.push(request);
@@ -853,6 +921,7 @@ void Aperture::StartCapture() {
  * as buffer completions, an event loop has to be run.
  */
 void Aperture::RunEventLoop(int timeout){
+	std::cout << "[EventLoop] ENTER" << std::endl;
 	log_verbose("[Aperture::RunEventLoop]");
 
 	loop_.timeout(timeout);
@@ -864,7 +933,10 @@ void Aperture::FrameBufferToUDP(const uint64_t frameNumber,
                                 const libcamera::FrameBuffer *buffer,
                                 const GainMsg& gainMsg)
 {
-    log_verbose("[FrameBufferToUDP]");
+    log_verbose("[Aperture::FrameBufferToUDP]");
+
+	std::cout << "[FrameBufferToUDP] frame=" << frameNumber
+          << " buffer=" << buffer << std::endl;
 
     static int producedFrames = 0;
     producedFrames++;
@@ -882,12 +954,18 @@ void Aperture::FrameBufferToUDP(const uint64_t frameNumber,
     uint16_t *mappedData = static_cast<uint16_t *>(
         mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0));
 
+
+
     if (mappedData == MAP_FAILED) {
         perror("Failed to mmap plane data");
         std::exit(1);
     }
 
     std::span<uint16_t> mappedDataSpan(mappedData, plane.length / sizeof(uint16_t));
+
+	std::cout << "[FrameBufferToUDP] plane.length=" << plane.length
+			  << " span.size=" << mappedDataSpan.size()
+			  << std::endl;
 
     sfdp_t sfdp(sf_);
 
@@ -917,14 +995,57 @@ void Aperture::FrameBufferToUDP(const uint64_t frameNumber,
 
     FrameBufferTransformation(mappedDataSpan, appliedGainMsg, sfdp, chunkThreads_);
 
+	auto data = sfdp.TakeContiguousMemory();
+	
+	std::array<uint32_t, sfdp_t::NUM_REGIONS> regionSizes{};
+	
+	for (size_t i = 0; i < sfdp_t::NUM_REGIONS; ++i) {
+		regionSizes[i] = static_cast<uint32_t>(sfdp.RegionValidSize(i));
+	}
+	size_t totalElems = 0;
+	
+	for (size_t i = 0; i < sfdp_t::NUM_REGIONS; ++i) {
+		const auto valid = sfdp.RegionValidSize(i);
+		std::cout << "[TX] region " << i
+				  << " valid=" << valid
+				  << " capacity=" << sfdp[i].size()
+				  << std::endl;
+		totalElems += valid;
+	}
+	
+	auto data = sfdp.TakeContiguousMemory();
+	
+	std::cout << "[TX] packed payload elems=" << data.size()
+			  << " bytes=" << data.size() * sizeof(uint16_t)
+			  << std::endl;
+	
+	if (data.size() != totalElems) {
+		std::cerr << "[TX ERROR] packed element count mismatch: "
+				  << "sum(validSizes)=" << totalElems
+				  << " packed=" << data.size()
+				  << std::endl;
+		std::exit(EXIT_FAILURE);
+	}
+	
 	frameSrv_.SubmitFrameOutput(
 		frameNumber,
-		frameSrv_.CreateFramePacket(appliedGainMsg, sfdp.TakeContiguousMemory())
+		frameSrv_.CreateFramePacket(
+			appliedGainMsg,
+			regionSizes,
+			std::move(data)
+		)
 	);
 
     if (munmap(mappedData, plane.length) != 0) {
         perror("Failed to unmap plane data");
     }
+	
+	std::cout << "[GainApply] frame=" << frameNumber
+          << " r_gain=" << appliedGainMsg.r_gain
+          << " b_gain=" << appliedGainMsg.b_gain
+          << " r_gain_apply=" << appliedGainMsg.r_gain_apply
+          << " b_gain_apply=" << appliedGainMsg.b_gain_apply
+          << std::endl;
 }
 
 void* Aperture::StartCaptureThread(void* arg){
@@ -941,65 +1062,183 @@ void* Aperture::StartCaptureThread(void* arg){
 }
 
 bool Aperture::ContinuousCapture(unsigned int index){
-	log_verbose("[Aperture::ContinuousCapture]");
+	std::cout << ">>> ENTER ContinuousCapture <<<" << std::endl;
+    log_verbose("[Aperture::ContinuousCapture]");
 
-    //Prep for capture
-    requests_.clear();//Clear previous old requests
-    SignalAndSlots();// Assign what to do with the requests
-    BufferAllocation();//Allocate a buffer for a request.
-	
-    //Start Capture on another thread
-	StartUDPSender();
-    StartRequestProcessingThreads(processingThreads_); // before capture starts'
-	StartPostProcessingThreads(processingThreads_);
-	
-	// Start control-reply loop
-	controlThread_ = std::thread([this]() {
-		pthread_setname_np(pthread_self(), "GainCtrl");
-		this->RunControlLoop();
-	});
-		   
-    std::thread t1([this]() {
-		cpu_set_t cpuset;
-		CPU_ZERO(&cpuset);
-		CPU_SET(0, &cpuset);  // Pin to CPU core 0
-		//pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
-		pthread_setname_np(pthread_self(), "Capture");
+    requests_.clear();
 
-        this->StartCaptureThread(nullptr);
-    });
-    
-    // Loop while getting external requests from udp source
+    SignalAndSlots();
+    BufferAllocation();
+
+    StartUDPSender();
+    StartRequestProcessingThreads(processingThreads_);
+    StartPostProcessingThreads(processingThreads_);
+
+    FrameCapture(index);
+
+	std::cout << "[DEBUG] Before start()" << std::endl;
 	
-    while(!isStartCaptureThreadDone_){
-      if(isStartCaptureRunning_ && !isStartCaptureThreadDone_){// only do this if start capture is ready and running
-           CaptureLoop(index);
-		   break;
+	if (camera_->start() != 0) {
+		std::cerr << "Camera failed to start" << std::endl;
+		return false;
+	}
+	
+	std::cout << "[DEBUG] After start()" << std::endl;
+
+    std::cout << "Camera started OK" << std::endl;
+    std::cout << "Queuing " << requests_.size() << " requests..." << std::endl;
+
+    for (auto &request : requests_) {
+        int ret = camera_->queueRequest(request.get());
+
+        std::cout << "[queueRequest] req=" << request.get()
+                  << " ret=" << ret << std::endl;
+
+        if (ret < 0) {
+            std::cerr << "Failed to queue request" << std::endl;
+        } else {
+            pendingRequests_++;
         }
     }
-               
-    // Join the thread to clean up resources
-    t1.join();
+
+    RunEventLoop(timeout_);
+
+    if (camera_->stop() != 0) {
+        std::cerr << "Camera failed to stop" << std::endl;
+    }
+
     return true;
 }
 
+//bool Aperture::ContinuousCapture(unsigned int index){
+    //log_verbose("[Aperture::ContinuousCapture]");
+
+    //requests_.clear();
+	
+    //SignalAndSlots();
+    //BufferAllocation();
+
+    //StartUDPSender();
+    //StartRequestProcessingThreads(processingThreads_);
+    //StartPostProcessingThreads(processingThreads_);
+
+    //FrameCapture(index);
+
+    //if (camera_->start() != 0) {
+        //std::cerr << "Camera failed to start" << std::endl;
+        //return false;
+    //}
+
+    //isStartCaptureRunning_ = true;
+
+    //std::cout << "Queuing " << requests_.size() << " requests..." << std::endl;
+    //for (auto &request : requests_) {
+        //int ret = camera_->queueRequest(request.get());
+
+        //std::cout << "[queueRequest] req=" << request.get()
+                  //<< " ret=" << ret
+                  //<< " pending=" << pendingRequests_.load()
+                  //<< std::endl;
+
+        //if (ret >= 0) pendingRequests_++;
+        //else std::cerr << "Failed to queue request" << std::endl;
+    //}
+
+    //RunEventLoop(timeout_);
+
+    //isStartCaptureRunning_ = false;
+
+    //if (camera_->stop() != 0) {
+        //std::cerr << "Camera failed to stop" << std::endl;
+    //}
+
+    //return true;
+//}
+
+
+//bool Aperture::ContinuousCapture(unsigned int index){
+	//log_verbose("[Aperture::ContinuousCapture]");
+
+    ////Prep for capture
+    //requests_.clear();//Clear previous old requests
+    //SignalAndSlots();// Assign what to do with the requests
+    //BufferAllocation();//Allocate a buffer for a request.
+	
+    ////Start Capture on another thread
+	//StartUDPSender();
+    //StartRequestProcessingThreads(processingThreads_); // before capture starts'
+	//StartPostProcessingThreads(processingThreads_);
+	
+	//// Start control-reply loop
+	//controlThread_ = std::thread([this]() {
+		//pthread_setname_np(pthread_self(), "GainCtrl");
+		//this->RunControlLoop();
+	//});
+		   
+    //std::thread t1([this]() {
+		//cpu_set_t cpuset;
+		//CPU_ZERO(&cpuset);
+		//CPU_SET(0, &cpuset);  // Pin to CPU core 0
+		////pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+		//pthread_setname_np(pthread_self(), "Capture");
+
+        //this->StartCaptureThread(nullptr);
+    //});
+    
+    //// Loop while getting external requests from udp source
+	
+    //while(!isStartCaptureThreadDone_){
+      //if(isStartCaptureRunning_ && !isStartCaptureThreadDone_){// only do this if start capture is ready and running
+           //CaptureLoop(index);
+		   //break;
+        //}
+    //}
+               
+    //// Join the thread to clean up resources
+    //t1.join();
+    //return true;
+//}
 
 void Aperture::CaptureLoop(unsigned int index) {
-	log_verbose("[Aperture::CaptureLoop]");
-    FrameCapture(index);  // One-time request creation
+    log_verbose("[Aperture::CaptureLoop]");
+    FrameCapture(index);
 
-	std::cout << "Queuing " << requests_.size() << " requests..." << std::endl;
-	for (auto &request : requests_) {
-		int ret = camera_->queueRequest(request.get());
-		if (ret >= 0) pendingRequests_++;
-		else std::cerr << "Failed to queue request" << std::endl;
-	}
-	
-	std::unique_lock<std::mutex> lock(mutex_);
-	condition_.wait(lock, [this] { return isStartCaptureThreadDone_.load(); });
+    std::cout << "Queuing " << requests_.size() << " requests..." << std::endl;
+    for (auto &request : requests_) {
+        int ret = camera_->queueRequest(request.get());
 
+        std::cout << "[queueRequest] req=" << request.get()
+                  << " ret=" << ret
+                  << " pending=" << pendingRequests_.load()
+                  << std::endl;
 
+        if (ret >= 0) pendingRequests_++;
+        else std::cerr << "Failed to queue request" << std::endl;
+    }
 }
+
+//void Aperture::CaptureLoop(unsigned int index) {
+	//log_verbose("[Aperture::CaptureLoop]");
+    //FrameCapture(index);  // One-time request creation
+
+	//std::cout << "Queuing " << requests_.size() << " requests..." << std::endl;
+	//for (auto &request : requests_) {
+		//int ret = camera_->queueRequest(request.get());
+		
+		//std::cout << "[queueRequest] req=" << request.get()
+          //<< " ret=" << ret
+          //<< " pending=" << pendingRequests_.load()
+          //<< std::endl;
+		  
+		//if (ret >= 0) pendingRequests_++;
+		//else std::cerr << "Failed to queue request" << std::endl;
+	//}
+	
+	//std::unique_lock<std::mutex> lock(mutex_);
+	//condition_.wait(lock, [this] { return isStartCaptureThreadDone_.load(); });
+
+
+//}
 
 
 
@@ -1441,13 +1680,8 @@ bool Aperture::ReceiveGainReply()
     GainReply reply{};
 
     const ssize_t bytes = controlClnt_.ReceiveFromServer(reply);
-
-    if (bytes == 0) {
-        return false; // nothing available
-    }
-
-    if (bytes < 0) {
-        return false; // real error
+    if (bytes <= 0) {
+        return false;
     }
 
     if (bytes != static_cast<ssize_t>(sizeof(GainReply))) {

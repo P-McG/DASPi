@@ -2,114 +2,99 @@
 #include <vector>
 #include <array>
 #include <span>
+#include <numeric>
+#include <cstring>
+#include <stdexcept>
 
 #include "DASPi-logger.h"
 #include "DASPi-overlapshapefunction.h"
 
-namespace DASPi{
-	template<size_t n, PointData center, DirectionData direction, double nonOverlapScale>
-	class ShapeFunctionDataPacket{
-		public:
-		using value_type = OverlapShapeFunction<n, center, direction, nonOverlapScale>;
-		
-		private:
-		static constexpr size_t n_ = n;
-		static constexpr PointData center_ = center;
-		static constexpr DirectionData direction_ = direction;
-		static constexpr double nonOverlapScale_ = nonOverlapScale;
-		std::vector<uint16_t> contiguousMemory_;
-		std::array<std::span<uint16_t>, n_+1> regions_;
-		
-		public:
-		// ShapeFunctionDataPackage
-		/*
-		 * Utility for udp tranmission that requires uint16_t pointer of contiguous memory
-		 */
-		 ShapeFunctionDataPacket(const OverlapShapeFunction<n, center, direction, nonOverlapScale> &sf)
-		 {
-			log_verbose("[ShapeFunctonDataPacket::ShapefunctionDataPacket]");
-			
-			log_verbose("Setup size");
-			std::array<size_t, n+1> s;
-			s[0] = sf.RegularPolygonalShapeFunction<n, center, direction>::size();
-			for(size_t i=0; i < n; i++)
-			    s[i+1] = sf.size(i);
-			
-			log_verbose("Set contiguousMemory");
-		    contiguousMemory_ = std::vector<uint16_t> (std::accumulate(s.begin(), s.end(), 0));
+namespace DASPi {
 
-			log_verbose("Partition it into spans or views");
-			regions_[0] = std::span<uint16_t>(contiguousMemory_.data(), s[0]);
-			
-			size_t accumulativeSize{s[0]};
-			for(size_t i=0; i < n; i++){
-				 regions_[i+1] = std::span<uint16_t>(contiguousMemory_.data() + accumulativeSize, s[i+1]);
-				 accumulativeSize += s[i+1];
-			}
+template<size_t n, PointData center, DirectionData direction, double nonOverlapScale>
+class ShapeFunctionDataPacket {
+public:
+    using value_type = OverlapShapeFunction<n, center, direction, nonOverlapScale>;
 
-			log_verbose("[ShapeFunctonDataPacket::ShapefunctionDataPacket] - End");
+private:
+    static constexpr size_t n_ = n;
 
-		 }
+    std::vector<uint16_t> contiguousMemory_;
+    std::array<std::span<uint16_t>, n_ + 1> regions_{};
+    std::array<size_t, n_ + 1> capacities_{};
+    std::array<size_t, n_ + 1> validSizes_{};
 
-         //void LoadUint8tToContiguousMemory( const std::vector<uint16_t>& input){
-			 //log_verbose("[ShapeFunctionDataPacket::LoadUint8tToContiguousMemory]");
-			 //if (size()*sizeof(uint16_t) != input.size()) {
-                //throw std::runtime_error("invalid size mismatch.");
-             //}
-			 //memcpy(contiguousMemory_.data(), reinterpret_cast<const uint16_t*>(input.data()), contiguousMemory_.size()*sizeof(uint16_t));
-		 //}
-		 
-         void LoadToContiguousMemory( const std::vector<uint16_t>& input){
-			 log_verbose("[ShapeFunctionDataPacket::LoadUint8tToContiguousMemory]");
-			 if (size()/**sizeof(uint16_t)*/ != input.size()) {
-                throw std::runtime_error("invalid size mismatch.");
-             }
-			 memcpy(contiguousMemory_.data(), /*reinterpret_cast<const uint16_t*>(*/input.data()/*)*/, contiguousMemory_.size()*sizeof(uint16_t));
-		 }
-		 
-		 // operator[]
- 		 /*
- 		  *  for a[x] = b
- 		  */
-	     std::span<uint16_t>& operator[](size_t i) { 
-			 return regions_[i]; 
-		 }   
-		 
-		 // operator[]        
-	     /*
-	      *  for a = b[x]
-	      */
-	     const std::span<uint16_t>& operator[](size_t i) const {
-			 return regions_[i]; 
-		 }
-		 
-		 uint16_t* RegionsUint8t(const size_t i){
-			 return reinterpret_cast<uint16_t*>(regions_[i].data());
-		 }
-		 
- 		 size_t RegionsUint8tByteSize(const size_t i){
-			 return regions_[i].size() * sizeof(uint16_t);
-		 }
+public:
+    ShapeFunctionDataPacket(const OverlapShapeFunction<n, center, direction, nonOverlapScale>& sf)
+    {
+        log_verbose("[ShapeFunctonDataPacket::ShapeFunctionDataPacket]");
 
-		 std::vector<uint16_t> ContiguousMemory(){
-			 return contiguousMemory_;
-		 }
-		 
-		 uint8_t* ContiguousMemoryUint8t(){
-			 return reinterpret_cast<uint8_t*>(contiguousMemory_.data());
-		 }
-		 
-		 // move ownership out (zero-copy)
-	     std::vector<uint16_t> TakeContiguousMemory() {
-	  		return std::move(contiguousMemory_); 
-		 }
-		 
-		 size_t size(){
-			 return contiguousMemory_.size();
-		 }
-		 
-		 size_t NumberOfRegions(){
-			 return n+1;
-		 }
-	};
-};//namespace DASPi
+        capacities_[0] = sf.RegularPolygonalShapeFunction<n, center, direction>::size();
+        for (size_t i = 0; i < n; ++i) {
+            capacities_[i + 1] = sf.size(i);
+        }
+
+        contiguousMemory_ = std::vector<uint16_t>(
+            std::accumulate(capacities_.begin(), capacities_.end(), size_t{0})
+        );
+
+        regions_[0] = std::span<uint16_t>(contiguousMemory_.data(), capacities_[0]);
+
+        size_t offset = capacities_[0];
+        for (size_t i = 0; i < n; ++i) {
+            regions_[i + 1] = std::span<uint16_t>(contiguousMemory_.data() + offset, capacities_[i + 1]);
+            offset += capacities_[i + 1];
+        }
+
+        validSizes_.fill(0);
+    }
+
+    std::span<uint16_t>& operator[](size_t i) { return regions_[i]; }
+    const std::span<uint16_t>& operator[](size_t i) const { return regions_[i]; }
+
+    size_t RegionCapacity(size_t i) const { return capacities_[i]; }
+    size_t RegionValidSize(size_t i) const { return validSizes_[i]; }
+
+    void SetRegionValidSize(size_t i, size_t valid)
+    {
+        if (i >= validSizes_.size()) {
+            throw std::out_of_range("region index out of range");
+        }
+        if (valid > capacities_[i]) {
+            throw std::runtime_error("valid region size exceeds capacity");
+        }
+        validSizes_[i] = valid;
+    }
+
+    void ResetValidSizes()
+    {
+        validSizes_.fill(0);
+    }
+
+    std::vector<uint16_t> TakeContiguousMemory()
+    {
+        size_t totalValid = std::accumulate(validSizes_.begin(), validSizes_.end(), size_t{0});
+        std::vector<uint16_t> packed;
+        packed.reserve(totalValid);
+
+        for (size_t i = 0; i < n_ + 1; ++i) {
+            packed.insert(packed.end(),
+                          regions_[i].begin(),
+                          regions_[i].begin() + static_cast<std::ptrdiff_t>(validSizes_[i]));
+        }
+
+        return packed;
+    }
+
+    size_t size() const
+    {
+        return contiguousMemory_.size();
+    }
+
+    static constexpr size_t NumberOfRegions() const
+    {
+        return n_ + 1;
+    }
+};
+
+} // namespace DASPi

@@ -520,6 +520,13 @@ namespace DASPi{
 			latestFrameId_ = reply.frame_id;
 			gainValid_ = true;
 		}
+		
+		std::cout << "[GainReply] camera_id=" << reply.camera_id
+          << " frame_id=" << reply.frame_id
+          << " requested_gain=" << reply.requested_gain
+          << " r_apply=" << reply.r_gain_apply
+          << " b_apply=" << reply.b_gain_apply
+          << std::endl;
 	}
 	
 	//template<size_t n>
