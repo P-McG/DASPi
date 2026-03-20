@@ -70,12 +70,14 @@ USB 2.0 Hub Type-C Multi Safety 10 Ports Powered, with AC Adapter, Aluminum USB 
 ### Host file On host
 Place in host file:
 
-```[ip_address_here] computemodule000
+```
+[ip_address_here] computemodule000
 [ip_address_here] aperturecomputemodule000
 .                      .
 .                      .
 .                      .
-[ip_address_here] aperturecomputemoduleNNN```
+[ip_address_here] aperturecomputemoduleNNN
+```
 
 sudo apt update
 sudo apt install -y tmux
@@ -84,7 +86,8 @@ sudo apt install -y tmux
 
 ### Host file On host
 Place in host file:
-```[ip_address_here] computemodule000
+```
+[ip_address_here] computemodule000
 [ip_address_here] aperturecomputemodule000
 .                      .
 .                      .
@@ -100,11 +103,13 @@ Set up the cross compiling sources for the aperturecomputemodule000.
 This needs to be performed every major change, or update, to the aperturecomputemodules. 
 Only one of the aperturecomputemodules is needed to be synced if all of the aperturecomputemodules are the same. 
 
-```~/DASPi/software/scripts/update_sysroot.sh
+```
+~/DASPi/software/scripts/update_sysroot.sh
 ```
 
 ## Cross-Compiling aperturecomputemodule
-```rm -rf ~/DASPi/software/build/aperturecomputemodule
+```
+rm -rf ~/DASPi/software/build/aperturecomputemodule
 
 meson setup ~/DASPi/software/build/aperturecomputemodule \
   ~/DASPi/software/src \
@@ -118,7 +123,8 @@ meson compile -C ~/DASPi/software/build/aperturecomputemodule
 ```
 
 ## Cross-compiling computemodule 
-```rm -rf ~/DASPi/software/build/computemodule
+```
+rm -rf ~/DASPi/software/build/computemodule
 
 meson setup ~/DASPi/software/build/computemodule \
   ~/DASPi/software/src \
@@ -132,11 +138,13 @@ meson compile -C ~/DASPi/software/build/computemodule
 ```
 ## Deployment
 To copy output from the computemodule
-```~/DASPi/software/scripts/fetch_files.sh
+```
+~/DASPi/software/scripts/fetch_files.sh
 ```
 
 ## Viewing captured output
-```ffplay -f rawvideo -pixel_format bayer_rggb16le -video_size 
+```
+ffplay -f rawvideo -pixel_format bayer_rggb16le -video_size 
 1456x1088 ~/output-10.0.2.3_0.bayer
 ```
 
