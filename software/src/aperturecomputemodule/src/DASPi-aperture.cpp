@@ -997,14 +997,14 @@ void Aperture::FrameBufferToUDP(const uint64_t frameNumber,
 
 	auto data = sfdp.TakeContiguousMemory();
 	
-	std::array<uint32_t, sfdp_t::NUM_REGIONS> regionSizes{};
+	std::array<uint32_t, NUM_REGIONS> regionSizes{};
 	
-	for (size_t i = 0; i < sfdp_t::NUM_REGIONS; ++i) {
+	for (size_t i = 0; i < NUM_REGIONS; ++i) {
 		regionSizes[i] = static_cast<uint32_t>(sfdp.RegionValidSize(i));
 	}
 	size_t totalElems = 0;
 	
-	for (size_t i = 0; i < sfdp_t::NUM_REGIONS; ++i) {
+	for (size_t i = 0; i < NUM_REGIONS; ++i) {
 		const auto valid = sfdp.RegionValidSize(i);
 		std::cout << "[TX] region " << i
 				  << " valid=" << valid
@@ -1012,9 +1012,7 @@ void Aperture::FrameBufferToUDP(const uint64_t frameNumber,
 				  << std::endl;
 		totalElems += valid;
 	}
-	
-	auto data = sfdp.TakeContiguousMemory();
-	
+		
 	std::cout << "[TX] packed payload elems=" << data.size()
 			  << " bytes=" << data.size() * sizeof(uint16_t)
 			  << std::endl;

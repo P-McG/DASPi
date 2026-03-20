@@ -333,87 +333,13 @@ int UDPClnt::BindSocketWithClientAddress(){
     //return true;
 //}
 
-bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload, FrameHeader& outHeader)
+bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
+                                              FrameHeader& outHeader)
 {
 #ifdef VERBATIUM_COUT
     std::cout << "[UDPClnt::ReceiveAndReassembleFramePacket]\n";
 #endif
-    bool headerReceived = false;
-    size_t totalBytesExpected = 0;   // payload size in BYTES
-    size_t totalBytesReceived = 0;
 
-    sockaddr_in sender{};
-    socklen_t senderLen = sizeof(sender);
-    std::vector<uint8_t> packet(maximumTransmittableUnits_);
-
-    while (true) {
-        ssize_t received = recvfrom(sockfd_, packet.data(), packet.size(), 0,
-                                    reinterpret_cast<sockaddr*>(&sender), &senderLen);
-        if (received < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
-            perror("recvfrom failed");
-            return false;
-        }
-        size_t got = static_cast<size_t>(received);
-
-        if (!headerReceived) {
-            if (got < sizeof(FrameHeader)) {
-                std::cerr << "Packet too small for header\n";
-                continue;
-            }
-
-            std::memcpy(&outHeader, packet.data(), sizeof(FrameHeader));
-            outHeader.magic_       = ntohl(outHeader.magic_);
-            outHeader.payloadSize_ = ntohl(outHeader.payloadSize_);
-            outHeader.checksum_    = ntohl(outHeader.checksum_);
-            
-            for (auto& s : outHeader.regionSizes_) {
-                s = ntohl(s);
-            }
-            if (outHeader.magic_ != MAGIC_NUMBER ||
-                outHeader.payloadSize_ == 0 ||
-                outHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_) {
-                std::cerr << "Invalid header received\n";
-                continue;
-            }
-
-            totalBytesExpected = outHeader.payloadSize_;
-            if (totalBytesExpected % sizeof(uint16_t) != 0) {
-                std::cerr << "Payload size not u16-aligned\n";
-                return false;
-            }
-
-            // Allocate the u16 buffer we ultimately want
-            outPayload.assign(totalBytesExpected / sizeof(uint16_t), 0);
-
-            // Copy first packet's payload section into the u16 storage (as bytes)
-            auto dstBytes = std::as_writable_bytes(std::span(outPayload));
-            size_t payloadInThisPacket = got - sizeof(FrameHeader);
-            std::memcpy(dstBytes.data(),
-                        packet.data() + sizeof(FrameHeader),
-                        payloadInThisPacket);
-
-            totalBytesReceived += payloadInThisPacket;
-            headerReceived = true;
-        } else {
-            // Copy subsequent payload chunks
-            size_t remaining = totalBytesExpected - totalBytesReceived;
-            size_t toCopy = std::min(remaining, got);
-            auto dstBytes = std::as_writable_bytes(std::span(outPayload));
-            std::memcpy(dstBytes.data() + totalBytesReceived,
-                        packet.data(),
-                        toCopy);
-            totalBytesReceived += toCopy;
-        }
-
-        if (totalBytesReceived >= totalBytesExpected) break;
-    }
-
- bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload, FrameHeader& outHeader)
-{
-#ifdef VERBATIUM_COUT
-    std::cout << "[UDPClnt::ReceiveAndReassembleFramePacket]\n";
-#endif
     bool headerReceived = false;
     size_t totalBytesExpected = 0;
     size_t totalBytesReceived = 0;
@@ -423,15 +349,22 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
     std::vector<uint8_t> packet(maximumTransmittableUnits_);
 
     while (true) {
-        ssize_t received = recvfrom(sockfd_, packet.data(), packet.size(), 0,
-                                    reinterpret_cast<sockaddr*>(&sender), &senderLen);
+        const ssize_t received = recvfrom(sockfd_,
+                                          packet.data(),
+                                          packet.size(),
+                                          0,
+                                          reinterpret_cast<sockaddr*>(&sender),
+                                          &senderLen);
+
         if (received < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue;
+            }
             perror("recvfrom failed");
             return false;
         }
 
-        size_t got = static_cast<size_t>(received);
+        const size_t got = static_cast<size_t>(received);
 
         if (!headerReceived) {
             if (got < sizeof(FrameHeader)) {
@@ -440,6 +373,7 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             }
 
             std::memcpy(&outHeader, packet.data(), sizeof(FrameHeader));
+
             outHeader.magic_       = ntohl(outHeader.magic_);
             outHeader.payloadSize_ = ntohl(outHeader.payloadSize_);
             outHeader.checksum_    = ntohl(outHeader.checksum_);
@@ -448,15 +382,24 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
                 s = ntohl(s);
             }
 
-            if (outHeader.magic_ != MAGIC_NUMBER ||
-                outHeader.payloadSize_ == 0 ||
-                outHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_) {
-                std::cerr << "Invalid header received\n";
+            if (outHeader.magic_ != MAGIC_NUMBER) {
+                std::cerr << "Invalid magic number received\n";
                 continue;
             }
 
+            if (outHeader.payloadSize_ == 0 ||
+                outHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_) {
+                std::cerr << "Invalid payload size received\n";
+                return false;
+            }
+
+            if (outHeader.payloadSize_ % sizeof(uint16_t) != 0) {
+                std::cerr << "Payload size not uint16_t aligned\n";
+                return false;
+            }
+
             size_t totalElems = 0;
-            for (auto s : outHeader.regionSizes_) {
+            for (const auto s : outHeader.regionSizes_) {
                 totalElems += s;
             }
 
@@ -469,24 +412,21 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             }
 
             totalBytesExpected = outHeader.payloadSize_;
-            if (totalBytesExpected % sizeof(uint16_t) != 0) {
-                std::cerr << "Payload size not u16-aligned\n";
-                return false;
-            }
-
             outPayload.assign(totalBytesExpected / sizeof(uint16_t), 0);
 
+            const size_t payloadBytesInFirstPacket = got - sizeof(FrameHeader);
+            const size_t firstCopyBytes = std::min(payloadBytesInFirstPacket, totalBytesExpected);
+
             auto dstBytes = std::as_writable_bytes(std::span(outPayload));
-            size_t payloadInThisPacket = got - sizeof(FrameHeader);
             std::memcpy(dstBytes.data(),
                         packet.data() + sizeof(FrameHeader),
-                        payloadInThisPacket);
+                        firstCopyBytes);
 
-            totalBytesReceived += payloadInThisPacket;
+            totalBytesReceived = firstCopyBytes;
             headerReceived = true;
         } else {
-            size_t remaining = totalBytesExpected - totalBytesReceived;
-            size_t toCopy = std::min(remaining, got);
+            const size_t remaining = totalBytesExpected - totalBytesReceived;
+            const size_t toCopy = std::min(remaining, got);
 
             auto dstBytes = std::as_writable_bytes(std::span(outPayload));
             std::memcpy(dstBytes.data() + totalBytesReceived,
@@ -496,13 +436,13 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             totalBytesReceived += toCopy;
         }
 
-        if (totalBytesReceived >= totalBytesExpected) {
+        if (headerReceived && totalBytesReceived >= totalBytesExpected) {
             break;
         }
     }
 
-    auto usedBytes = std::as_bytes(std::span(outPayload)).first(totalBytesExpected);
-    uint32_t computed = SimpleChecksum(usedBytes);
+    const auto usedBytes = std::as_bytes(std::span(outPayload)).first(totalBytesExpected);
+    const uint32_t computed = SimpleChecksum(usedBytes);
 
     std::cout << "Header checksum: "   << outHeader.checksum_    << "\n"
               << "Payload size: "      << outHeader.payloadSize_ << "\n"
@@ -513,23 +453,228 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         return false;
     }
 
-    size_t offset = 0;
+   size_t offset = 0;
     for (size_t i = 0; i < outHeader.regionSizes_.size(); ++i) {
         const size_t count = outHeader.regionSizes_[i];
-
-        std::span<const uint16_t> region(
-            outPayload.data() + offset,
-            count
-        );
-
+    
+        if (offset + count > outPayload.size()) {
+            std::cerr << "[RX] region overflow: region=" << i
+                      << " offset=" << offset
+                      << " count=" << count
+                      << " outPayload.size()=" << outPayload.size()
+                      << std::endl;
+            return false;
+        }
+    
+        std::span<const uint16_t> region(outPayload.data() + offset, count);
+    
         std::cout << "[RX] region " << i
                   << " size=" << count << std::endl;
-
+    
         offset += count;
     }
 
     return true;
 }
+
+//bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload, FrameHeader& outHeader)
+//{
+//#ifdef VERBATIUM_COUT
+    //std::cout << "[UDPClnt::ReceiveAndReassembleFramePacket]\n";
+//#endif
+    //bool headerReceived = false;
+    //size_t totalBytesExpected = 0;   // payload size in BYTES
+    //size_t totalBytesReceived = 0;
+
+    //sockaddr_in sender{};
+    //socklen_t senderLen = sizeof(sender);
+    //std::vector<uint8_t> packet(maximumTransmittableUnits_);
+
+    //while (true) {
+        //ssize_t received = recvfrom(sockfd_, packet.data(), packet.size(), 0,
+                                    //reinterpret_cast<sockaddr*>(&sender), &senderLen);
+        //if (received < 0) {
+            //if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            //perror("recvfrom failed");
+            //return false;
+        //}
+        //size_t got = static_cast<size_t>(received);
+
+        //if (!headerReceived) {
+            //if (got < sizeof(FrameHeader)) {
+                //std::cerr << "Packet too small for header\n";
+                //continue;
+            //}
+
+            //std::memcpy(&outHeader, packet.data(), sizeof(FrameHeader));
+            //outHeader.magic_       = ntohl(outHeader.magic_);
+            //outHeader.payloadSize_ = ntohl(outHeader.payloadSize_);
+            //outHeader.checksum_    = ntohl(outHeader.checksum_);
+            
+            //for (auto& s : outHeader.regionSizes_) {
+                //s = ntohl(s);
+            //}
+            //if (outHeader.magic_ != MAGIC_NUMBER ||
+                //outHeader.payloadSize_ == 0 ||
+                //outHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_) {
+                //std::cerr << "Invalid header received\n";
+                //continue;
+            //}
+
+            //totalBytesExpected = outHeader.payloadSize_;
+            //if (totalBytesExpected % sizeof(uint16_t) != 0) {
+                //std::cerr << "Payload size not u16-aligned\n";
+                //return false;
+            //}
+
+            //// Allocate the u16 buffer we ultimately want
+            //outPayload.assign(totalBytesExpected / sizeof(uint16_t), 0);
+
+            //// Copy first packet's payload section into the u16 storage (as bytes)
+            //auto dstBytes = std::as_writable_bytes(std::span(outPayload));
+            //size_t payloadInThisPacket = got - sizeof(FrameHeader);
+            //std::memcpy(dstBytes.data(),
+                        //packet.data() + sizeof(FrameHeader),
+                        //payloadInThisPacket);
+
+            //totalBytesReceived += payloadInThisPacket;
+            //headerReceived = true;
+        //} else {
+            //// Copy subsequent payload chunks
+            //size_t remaining = totalBytesExpected - totalBytesReceived;
+            //size_t toCopy = std::min(remaining, got);
+            //auto dstBytes = std::as_writable_bytes(std::span(outPayload));
+            //std::memcpy(dstBytes.data() + totalBytesReceived,
+                        //packet.data(),
+                        //toCopy);
+            //totalBytesReceived += toCopy;
+        //}
+
+        //if (totalBytesReceived >= totalBytesExpected) break;
+    //}
+//}
+
+//bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload, FrameHeader& outHeader)
+//{
+//#ifdef VERBATIUM_COUT
+    //std::cout << "[UDPClnt::ReceiveAndReassembleFramePacket]\n";
+//#endif
+    //bool headerReceived = false;
+    //size_t totalBytesExpected = 0;
+    //size_t totalBytesReceived = 0;
+
+    //sockaddr_in sender{};
+    //socklen_t senderLen = sizeof(sender);
+    //std::vector<uint8_t> packet(maximumTransmittableUnits_);
+
+    //while (true) {
+        //ssize_t received = recvfrom(sockfd_, packet.data(), packet.size(), 0,
+                                    //reinterpret_cast<sockaddr*>(&sender), &senderLen);
+        //if (received < 0) {
+            //if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            //perror("recvfrom failed");
+            //return false;
+        //}
+
+        //size_t got = static_cast<size_t>(received);
+
+        //if (!headerReceived) {
+            //if (got < sizeof(FrameHeader)) {
+                //std::cerr << "Packet too small for header\n";
+                //continue;
+            //}
+
+            //std::memcpy(&outHeader, packet.data(), sizeof(FrameHeader));
+            //outHeader.magic_       = ntohl(outHeader.magic_);
+            //outHeader.payloadSize_ = ntohl(outHeader.payloadSize_);
+            //outHeader.checksum_    = ntohl(outHeader.checksum_);
+
+            //for (auto& s : outHeader.regionSizes_) {
+                //s = ntohl(s);
+            //}
+
+            //if (outHeader.magic_ != MAGIC_NUMBER ||
+                //outHeader.payloadSize_ == 0 ||
+                //outHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_) {
+                //std::cerr << "Invalid header received\n";
+                //continue;
+            //}
+
+            //size_t totalElems = 0;
+            //for (auto s : outHeader.regionSizes_) {
+                //totalElems += s;
+            //}
+
+            //if (totalElems * sizeof(uint16_t) != outHeader.payloadSize_) {
+                //std::cerr << "[ERROR] payload mismatch: "
+                          //<< "expected=" << outHeader.payloadSize_
+                          //<< " actual=" << totalElems * sizeof(uint16_t)
+                          //<< std::endl;
+                //return false;
+            //}
+
+            //totalBytesExpected = outHeader.payloadSize_;
+            //if (totalBytesExpected % sizeof(uint16_t) != 0) {
+                //std::cerr << "Payload size not u16-aligned\n";
+                //return false;
+            //}
+
+            //outPayload.assign(totalBytesExpected / sizeof(uint16_t), 0);
+
+            //auto dstBytes = std::as_writable_bytes(std::span(outPayload));
+            //size_t payloadInThisPacket = got - sizeof(FrameHeader);
+            //std::memcpy(dstBytes.data(),
+                        //packet.data() + sizeof(FrameHeader),
+                        //payloadInThisPacket);
+
+            //totalBytesReceived += payloadInThisPacket;
+            //headerReceived = true;
+        //} else {
+            //size_t remaining = totalBytesExpected - totalBytesReceived;
+            //size_t toCopy = std::min(remaining, got);
+
+            //auto dstBytes = std::as_writable_bytes(std::span(outPayload));
+            //std::memcpy(dstBytes.data() + totalBytesReceived,
+                        //packet.data(),
+                        //toCopy);
+
+            //totalBytesReceived += toCopy;
+        //}
+
+        //if (totalBytesReceived >= totalBytesExpected) {
+            //break;
+        //}
+    //}
+
+    //auto usedBytes = std::as_bytes(std::span(outPayload)).first(totalBytesExpected);
+    //uint32_t computed = SimpleChecksum(usedBytes);
+
+    //std::cout << "Header checksum: "   << outHeader.checksum_    << "\n"
+              //<< "Payload size: "      << outHeader.payloadSize_ << "\n"
+              //<< "Computed checksum: " << computed               << "\n";
+
+    //if (computed != outHeader.checksum_) {
+        //std::cerr << "Checksum mismatch! Packet may be corrupted.\n";
+        //return false;
+    //}
+
+    //size_t offset = 0;
+    //for (size_t i = 0; i < outHeader.regionSizes_.size(); ++i) {
+        //const size_t count = outHeader.regionSizes_[i];
+
+        //std::span<const uint16_t> region(
+            //outPayload.data() + offset,
+            //count
+        //);
+
+        //std::cout << "[RX] region " << i
+                  //<< " size=" << count << std::endl;
+
+        //offset += count;
+    //}
+
+    //return true;
+//}
 
 //uint32_t UDPClnt::SimpleChecksum(const uint8_t* data, size_t size) {
 //#ifdef VERBATIUM_COUT

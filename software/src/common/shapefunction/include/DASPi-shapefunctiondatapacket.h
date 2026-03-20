@@ -18,7 +18,8 @@ public:
 
 private:
     static constexpr size_t n_ = n;
-
+	static constexpr size_t NUM_REGIONS = n_ + 1;
+	
     std::vector<uint16_t> contiguousMemory_;
     std::array<std::span<uint16_t>, n_ + 1> regions_{};
     std::array<size_t, n_ + 1> capacities_{};
@@ -91,9 +92,9 @@ public:
         return contiguousMemory_.size();
     }
 
-    static constexpr size_t NumberOfRegions() const
+    static constexpr size_t NumberOfRegions()
     {
-        return n_ + 1;
+        return NUM_REGIONS;
     }
 };
 

@@ -114,37 +114,37 @@ int main(int argc, char* argv[])
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg{argv[i]};
-
+    
         if (arg == "--verbose") {
             verbosity = Verbosity::Verbose;
             continue;
         }
-
-        if (arg.rfind("--nApertureComputeModules=", 0) == 0) {
-            try {
-                nApertureComputeModules = std::stoi(arg.substr(27));
-            } catch (const std::exception& e) {
-                std::cerr << "Invalid nApertureComputeModules: " << e.what() << '\n';
-                return EXIT_FAILURE;
-            }
+    
+        const std::string prefix0 = "--nApertureComputeModules=";
+        if (arg.rfind(prefix0, 0) == 0) {
+            nApertureComputeModules = std::stoi(arg.substr(prefix0.size()));
             continue;
         }
-
-        if (arg.rfind("--usbSubnets=", 0) == 0) {
-            usbSubnet = arg.substr(13);
+    
+        const std::string prefix1 = "--usbSubnets=";
+        if (arg.rfind(prefix1, 0) == 0) {
+            usbSubnet = arg.substr(prefix1.size());
             continue;
         }
-
-        if (arg.rfind("--port=", 0) == 0) {
-            try {
-                framePort = std::stoi(arg.substr(7));
-            } catch (const std::exception& e) {
-                std::cerr << "Invalid port: " << e.what() << '\n';
-                return EXIT_FAILURE;
-            }
+    
+        const std::string prefix2 = "--port=";
+        if (arg.rfind(prefix2, 0) == 0) {
+            framePort = std::stoi(arg.substr(prefix2.size()));
             continue;
         }
+    
+        std::cerr << "Unknown argument: " << arg << '\n';
+        return EXIT_FAILURE;
     }
+    
+    std::cout << "[ARGS] nApertureComputeModules=" << nApertureComputeModules
+          << " usbSubnet='" << usbSubnet
+          << "' framePort=" << framePort << '\n';
 
     if (nApertureComputeModules <= 0) {
         std::cerr << "No valid --nApertureComputeModules argument provided.\n";

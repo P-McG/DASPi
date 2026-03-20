@@ -90,7 +90,7 @@ constexpr void Aperture::FrameBufferTransformation(InputT&& input,
     }
     
     size_t totalValid = 0;
-    for (size_t i = 0; i < sfdp_t::NUM_REGIONS; ++i) {
+    for (size_t i = 0; i < NUM_REGIONS; ++i) {
         totalValid += output.RegionValidSize(i);
     }
     

@@ -28,7 +28,7 @@ class AperturePeer {
           static_cast<size_t>(0.5*sensorHeightValue_) },
         { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / 3)),
           -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / 3)) },
-        0.999
+        0.75
     >;
 
     using sfdp_t = ShapeFunctionDataPacket<
@@ -37,7 +37,7 @@ class AperturePeer {
           static_cast<size_t>(0.5*sensorHeightValue_) },
         { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / 3)),
           -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / 3)) },
-        0.999
+        0.75
     >;
 
     static constexpr size_t n_ = n;
@@ -76,7 +76,7 @@ public:
 	inline void ApplyWhiteBalanceToMosaic_BGGR(std::span<uint16_t> data, int width, int height, double rGain, double gGain, double bGain);
 	void BrightenImageInplace(std::span<uint16_t> buf, size_t shift);
     void BrightenImageChunked2_NEON(uint16_t *buffer, size_t start, size_t end, size_t shift);
-
+    bool ReceiveApertureCapture();
     
 private:
     const int processingThreads_{4};

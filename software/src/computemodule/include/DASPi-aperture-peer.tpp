@@ -4,12 +4,13 @@
 #include <span>
 #include <string>
 #include "DASPi-logger.h"
+#include "DASPi-udp-clnt.h"
 #include "DASPi-aperture-peer.h"
 
 namespace DASPi{
 	
 	template<size_t n>
-	DASPi::AperturePeer<n>::AperturePeer(in_addr_t clntAddr,
+	AperturePeer<n>::AperturePeer(in_addr_t clntAddr,
 										 int framePort,
 										 int controlPort,
 										 in_addr_t srvAddr)
@@ -18,6 +19,13 @@ namespace DASPi{
 		  frameClnt_(clntAddr, framePort, srvAddr),
 		  controlClnt_(clntAddr, controlPort, srvAddr)
 	{
+		for (size_t i = 0; i < n + 1; ++i) {
+			std::string name = "output-" + std::to_string(i) + ".bayer";
+			files_[i] = std::make_unique<std::ofstream>(name, std::ios::binary);
+			if (!files_[i] || !files_[i]->is_open()) {
+				throw std::runtime_error("Failed to open " + name);
+			}
+		}
 	}
 
 	//template<size_t n>
@@ -67,9 +75,10 @@ namespace DASPi{
 	template<size_t n>
 	bool AperturePeer<n>::RunFrameLoop()
 	{
-		log_verbose("ReceiveApertureCapture");
+		log_verbose("RunFrameLoop");
 	
-		std::vector<uint16_t> maskedBuffer(this->sfdp_.size());
+		FrameHeader frameHeader{};
+		std::vector<uint16_t> maskedBuffer;
 	
 		UDPClnt::EpollData epollData;
 		if (!frameClnt_.InitEpollForSrvUDPPackets(epollData)) {
@@ -77,8 +86,9 @@ namespace DASPi{
 			return false;
 		}
 	
-		if (!frameClnt_.ReadDataFromSrvUDPPackets(epollData, maskedBuffer)) {
+		if (!frameClnt_.ReceiveAndReassembleFramePacket(maskedBuffer, frameHeader)) {
 			std::cerr << "Read data from server FAILED\n";
+			frameClnt_.FinalizeEpollForSrvUDPPackets(epollData);
 			return false;
 		}
 	
@@ -87,22 +97,55 @@ namespace DASPi{
 			return false;
 		}
 	
-		// rest of your existing image pipeline unchanged
-		this->sfdp_.LoadToContiguousMemory(maskedBuffer);
+		this->sfdp_.ResetValidSizes();
 	
-		auto unmasked0{this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(this->sfdp_[0])};
+		size_t offset = 0;
+		for (size_t i = 0; i < NUM_REGIONS; ++i) {
+			const size_t count = frameHeader.regionSizes_[i];
+	
+			if (count > this->sfdp_[i].size()) {
+				std::cerr << "[RunFrameLoop] region overflow: i=" << i
+						  << " count=" << count
+						  << " capacity=" << this->sfdp_[i].size()
+						  << std::endl;
+				return false;
+			}
+	
+			if (offset + count > maskedBuffer.size()) {
+				std::cerr << "[RunFrameLoop] packed payload overflow: offset=" << offset
+						  << " count=" << count
+						  << " maskedBuffer.size()=" << maskedBuffer.size()
+						  << std::endl;
+				return false;
+			}
+	
+			if (count != 0) {
+				std::memcpy(this->sfdp_[i].data(),
+							maskedBuffer.data() + offset,
+							count * sizeof(uint16_t));
+			}
+	
+			this->sfdp_.SetRegionValidSize(i, count);
+			offset += count;
+		}
+	
+		auto unmasked0 = this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(this->sfdp_[0]);
 		this->buffer_[0].resize(unmasked0.size());
-		std::memcpy(this->buffer_[0].data(), unmasked0.data(), unmasked0.size() * sizeof(uint16_t));
+		std::memcpy(this->buffer_[0].data(),
+					unmasked0.data(),
+					unmasked0.size() * sizeof(uint16_t));
 	
 		for (size_t i = 0; i < n_; ++i) {
-			auto unmasked{this->sf_.FrameBufferUnmask(this->sfdp_[i + 1], i)};
+			auto unmasked = this->sf_.FrameBufferUnmask(this->sfdp_[i + 1], i);
 			this->buffer_[i + 1].resize(unmasked.size());
-			std::memcpy(this->buffer_[i + 1].data(), unmasked.data(), unmasked.size() * sizeof(uint16_t));
+			std::memcpy(this->buffer_[i + 1].data(),
+						unmasked.data(),
+						unmasked.size() * sizeof(uint16_t));
 		}
 	
 		this->BrightenImageInplace(std::span<uint16_t>(this->buffer_[0]), 6);
 		for (size_t i = 0; i < n_; ++i) {
-			BrightenImageInplace(std::span<uint16_t>(this->buffer_[i + 1]), 6);
+			this->BrightenImageInplace(std::span<uint16_t>(this->buffer_[i + 1]), 6);
 		}
 	
 		this->BufferToFile();
@@ -116,13 +159,13 @@ namespace DASPi{
 	    //std::vector<uint16_t> maskedBuffer(sfdp_.size());
 	    
 	    //UDPClnt::EpollData epollData;
-	    //if (!udpClnt_.InitEpollForSrvUDPPackets(epollData)) {
+	    //if (!this->frameClnt_.InitEpollForSrvUDPPackets(epollData)) {
 	        //std::cerr << "Initializing Epoll for Server UDP Packets" << std::endl;
 	        //return false;//exit(1);
 	    //}
 	    
 	    ////for(int i=0; i<1; i++){
-	        //if (!udpClnt_.ReadDataFromSrvUDPPackets(epollData, maskedBuffer)) {
+	        //if (!this->frameClnt_.ReadDataFromSrvUDPPackets(epollData, maskedBuffer)) {
 	            //std::cerr << "Read data from server FAILED" << std::endl;
 	            //return false; //exit(1);
 	        //}
@@ -131,7 +174,7 @@ namespace DASPi{
 	        //std::cout << "maskedBuffer.capacity() = " << maskedBuffer.capacity() << std::endl;
 	   //// }
 	    
-	    //if (!udpClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
+	    //if (!this->frameClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
 	        //std::cerr << "Finalize Epoll for Server UDP Packets" << std::endl;
 	        //return false;//exit(1);
 	    //}
@@ -229,18 +272,47 @@ namespace DASPi{
 	//}
 	
 	template<size_t n>
-	bool AperturePeer<n>::BufferToFile() {
-	    log_verbose("[AperturePeer::BufferToFile]");
-	       
-	    for(size_t i=0; i<n_+1; i++){
-			log_verbose("Writing file:" + std::to_string(i)) ;
-	        if (!this->files_[i]->write( reinterpret_cast<const char*>(this->buffer_[i].data()),this->sf_.sf_t::GlobalLinearShapeFunction_t::size()*sizeof(uint16_t))) {
-	             std::cerr << "Failed to write to file" << std::endl;
-	             return false;
-	        }
-	        this->files_[i]->close();
-	    }
-	    return true;
+	bool AperturePeer<n>::BufferToFile()
+	{
+		log_verbose("[AperturePeer::BufferToFile]");
+	
+		for (size_t i = 0; i < n_ + 1; ++i) {
+			log_verbose("Writing file:" + std::to_string(i));
+	
+			std::cout << "[BufferToFile] i=" << i
+					  << " files_[i]=" << files_[i].get()
+					  << " buffer_[i].size()=" << buffer_[i].size()
+					  << std::endl;
+	
+			if (!files_[i]) {
+				std::cerr << "[BufferToFile] files_[" << i << "] is null\n";
+				return false;
+			}
+	
+			if (!files_[i]->is_open()) {
+				std::cerr << "[BufferToFile] files_[" << i << "] is not open\n";
+				return false;
+			}
+	
+			const size_t bytesToWrite = this->buffer_[i].size() * sizeof(uint16_t);
+	
+			if (bytesToWrite == 0) {
+				std::cerr << "[BufferToFile] buffer_[" << i << "] is empty\n";
+				return false;
+			}
+	
+			if (!this->files_[i]->write(
+					reinterpret_cast<const char*>(this->buffer_[i].data()),
+					static_cast<std::streamsize>(bytesToWrite))) {
+				std::cerr << "[BufferToFile] Failed to write file " << i << std::endl;
+				return false;
+			}
+	
+			this->files_[i]->flush();
+			//this->files_[i]->close();
+		}
+	
+		return true;
 	}
 	
 	template<size_t n>
@@ -448,7 +520,7 @@ namespace DASPi{
 	}
 	
 	template<size_t n>
-	float DASPi::AperturePeer<n>::ComputeRequestedGain(const GainMsg& msg)
+	float AperturePeer<n>::ComputeRequestedGain(const GainMsg& msg)
 	{
 		if (msg.mean_brightness <= 1.0e-6f) {
 			return 1.0f;
@@ -459,7 +531,7 @@ namespace DASPi{
 	}
 	
 	template<size_t n>
-	bool DASPi::AperturePeer<n>::RunControlLoop()
+	bool AperturePeer<n>::RunControlLoop()
 	{
 		GainMsg msg{};
 	
@@ -485,7 +557,7 @@ namespace DASPi{
 	}
 	
 	template<size_t n>
-	bool DASPi::AperturePeer<n>::SendGainReply(const GainReply& reply)
+	bool AperturePeer<n>::SendGainReply(const GainReply& reply)
 	{
 		GainReply copy = reply;
 	
@@ -500,7 +572,7 @@ namespace DASPi{
 	}
 	
 	template<size_t n>
-	void DASPi::AperturePeer<n>::HandleGainMsg(const GainMsg& msg)
+	void AperturePeer<n>::HandleGainMsg(const GainMsg& msg)
 	{
 		GainReply reply{};
 		reply.camera_id = msg.camera_id;

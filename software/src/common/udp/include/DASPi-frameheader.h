@@ -18,7 +18,7 @@ struct FrameHeader {
 
     uint32_t payloadSize_;     // Total payload bytes
 
-    std::array<uint32_t, sfdp_t::NUM_REGIONS> regionSizes_;  // per-region element counts
+    std::array<uint32_t, NUM_REGIONS> regionSizes_;  // per-region element counts
 
     uint32_t checksum_;        // checksum over payload
 };

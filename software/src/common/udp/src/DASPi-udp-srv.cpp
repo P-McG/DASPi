@@ -502,19 +502,19 @@ FramePacket UDPSrv::CreateFramePacket(
 {
     FramePacket pkt{};
 
-    pkt.payload = std::move(buffer);
+    pkt.payload_ = std::move(buffer);
 
-    pkt.header.magic_ = htonl(MAGIC_NUMBER);
-    pkt.header.gainMsg = gainMsg;
+    pkt.header_.magic_ = htonl(MAGIC_NUMBER);
+    pkt.header_.gainMsg = gainMsg;
 
-    pkt.header.payloadSize_ =
-        htonl(static_cast<uint32_t>(pkt.payload.size() * sizeof(uint16_t)));
+    pkt.header_.payloadSize_ =
+        htonl(static_cast<uint32_t>(pkt.payload_.size() * sizeof(uint16_t)));
 
     for (size_t i = 0; i < NUM_REGIONS; ++i) {
-        pkt.header.regionSizes_[i] = htonl(regionSizes[i]);
+        pkt.header_.regionSizes_[i] = htonl(regionSizes[i]);
     }
 
-    pkt.header.checksum_ =
+    pkt.header_.checksum_ =
         htonl(SimpleChecksum(pkt.payload_as_bytes()));
 
     return pkt;
