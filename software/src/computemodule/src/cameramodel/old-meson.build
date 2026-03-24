@@ -1,0 +1,35 @@
+project(
+  'sphere_stitcher_test',
+  'cpp',
+  version : '0.1.0',
+  default_options : [
+    'cpp_std=c++20',
+    'warning_level=3',
+    'buildtype=release'
+  ]
+)
+
+opencv_dep = dependency('opencv4', required : true, include_type : 'system')
+eigen_dep = dependency('eigen3', required : true)
+openmp_dep = dependency('openmp', required : true)
+
+inc = include_directories('.', 'include')
+
+sources = [
+  'src/main.cpp',
+  'src/DASPi-sphere-stitcher.cpp',
+  'src/DASPi-fisheye-camera-model.cpp',
+  'src/DASPi-bayer-io.cpp',
+]
+
+executable(
+  'sphere_stitcher_demo',
+  sources,
+  include_directories : inc,
+  dependencies : [
+    opencv_dep,
+    eigen_dep,
+    openmp_dep,
+  ],
+  install : false
+)

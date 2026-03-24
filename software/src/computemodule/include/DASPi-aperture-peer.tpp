@@ -20,7 +20,7 @@ namespace DASPi{
 		  controlClnt_(clntAddr, controlPort, srvAddr)
 	{
 		for (size_t i = 0; i < n + 1; ++i) {
-			std::string name = "output-" + std::to_string(i) + ".bayer";
+			std::string name = "output-" +  inAddrTToString(srvAddr) + "_" + std::to_string(i) + ".bayer";
 			files_[i] = std::make_unique<std::ofstream>(name, std::ios::binary);
 			if (!files_[i] || !files_[i]->is_open()) {
 				throw std::runtime_error("Failed to open " + name);

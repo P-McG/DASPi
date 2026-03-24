@@ -17,7 +17,8 @@ Dedicated Aluminum Heatsink for Raspberry Pi Zero 2 W
 Raspberry Pi Camera Cable Standard - Mini - 200mm V2
 ### USB-hub
 USB 2.0 Hub Type-C Multi Safety 10 Ports Powered, with AC Adapter, Aluminum USB Splitter with Cooling Fan - Type C
-## Repo layout
+##Software
+### Repo layout
 ```.
 ├── LICENSE
 ├── README.md
@@ -66,8 +67,8 @@ USB 2.0 Hub Type-C Multi Safety 10 Ports Powered, with AC Adapter, Aluminum USB 
 250 directories, 132 files
 ```
 
-## Build prerequisites for Compute-Module
-### Host file On host
+### Build prerequisites for Compute-Module
+#### Host file On host
 Place in host file:
 
 ```
@@ -82,9 +83,9 @@ Place in host file:
 sudo apt update
 sudo apt install -y tmux
 
-## Build prerequisites for Aperture-Compute-Module
+### Build prerequisites for Aperture-Compute-Module
 
-### Host file On host
+#### Host file On host
 Place in host file:
 ```
 [ip_address_here] computemodule000
@@ -98,7 +99,7 @@ Place in host file:
 sudo apt update
 sudo apt install -y tmux
 
-### Cross-Compiling Sources for the Compute-Module and Aperture-Compute-Module
+#### Cross-Compiling Sources for the Compute-Module and Aperture-Compute-Module
 Set up the cross compiling sources for the aperturecomputemodule000. 
 This needs to be performed every major change, or update, to the aperturecomputemodules. 
 Only one of the aperturecomputemodules is needed to be synced if all of the aperturecomputemodules are the same. 
@@ -107,7 +108,7 @@ Only one of the aperturecomputemodules is needed to be synced if all of the aper
 ~/DASPi/software/scripts/update_sysroot.sh
 ```
 
-## Cross-Compiling aperturecomputemodule
+### Cross-Compiling aperturecomputemodule
 ```
 rm -rf ~/DASPi/software/build/aperturecomputemodule
 
@@ -122,7 +123,7 @@ meson compile -C ~/DASPi/software/build/aperturecomputemodule
 ~/DASPi/src/distribute_and_run_aperturecomputemodule_code.sh
 ```
 
-## Cross-compiling computemodule 
+### Cross-compiling computemodule 
 ```
 rm -rf ~/DASPi/software/build/computemodule
 
@@ -136,19 +137,19 @@ meson compile -C ~/DASPi/software/build/computemodule
 
 ~/DASPi/src/distribute_and_run_computemodule_code.sh
 ```
-## Deployment
+### Deployment
 To copy output from the computemodule
 ```
 ~/DASPi/software/scripts/fetch_files.sh
 ```
 
-## Viewing captured output
+### Viewing captured output
 ```
-ffplay -f rawvideo -pixel_format bayer_rggb16le -video_size 
-1456x1088 ~/output-10.0.2.3_0.bayer
+ffplay -f rawvideo -pixel_format bayer_rggb16le -video_size  \
+1456x1088 ~/bayer_dumps/output-10.0.2.3_0.bayer
 ```
 
-## GIT Commits Notes:
+### GIT Commits Notes:
 Sync workflow 
 Before working:
 git pull
@@ -158,3 +159,11 @@ git commit -m "message"
 git push
 
 ## Current status / roadmap
+
+### Roadmap
+-[ ] represent each overlap/non-overlap region as an image-space mask per camera
+-[ ] create one common world frame
+-[ ] use calibrated unprojection for each wide-angle image
+-[ ] generate an equirectangular sphere map by inverse mapping
+-[ ] use non-overlap masks for hard ownership
+-[ ] use overlap masks for feathered blending
