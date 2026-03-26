@@ -84,7 +84,12 @@ sudo apt update
 sudo apt install -y tmux
 
 ### Build prerequisites for Aperture-Compute-Module
-
+#### Native prerequisites
+sudo apt install \
+  build-essential meson ninja-build pkg-config \
+  libopencv-dev libeigen3-dev libtbb-dev \
+  libblas-dev liblapack-dev
+  
 #### Host file On host
 Place in host file:
 ```
@@ -142,7 +147,12 @@ To copy output from the computemodule
 ```
 ~/DASPi/software/scripts/fetch_files.sh
 ```
-
+### Native compiling computemodule
+meson setup ~/DASPi/software/build/computemodule-native \
+  ~/DASPi/software/src \
+  -Dbuild_computemodule=true \
+  -Dbuild_aperturecomputemodule=false
+  
 ### Viewing captured output
 ```
 ffplay -f rawvideo -pixel_format bayer_rggb16le -video_size  \

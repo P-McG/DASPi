@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <execution>
 #include <vector>
-#include <arm_neon.h>
+#if defined(__ARM_NEON) || defined(__aarch64__)
+  #include <arm_neon.h>
+#endif
 #include <cstdint>
 #include <limits>
 #include <span>

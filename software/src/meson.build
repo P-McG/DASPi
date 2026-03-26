@@ -14,6 +14,7 @@ subdir('common/logger')
 subdir('common/scopedtimer')
 subdir('common/shapefunction')
 subdir('common/udp')
+subdir('common/cameramodel')
 
 if get_option('build_aperturecomputemodule')
   subdir('aperturecomputemodule')

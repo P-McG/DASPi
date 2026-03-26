@@ -129,153 +129,44 @@ namespace DASPi{
 			offset += count;
 		}
 	
+		// Build new buffers outside the lock
+		std::vector<std::vector<uint16_t>> newBuffers(n_ + 1);
+	
 		auto unmasked0 = this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(this->sfdp_[0]);
-		this->buffer_[0].resize(unmasked0.size());
-		std::memcpy(this->buffer_[0].data(),
+		newBuffers[0].resize(unmasked0.size());
+		std::memcpy(newBuffers[0].data(),
 					unmasked0.data(),
 					unmasked0.size() * sizeof(uint16_t));
 	
 		for (size_t i = 0; i < n_; ++i) {
 			auto unmasked = this->sf_.FrameBufferUnmask(this->sfdp_[i + 1], i);
-			this->buffer_[i + 1].resize(unmasked.size());
-			std::memcpy(this->buffer_[i + 1].data(),
+			newBuffers[i + 1].resize(unmasked.size());
+			std::memcpy(newBuffers[i + 1].data(),
 						unmasked.data(),
 						unmasked.size() * sizeof(uint16_t));
 		}
 	
-		this->BrightenImageInplace(std::span<uint16_t>(this->buffer_[0]), 6);
-		for (size_t i = 0; i < n_; ++i) {
-			this->BrightenImageInplace(std::span<uint16_t>(this->buffer_[i + 1]), 6);
+		for (size_t i = 0; i < n_ + 1; ++i) {
+			this->BrightenImageInplace(std::span<uint16_t>(newBuffers[i]), 6);
+		}
+	
+		// Only lock while publishing new buffers
+		{
+			std::scoped_lock lock(bufferMutex_);
+			this->buffer_ = std::move(newBuffers);
 		}
 	
 		this->BufferToFile();
 		return true;
 	}
-		 
-	//template<size_t n>   
-	//bool AperturePeer<n>::ReceiveApertureCapture() {
-	    //log_verbose("ReceiveApertureCapture");
-	
-	    //std::vector<uint16_t> maskedBuffer(sfdp_.size());
-	    
-	    //UDPClnt::EpollData epollData;
-	    //if (!this->frameClnt_.InitEpollForSrvUDPPackets(epollData)) {
-	        //std::cerr << "Initializing Epoll for Server UDP Packets" << std::endl;
-	        //return false;//exit(1);
-	    //}
-	    
-	    ////for(int i=0; i<1; i++){
-	        //if (!this->frameClnt_.ReadDataFromSrvUDPPackets(epollData, maskedBuffer)) {
-	            //std::cerr << "Read data from server FAILED" << std::endl;
-	            //return false; //exit(1);
-	        //}
-	        //std::cout << "maskedBuffer.data() address: " << static_cast<void*>(maskedBuffer.data()) << std::endl;
-	        //std::cout << "maskedBuffer.size() = " << maskedBuffer.size() << std::endl;
-	        //std::cout << "maskedBuffer.capacity() = " << maskedBuffer.capacity() << std::endl;
-	   //// }
-	    
-	    //if (!this->frameClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
-	        //std::cerr << "Finalize Epoll for Server UDP Packets" << std::endl;
-	        //return false;//exit(1);
-	    //}
-	    
-	    //log_verbose("check maskedBuffer");
-	
-	    //if (maskedBuffer.size() == 0 || maskedBuffer.size() % sizeof(uint16_t) != 0) {
-	        //log_verbose("maskedBuffer.size() = " + std::to_string(maskedBuffer.size()));
-	        //return false;
-	    //}
-	    
-	    //// 🔥 Check pointer alignment!
-	    //if (reinterpret_cast<uintptr_t>(maskedBuffer.data()) % alignof(uint16_t) != 0) {
-	        //std::cerr << "maskedBuffer data not properly aligned!" << std::endl;
-	        //return false;
-	    //}
-	    
-	    //// 🔥 Check expected size!
-	    //std::cout << "sfdp_.size()" << sfdp_.size() << std::flush;//TROUBLESHOOTING
-	    //size_t expected_bytes = sfdp_.size()/* * sizeof(uint16_t)*/;
-	
-	    //if (maskedBuffer.size() != expected_bytes) {
-	        //std::cerr << "maskedBuffer wrong size: " << maskedBuffer.size()
-	                  //<< ", expected: " << expected_bytes << std::endl;
-	        //return false;
-	    //}
-	    
-	    ////// 🔥 Safe to cast now
-	    ////// Note:
-	    ////// -maskedBuffer is of char
-	    ////// -inputData is of uint16_t
-	    ////auto* ptr = reinterpret_cast<uint16_t*>(maskedBuffer.data());
-	    ////std::span<uint16_t> inputData(ptr, maskedBuffer.size()/sizeof(uint16_t));
-	    
-	    ////// Note: 
-	    ////// -buffer_ is of char
-	    ////// -GlobalLinearShapeFunction is of uint16_t.
-	    ////buffer_.resize(sf_.GlobalLinearShapeFunction::size() * sizeof(uint16_t));
-	
-	
-	////#ifdef MASKED
-	    ////log_verbose("Masked Image");
-	    ////if(sf_.Facet::size() != inputData.size()// inputData is of uint16_t
-	       ////|| sf_.GlobalLinearShapeFunction::size() != buffer_.size()/sizeof(uint16_t)// buffer is of char
-	    ////){
-	        ////std::cerr << "Incorrect inputData size: " << inputData.size() << std::endl;
-	        ////std::cerr << "Or, Incorrect buffer_ size: " << buffer_.size() << std::endl;
-	        ////std::cerr << " for Equilateral Triangular Shape Function:  " << sf_.Facet::size() << std::endl;
-	        ////exit(1);
-	    ////}
-	    ////auto unmasked = sf_.Facet::FrameBufferUnmask(inputData);
-	    ////std::memcpy(buffer_.data(), unmasked.data(), sf_.GlobalLinearShapeFunction::size() * sizeof(uint16_t));
-	////#else
-	    ////if(sf_.GlobalLinearShapeFunction::size() != inputData.size()// inputData is of uint16_t
-	       ////|| sf_.GlobalLinearShapeFunction::size() != buffer_.size()/sizeof(uint16_t)// buffer is of char
-	    ////){
-	        ////std::cerr << "Incorrect inputData size: " << inputData.size() << std::endl;
-	        ////std::cerr << "Or, Incorrect buffer_ size: " << buffer_.size() << std::endl;
-	        ////std::cerr << " for Global Linear Shape Function:  " << sf_.GlobalLinearShapeFunction::size() << std::endl;
-	        ////exit(1);
-	    ////}
-	    ////std::cout << "memcpy - start" << std::endl;
-	    
-	    ////std::memcpy(buffer_.data(), inputData.data(), sf_.GlobalLinearShapeFunction::size() * sizeof(uint16_t));
-	    ////std::cout << "memcpy - end" << std::endl;
-	
-	////#endif
-	
-	    ////sfdp_.LoadUint8tToContiguousMemory(maskedBuffer);
-	    //sfdp_.LoadToContiguousMemory(maskedBuffer);
-    
-	    ////Post operations
-		//auto unmasked{sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(sfdp_[0])};
-		//buffer_[0].resize( unmasked.size());// Note buffer is uint16_t
-	    //std::memcpy(buffer_[0].data(), unmasked.data(), /*sf_.sf_t::GlobalLinearShapeFunction_t::size()*/ unmasked.size() * sizeof(uint16_t));
-		
-		//for(size_t i = 0; i < n_; i++){
-			//auto unmasked{sf_.FrameBufferUnmask(sfdp_[i+1], i)};
-			////buffer_[i+1].resize( sf_.sf_t::GlobalLinearShapeFunction_t::size());// Note buffer is uint16_t
-			//buffer_[i+1].resize( unmasked.size());// Note buffer is uint16_t
-		    //std::memcpy(buffer_[i+1].data(), unmasked.data(), /*sf_.sf_t::GlobalLinearShapeFunction_t::size()*/ unmasked.size() * sizeof(uint16_t));
-		//}
-		
-		//// The following is for viewing output only.
-		//BrightenImageInplace(std::span<uint16_t>(buffer_[0]), /*shift*/ 6);
-		//for(size_t i = 0; i < n_; i++){
-			//BrightenImageInplace(std::span<uint16_t>(buffer_[i+1]), /*shift*/ 6);
-		//}
-	
-	    //log_verbose("BufferToFile");
-	    //BufferToFile();
-	    //log_verbose("Finished saving to file");
-	    
-	    //return true;
-	//}
 	
 	template<size_t n>
 	bool AperturePeer<n>::BufferToFile()
 	{
 		log_verbose("[AperturePeer::BufferToFile]");
-	
+		
+		std::scoped_lock lock(bufferMutex_);
+
 		for (size_t i = 0; i < n_ + 1; ++i) {
 			log_verbose("Writing file:" + std::to_string(i));
 	
@@ -309,9 +200,30 @@ namespace DASPi{
 			}
 	
 			this->files_[i]->flush();
-			//this->files_[i]->close();
 		}
 	
+		return true;
+	}
+	
+	template<size_t n>
+	bool AperturePeer<n>::CopyBuffer(size_t index, std::vector<uint16_t>& out) const
+	{
+		log_verbose("[AperturePeer::CopyBuffer]");
+	
+		if (index >= n_ + 1) {
+			std::cerr << "[CopyBuffer] index out of range: " << index
+					  << " (max valid: " << n_ << ")\n";
+			return false;
+		}
+	
+		std::scoped_lock lock(bufferMutex_);
+	
+		if (buffer_[index].empty()) {
+			std::cerr << "[CopyBuffer] buffer_[" << index << "] is empty\n";
+			return false;
+		}
+	
+		out = buffer_[index];
 		return true;
 	}
 	
@@ -488,12 +400,38 @@ namespace DASPi{
 	        workers.emplace_back([this, buf, start, end, shift, i]() {
 	            pthread_setname_np(pthread_self(), "Brighten");
 	            //ScopedTimer t(("BrightenImageChunked2Thread " + std::to_string(i)).c_str());
-	            BrightenImageChunked2_NEON(buf.data(), start, end, shift);
+#if defined(__ARM_NEON) || defined(__aarch64__)
+	            this->BrightenImageChunked2_NEON(buf.data(), start, end, shift);
+#else
+	            this->BrightenImageChunked2(buf.data(), start, end, shift);
+#endif
 	        });
 	    }
 	    for (auto &t : workers) t.join();
 	}
 	
+	
+	template<size_t n>
+	void AperturePeer<n>::BrightenImageChunked2(uint16_t* buffer, size_t start, size_t end, size_t shift)
+	{
+		log_verbose("[Aperture::BrightenImageChunked2]");
+	
+		if (!buffer || start >= end) return;
+		if (shift > 15) shift = 15;
+	
+#if defined(__ARM_NEON) || defined(__aarch64__)
+		BrightenImageChunked2_NEON(buffer, start, end, shift);
+#else
+		uint16_t* data = buffer + start;
+		const size_t count = end - start;
+	
+		for (size_t i = 0; i < count; ++i) {
+			data[i] <<= shift;
+		}
+#endif
+}
+	
+#if defined(__ARM_NEON) || defined(__aarch64__)	
 	template<size_t n>
 	void AperturePeer<n>::BrightenImageChunked2_NEON(uint16_t *buffer, size_t start, size_t end, size_t shift) {
 	    log_verbose("[Aperture::BrightenImageChunked2_NEON]");
@@ -518,6 +456,7 @@ namespace DASPi{
 	        data[i] <<= shift;
 	    }
 	}
+#endif
 	
 	template<size_t n>
 	float AperturePeer<n>::ComputeRequestedGain(const GainMsg& msg)
@@ -613,5 +552,8 @@ namespace DASPi{
 		//SendGainReply(reply);
 	//}
 	
+	//template<size_t n> bool AperturePeer<n>::receivePeerFrame(AperturePeer<N>& peer, std::vector<std::uint16_t>& outBayer){
+	//}
+					  
 };//ending namespace DASPi
 

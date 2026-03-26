@@ -75,8 +75,13 @@ public:
     std::vector<uint16_t> GenerateStripedBayerBGGRImage(int width, int height, int stripeWidth);
 	inline void ApplyWhiteBalanceToMosaic_BGGR(std::span<uint16_t> data, int width, int height, double rGain, double gGain, double bGain);
 	void BrightenImageInplace(std::span<uint16_t> buf, size_t shift);
-    void BrightenImageChunked2_NEON(uint16_t *buffer, size_t start, size_t end, size_t shift);
+    void BrightenImageChunked2(uint16_t* buffer, size_t start, size_t end, size_t shift);
+#if defined(__ARM_NEON) || defined(__aarch64__)
+    void BrightenImageChunked2_NEON(uint16_t* buffer, size_t start, size_t end, size_t shift);
+#endif
     bool ReceiveApertureCapture();
+    bool CopyBuffer(size_t index, std::vector<uint16_t>& out) const;
+    //template<size_t N>bool receivePeerFrame(AperturePeer<N>& peer, std::vector<std::uint16_t>& outBayer);
     
 private:
     const int processingThreads_{4};
@@ -84,6 +89,7 @@ private:
     void HandleGainMsg(const GainMsg& msg);
     bool SendGainReply(const GainReply& reply);
     float ComputeRequestedGain(const GainMsg& msg);
+    mutable std::mutex bufferMutex_;
 };
 
 } // namespace DASPi
