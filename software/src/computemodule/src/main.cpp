@@ -1,6 +1,6 @@
+#include <array>
 #include <chrono>
 #include <cstdlib>
-#include <cstring>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -17,13 +17,13 @@
 
 #include "DASPi-logger.h"
 #include "DASPi-aperture-peer.h"
-
 #include "DASPi-fisheye-camera-model.h"
 #include "DASPi-sphere-stitcher.h"
 #include "DASPi-image-rotation.h"
 #include "DASPi-camera-config.h"
 #include "DASPi-fisheye-params.h"
 #include "DASPi-live-frame-buffer.h"
+
 using namespace DASPi;
 
 namespace {
@@ -31,55 +31,28 @@ namespace {
 constexpr int kFrameWidth = 1456;
 constexpr int kFrameHeight = 1088;
 constexpr int kExpectedPixels = kFrameWidth * kFrameHeight;
+constexpr int kControlPortOffset = 1;
+constexpr size_t kPeerStreams = 3;
+
+struct ProgramOptions
+{
+    int nApertureComputeModules{0};
+    std::string usbBaseIp;
+    int framePort{0};
+};
+
+struct NetworkAddressPlan
+{
+    in_addr_t gateway{};
+    in_addr_t client{};
+    std::vector<in_addr_t> servers;
+};
 
 template <size_t N>
 bool tryReceiveLatestFrameFromPeer(AperturePeer<N>& peer,
                                    std::vector<std::uint16_t>& outBayer)
 {
-    // use index 0 first; adjust if your desired camera stream is another index
     return peer.CopyBuffer(0, outBayer);
-}
-
-std::string IncrementIp(std::string& ipStr)
-{
-    struct in_addr addr{};
-    if (inet_aton(ipStr.c_str(), &addr) == 0) {
-        std::cerr << "Invalid IP address format\n";
-        return ipStr;
-    }
-
-    uint32_t ip = ntohl(addr.s_addr);
-    ++ip;
-    addr.s_addr = htonl(ip);
-
-    ipStr = inet_ntoa(addr);
-    return ipStr;
-}
-
-std::string IncrementSubnet(std::string ipStr)
-{
-    struct in_addr addr{};
-    if (inet_aton(ipStr.c_str(), &addr) == 0) {
-        std::cerr << "Invalid IP address format\n";
-        return ipStr;
-    }
-
-    uint32_t ip = ntohl(addr.s_addr);
-
-    uint8_t octet1 = static_cast<uint8_t>((ip >> 24) & 0xFF);
-    uint8_t octet2 = static_cast<uint8_t>((ip >> 16) & 0xFF);
-    uint8_t octet3 = static_cast<uint8_t>((ip >> 8)  & 0xFF);
-    uint8_t octet4 = static_cast<uint8_t>(ip & 0xFF);
-
-    ++octet3;
-
-    ip = (static_cast<uint32_t>(octet1) << 24) |
-         (static_cast<uint32_t>(octet2) << 16) |
-         (static_cast<uint32_t>(octet3) << 8)  |
-         static_cast<uint32_t>(octet4);
-
-    addr.s_addr = htonl(ip);
-    return std::string(inet_ntoa(addr));
 }
 
 in_addr_t StringToInAddrT(const std::string& ipStr)
@@ -106,14 +79,186 @@ std::string InAddrTToString(in_addr_t addrNetOrder)
     return std::string(str);
 }
 
+bool ParseIpv4(const std::string& ipStr, std::array<int, 4>& octets)
+{
+    struct in_addr addr{};
+    if (inet_pton(AF_INET, ipStr.c_str(), &addr) != 1) {
+        return false;
+    }
+
+    const uint32_t ip = ntohl(addr.s_addr);
+    octets[0] = static_cast<int>((ip >> 24) & 0xFF);
+    octets[1] = static_cast<int>((ip >> 16) & 0xFF);
+    octets[2] = static_cast<int>((ip >> 8) & 0xFF);
+    octets[3] = static_cast<int>(ip & 0xFF);
+    return true;
+}
+
+std::string MakeIpv4String(int a, int b, int c, int d)
+{
+    return std::to_string(a) + "." +
+           std::to_string(b) + "." +
+           std::to_string(c) + "." +
+           std::to_string(d);
+}
+
+std::string IncrementIpv4Host(const std::string& ipStr, int delta)
+{
+    std::array<int, 4> octets{};
+    if (!ParseIpv4(ipStr, octets)) {
+        throw std::runtime_error("Invalid IPv4 address: " + ipStr);
+    }
+
+    const int host = octets[3] + delta;
+    if (host < 0 || host > 254) {
+        throw std::runtime_error("IPv4 host out of range for address: " + ipStr);
+    }
+
+    return MakeIpv4String(octets[0], octets[1], octets[2], host);
+}
+
+NetworkAddressPlan BuildNetworkAddressPlan(const std::string& usbBaseIp,
+                                           int nApertureComputeModules)
+{
+    if (nApertureComputeModules <= 0) {
+        throw std::runtime_error("nApertureComputeModules must be > 0");
+    }
+
+    NetworkAddressPlan plan;
+    plan.gateway = StringToInAddrT(usbBaseIp);
+    plan.client  = StringToInAddrT(IncrementIpv4Host(usbBaseIp, 1));
+
+    if (plan.gateway == INADDR_NONE || plan.client == INADDR_NONE) {
+        throw std::runtime_error("Failed to construct gateway/client IP addresses");
+    }
+
+    plan.servers.reserve(static_cast<size_t>(nApertureComputeModules));
+    for (int i = 0; i < nApertureComputeModules; ++i) {
+        const std::string serverIp = IncrementIpv4Host(usbBaseIp, 2 + i);
+        const in_addr_t serverAddr = StringToInAddrT(serverIp);
+        if (serverAddr == INADDR_NONE) {
+            throw std::runtime_error("Failed to construct server IP address: " + serverIp);
+        }
+        plan.servers.push_back(serverAddr);
+    }
+
+    return plan;
+}
+
+void PrintAddressPlan(const NetworkAddressPlan& plan)
+{
+    std::cout << "[main] Address plan\n";
+    std::cout << "  gateway=" << InAddrTToString(plan.gateway) << '\n';
+    std::cout << "  client="  << InAddrTToString(plan.client)  << '\n';
+
+    for (size_t i = 0; i < plan.servers.size(); ++i) {
+        std::cout << "  server[" << i << "]="
+                  << InAddrTToString(plan.servers[i]) << '\n';
+    }
+}
+
 void PrintUsage(const char* programName)
 {
     std::cerr
         << "Usage: " << programName
         << " [--verbose]"
         << " --nApertureComputeModules=<N>"
-        << " --usbSubnets=<subnet>"
-        << " --port=<frame_port>\n";
+        << " --usbBaseIp=<base_ip>"
+        << " --port=<frame_port>\n"
+        << "Example: " << programName
+        << " --nApertureComputeModules=2 --usbBaseIp=10.0.2.1 --port=5000\n";
+}
+
+ProgramOptions ParseArgs(int argc, char* argv[])
+{
+    ProgramOptions options;
+
+    if (argc < 4) {
+        PrintUsage(argv[0]);
+        throw std::runtime_error("Insufficient arguments");
+    }
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg{argv[i]};
+
+        if (arg == "--verbose") {
+            verbosity = Verbosity::Verbose;
+            continue;
+        }
+
+        const std::string prefix0 = "--nApertureComputeModules=";
+        if (arg.rfind(prefix0, 0) == 0) {
+            options.nApertureComputeModules = std::stoi(arg.substr(prefix0.size()));
+            continue;
+        }
+
+        const std::string prefix1 = "--usbBaseIp=";
+        if (arg.rfind(prefix1, 0) == 0) {
+            options.usbBaseIp = arg.substr(prefix1.size());
+            continue;
+        }
+
+        const std::string prefix2 = "--port=";
+        if (arg.rfind(prefix2, 0) == 0) {
+            options.framePort = std::stoi(arg.substr(prefix2.size()));
+            continue;
+        }
+
+        PrintUsage(argv[0]);
+        throw std::runtime_error("Unknown argument: " + arg);
+    }
+
+    if (options.nApertureComputeModules <= 0) {
+        throw std::runtime_error("No valid --nApertureComputeModules argument provided.");
+    }
+
+    if (options.usbBaseIp.empty()) {
+        throw std::runtime_error("No valid --usbBaseIp argument provided.");
+    }
+
+    if (options.framePort <= 0) {
+        throw std::runtime_error("No valid --port argument provided.");
+    }
+
+    return options;
+}
+
+void PrintProgramOptions(const ProgramOptions& options)
+{
+    std::cout << "[ARGS] nApertureComputeModules=" << options.nApertureComputeModules
+              << " usbBaseIp='" << options.usbBaseIp
+              << "' baseFramePort=" << options.framePort
+              << '\n';
+}
+
+template <size_t N>
+std::vector<std::unique_ptr<AperturePeer<N>>> CreateAperturePeers(
+    const ProgramOptions& options,
+    const NetworkAddressPlan& addressPlan)
+{
+    std::vector<std::unique_ptr<AperturePeer<N>>> aperturePeers(addressPlan.servers.size());
+
+    std::cout << "[main] Setting up AperturePeers\n";
+    for (size_t i = 0; i < aperturePeers.size(); ++i) {
+        const int framePort = options.framePort + static_cast<int>(i) * 2;
+        const int controlPort = framePort + kControlPortOffset;
+
+        std::cout << "[main] Creating AperturePeer " << i
+                  << ", framePort=" << framePort
+                  << ", controlPort=" << controlPort
+                  << ", clntAddr=" << InAddrTToString(addressPlan.client)
+                  << ", srvAddr=" << InAddrTToString(addressPlan.servers[i])
+                  << '\n';
+
+        aperturePeers[i] = std::make_unique<AperturePeer<N>>(
+            addressPlan.client,
+            framePort,
+            controlPort,
+            addressPlan.servers[i]
+        );
+    }
+
+    return aperturePeers;
 }
 
 cv::Mat fullMask(int width, int height)
@@ -226,36 +371,69 @@ bool tryGetLatestFrame(LiveFrameBuffer& src, cv::Mat& dst)
     return true;
 }
 
-//template <size_t N>
-//bool tryReceiveLatestFrameFromPeer(AperturePeer<N>& peer,
-                                   //std::vector<uint16_t>& outBayer)
-//{
-    //// Assumes you add:
-    //// bool CopyBuffer(size_t index, std::vector<uint16_t>& out) const;
-    //return peer.CopyBuffer(0, outBayer);
-//}
-
-std::vector<CameraConfig> makeCameraConfigs()
+std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
 {
-    const Eigen::Matrix3d R_left = Eigen::Matrix3d::Identity();
+    if (nApertureComputeModules <= 0) {
+        throw std::runtime_error("nApertureComputeModules must be > 0");
+    }
 
-    Eigen::Matrix3d R_right;
-    R_right = Eigen::AngleAxisd(M_PI / 3.0, Eigen::Vector3d::UnitY()).toRotationMatrix();
-
-    return {
-        {
-            "left",
-            "",
-            ImageRotation::Rotate90CCW,
-            R_left
-        },
-        {
-            "right",
-            "",
-            ImageRotation::Rotate90CW,
-            R_right
-        }
+    struct CameraPreset
+    {
+        std::string name;
+        ImageRotation imageRotation;
+        Eigen::Matrix3d Rcw;
     };
+
+    const Eigen::Matrix3d R_identity = Eigen::Matrix3d::Identity();
+    const Eigen::Matrix3d R_right =
+        Eigen::AngleAxisd(M_PI / 3.0, Eigen::Vector3d::UnitY()).toRotationMatrix();
+
+    const std::vector<CameraPreset> presets = {
+        { "left",  ImageRotation::Rotate90CCW, R_identity },
+        { "right", ImageRotation::Rotate90CW,  R_right }
+    };
+
+    std::vector<CameraConfig> configs;
+    configs.reserve(static_cast<size_t>(nApertureComputeModules));
+
+    for (int i = 0; i < nApertureComputeModules; ++i) {
+        if (static_cast<size_t>(i) < presets.size()) {
+            const auto& preset = presets[static_cast<size_t>(i)];
+            configs.push_back(CameraConfig{
+                preset.name,
+                "",
+                preset.imageRotation,
+                preset.Rcw
+            });
+        } else {
+            configs.push_back(CameraConfig{
+                "camera_" + std::to_string(i),
+                "",
+                ImageRotation::None,
+                R_identity
+            });
+        }
+    }
+
+    return configs;
+}
+
+std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& configs,
+                                          const FisheyeParams& fisheyeParams)
+{
+    std::vector<CameraView> cameras;
+    cameras.reserve(configs.size());
+
+    for (const auto& cfg : configs) {
+        cv::Mat empty(kFrameHeight, kFrameWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+        auto model = makeFisheyeModelForRotation(cfg.imageRotation,
+                                                 kFrameWidth,
+                                                 kFrameHeight,
+                                                 fisheyeParams);
+        cameras.push_back(makeCameraView(empty, model, cfg.Rcw, cfg.imageRotation));
+    }
+
+    return cameras;
 }
 
 void updateCameraImages(std::vector<CameraView>& cameras,
@@ -290,6 +468,84 @@ bool haveAnyFrames(std::vector<LiveFrameBuffer>& liveFrames)
     return false;
 }
 
+template <size_t N>
+void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePeers,
+                      std::vector<LiveFrameBuffer>& liveFrames,
+                      std::vector<std::jthread>& frameThreads,
+                      std::vector<std::jthread>& controlThreads)
+{
+    std::cout << "[main] Starting per-peer frame/control threads\n";
+
+    frameThreads.reserve(aperturePeers.size());
+    controlThreads.reserve(aperturePeers.size());
+
+    for (size_t i = 0; i < aperturePeers.size(); ++i) {
+        AperturePeer<N>* peer = aperturePeers[i].get();
+        LiveFrameBuffer* live = &liveFrames[i];
+
+        frameThreads.emplace_back([peer, live]() {
+            std::vector<uint16_t> raw;
+            raw.reserve(kExpectedPixels);
+
+            for (;;) {
+                if (!tryReceiveLatestFrameFromPeer(*peer, raw)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    continue;
+                }
+
+                if (static_cast<int>(raw.size()) != kExpectedPixels) {
+                    std::cerr << "[frame thread] unexpected Bayer size: "
+                              << raw.size() << '\n';
+                    continue;
+                }
+
+                cv::Mat bgr = decodeBayer16ToBgr8(raw);
+                updateLatestFrame(*live, bgr);
+            }
+        });
+
+        controlThreads.emplace_back([peer]() {
+            for (;;) {
+                if (!peer->RunControlLoop()) {
+                    std::cerr << "[control thread] RunControlLoop failed\n";
+                    break;
+                }
+            }
+        });
+    }
+
+    std::cout << "[main] Threads running\n";
+}
+
+void RunStitchLoop(std::vector<CameraView>& cameras,
+                   const std::vector<CameraConfig>& configs,
+                   std::vector<LiveFrameBuffer>& liveFrames)
+{
+    SphereStitchConfig stitchConfig;
+    stitchConfig.outputWidth = 1456;
+    stitchConfig.outputHeight = 1088;
+    stitchConfig.blendPower = 4.0;
+
+    for (;;) {
+        if (!haveAnyFrames(liveFrames)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+
+        updateCameraImages(cameras, configs, liveFrames);
+
+        SphereStitcher stitcher(cameras, stitchConfig);
+
+        cv::Mat validMask;
+        cv::Mat pano = stitcher.stitchFisheye(&validMask);
+
+        cv::imwrite("panorama.png", pano);
+        cv::imwrite("valid_mask.png", validMask);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -297,230 +553,35 @@ int main(int argc, char* argv[])
     try {
         std::cout << "Program - started\n";
 
-        int nApertureComputeModules{0};
-        std::string usbSubnet;
-        int framePort{0};
+        const ProgramOptions options = ParseArgs(argc, argv);
+        PrintProgramOptions(options);
 
-        if (argc < 4) {
-            PrintUsage(argv[0]);
-            return EXIT_FAILURE;
-        }
+        const auto addressPlan =
+            BuildNetworkAddressPlan(options.usbBaseIp, options.nApertureComputeModules);
+        PrintAddressPlan(addressPlan);
 
-        for (int i = 1; i < argc; ++i) {
-            const std::string arg{argv[i]};
-
-            if (arg == "--verbose") {
-                verbosity = Verbosity::Verbose;
-                continue;
-            }
-
-            const std::string prefix0 = "--nApertureComputeModules=";
-            if (arg.rfind(prefix0, 0) == 0) {
-                nApertureComputeModules = std::stoi(arg.substr(prefix0.size()));
-                continue;
-            }
-
-            const std::string prefix1 = "--usbSubnets=";
-            if (arg.rfind(prefix1, 0) == 0) {
-                usbSubnet = arg.substr(prefix1.size());
-                continue;
-            }
-
-            const std::string prefix2 = "--port=";
-            if (arg.rfind(prefix2, 0) == 0) {
-                framePort = std::stoi(arg.substr(prefix2.size()));
-                continue;
-            }
-
-            std::cerr << "Unknown argument: " << arg << '\n';
-            return EXIT_FAILURE;
-        }
-
-        std::cout << "[ARGS] nApertureComputeModules=" << nApertureComputeModules
-                  << " usbSubnet='" << usbSubnet
-                  << "' framePort=" << framePort << '\n';
-
-        if (nApertureComputeModules <= 0) {
-            std::cerr << "No valid --nApertureComputeModules argument provided.\n";
-            return EXIT_FAILURE;
-        }
-
-        if (usbSubnet.empty()) {
-            std::cerr << "No valid --usbSubnets argument provided.\n";
-            return EXIT_FAILURE;
-        }
-
-        if (framePort <= 0) {
-            std::cerr << "No valid --port argument provided.\n";
-            return EXIT_FAILURE;
-        }
-
-        constexpr int controlPortOffset = 1;
-        const int controlPort = framePort + controlPortOffset;
-
-        std::vector<in_addr_t> gatewayAddrs(static_cast<size_t>(nApertureComputeModules));
-        std::vector<in_addr_t> clntAddrs(static_cast<size_t>(nApertureComputeModules));
-        std::vector<in_addr_t> srvAddrs(static_cast<size_t>(nApertureComputeModules));
-
-        std::string subnetBase = usbSubnet;
-
-        std::string gatewayAddr = IncrementIp(subnetBase);
-        gatewayAddrs[0] = StringToInAddrT(gatewayAddr);
-
-        std::string clntAddr = IncrementIp(gatewayAddr);
-        clntAddrs[0] = StringToInAddrT(clntAddr);
-
-        std::string srvAddr = IncrementIp(clntAddr);
-        srvAddrs[0] = StringToInAddrT(srvAddr);
-
-        for (int i = 1; i < nApertureComputeModules; ++i) {
-            gatewayAddrs[static_cast<size_t>(i)] =
-                StringToInAddrT(IncrementSubnet(InAddrTToString(gatewayAddrs[static_cast<size_t>(i - 1)])));
-
-            clntAddrs[static_cast<size_t>(i)] =
-                StringToInAddrT(IncrementSubnet(InAddrTToString(clntAddrs[static_cast<size_t>(i - 1)])));
-
-            srvAddrs[static_cast<size_t>(i)] =
-                StringToInAddrT(IncrementSubnet(InAddrTToString(srvAddrs[static_cast<size_t>(i - 1)])));
-        }
-
-        std::cout << "[main] Address map\n";
-        for (int i = 0; i < nApertureComputeModules; ++i) {
-            struct in_addr gatewayIpAddr{};
-            struct in_addr clntIpAddr{};
-            struct in_addr srvIpAddr{};
-
-            gatewayIpAddr.s_addr = gatewayAddrs[static_cast<size_t>(i)];
-            clntIpAddr.s_addr = clntAddrs[static_cast<size_t>(i)];
-            srvIpAddr.s_addr = srvAddrs[static_cast<size_t>(i)];
-
-            std::cout << "  [" << i << "] "
-                      << "gateway=" << inet_ntoa(gatewayIpAddr)
-                      << " client=" << inet_ntoa(clntIpAddr)
-                      << " server=" << inet_ntoa(srvIpAddr)
-                      << '\n';
-        }
-
-        constexpr size_t n = 3;
-        std::vector<std::unique_ptr<AperturePeer<n>>> aperturePeers(
-            static_cast<size_t>(nApertureComputeModules));
-
-        std::cout << "[main] Setting up AperturePeers\n";
-
-        for (size_t i = 0; i < aperturePeers.size(); ++i) {
-            struct in_addr srvIpAddr{};
-            struct in_addr clntIpAddr{};
-            srvIpAddr.s_addr = srvAddrs[i];
-            clntIpAddr.s_addr = clntAddrs[i];
-
-            std::cout << "[main] Creating AperturePeer " << i
-                      << ", framePort=" << framePort
-                      << ", controlPort=" << controlPort
-                      << ", srvAddr=" << inet_ntoa(srvIpAddr)
-                      << ", clntAddr=" << inet_ntoa(clntIpAddr)
-                      << '\n';
-
-            aperturePeers[i] = std::make_unique<AperturePeer<n>>(
-                clntAddrs[i],
-                framePort,
-                controlPort,
-                srvAddrs[i]
-            );
-        }
+        constexpr size_t n = kPeerStreams;
+        auto aperturePeers = CreateAperturePeers<n>(options, addressPlan);
 
         const FisheyeParams fisheyeParams{600.0, 600.0, 580.0};
-        const std::vector<CameraConfig> configs = makeCameraConfigs();
+        const std::vector<CameraConfig> configs =
+            makeCameraConfigs(options.nApertureComputeModules);
 
-        if (static_cast<int>(configs.size()) != nApertureComputeModules) {
-            std::cerr << "Camera config count does not match --nApertureComputeModules\n";
-            return EXIT_FAILURE;
-        }
+        auto cameras = CreateCameraViews(configs, fisheyeParams);
 
-        std::vector<CameraView> cameras;
-        cameras.reserve(configs.size());
-
-        for (const auto& cfg : configs) {
-            cv::Mat empty(kFrameHeight, kFrameWidth, CV_8UC3, cv::Scalar(0, 0, 0));
-            auto model = makeFisheyeModelForRotation(cfg.imageRotation,
-                                                     kFrameWidth,
-                                                     kFrameHeight,
-                                                     fisheyeParams);
-            cameras.push_back(makeCameraView(empty, model, cfg.Rcw, cfg.imageRotation));
-        }
-
-        SphereStitchConfig stitchConfig;
-        stitchConfig.outputWidth = 1456;
-        stitchConfig.outputHeight = 1088;
-        stitchConfig.blendPower = 4.0;
-
-        std::vector<LiveFrameBuffer> liveFrames(static_cast<size_t>(nApertureComputeModules));
-
-        std::cout << "[main] Starting per-peer frame/control threads\n";
+        std::vector<LiveFrameBuffer> liveFrames(
+            static_cast<size_t>(options.nApertureComputeModules));
 
         std::vector<std::jthread> frameThreads;
         std::vector<std::jthread> controlThreads;
 
-        frameThreads.reserve(aperturePeers.size());
-        controlThreads.reserve(aperturePeers.size());
-
-        for (size_t i = 0; i < aperturePeers.size(); ++i) {
-            AperturePeer<n>* peer = aperturePeers[i].get();
-            LiveFrameBuffer* live = &liveFrames[i];
-
-            frameThreads.emplace_back([peer, live]() {
-                std::vector<uint16_t> raw;
-                raw.reserve(kExpectedPixels);
-
-                for (;;) {
-                    if (!tryReceiveLatestFrameFromPeer(*peer, raw)) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                        continue;
-                    }
-
-                    if (static_cast<int>(raw.size()) != kExpectedPixels) {
-                        std::cerr << "[frame thread] unexpected Bayer size: "
-                                  << raw.size() << '\n';
-                        continue;
-                    }
-
-                    cv::Mat bgr = decodeBayer16ToBgr8(raw);
-                    updateLatestFrame(*live, bgr);
-                }
-            });
-
-            controlThreads.emplace_back([peer]() {
-                for (;;) {
-                    if (!peer->RunControlLoop()) {
-                        std::cerr << "[control thread] RunControlLoop failed\n";
-                        break;
-                    }
-                }
-            });
-        }
-
-        std::cout << "[main] Threads running\n";
-
-        for (;;) {
-            if (!haveAnyFrames(liveFrames)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
-                continue;
-            }
-
-            updateCameraImages(cameras, configs, liveFrames);
-
-            SphereStitcher stitcher(cameras, stitchConfig);
-
-            cv::Mat validMask;
-            cv::Mat pano = stitcher.stitchFisheye(&validMask);
-
-            cv::imwrite("panorama.png", pano);
-            cv::imwrite("valid_mask.png", validMask);
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(30));
-        }
+        StartPeerThreads<n>(aperturePeers, liveFrames, frameThreads, controlThreads);
+        RunStitchLoop(cameras, configs, liveFrames);
     }
     catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';
         return EXIT_FAILURE;
     }
+
+    return EXIT_SUCCESS;
 }

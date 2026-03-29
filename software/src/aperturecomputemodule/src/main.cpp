@@ -42,7 +42,7 @@ int main(int argc, char* argv[])
 
     std::cout << "Program - started" << std::endl;
 
-    std::string clientIp{""};    
+    std::string clientIp{""};
     int port{5000}; // Default port
 
 

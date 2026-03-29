@@ -1,0 +1,36 @@
+Program - started
+[ARGS] nApertureComputeModules=2 usbBaseIp='10.0.2.1' baseFramePort=5000
+[main] Address plan
+  gateway=10.0.2.1
+  client=10.0.2.2
+  server[0]=10.0.2.3
+  server[1]=10.0.2.4
+[main] Setting up AperturePeers
+[main] Creating AperturePeer 0, framePort=5000, controlPort=5001, clntAddr=10.0.2.2, srvAddr=10.0.2.3
+[UDPClnt::FillingClientInformation]
+[UDPClnt]
+[UDPClnt::FillingServerInformation]
+[UDPClnt::CreatingSocketFileDescriptor]
+[UDPClnt::BindSocketWithClientAddress]
+[UDPClnt] - finished
+[UDPClnt::FillingClientInformation]
+[UDPClnt]
+[UDPClnt::FillingServerInformation]
+[UDPClnt::CreatingSocketFileDescriptor]
+[UDPClnt::BindSocketWithClientAddress]
+[UDPClnt] - finished
+[main] Creating AperturePeer 1, framePort=5002, controlPort=5003, clntAddr=10.0.2.2, srvAddr=10.0.2.4
+[UDPClnt::FillingClientInformation]
+[UDPClnt]
+[UDPClnt::FillingServerInformation]
+[UDPClnt::CreatingSocketFileDescriptor]
+[UDPClnt::BindSocketWithClientAddress]
+[UDPClnt] - finished
+[UDPClnt::FillingClientInformation]
+[UDPClnt]
+[UDPClnt::FillingServerInformation]
+[UDPClnt::CreatingSocketFileDescriptor]
+[UDPClnt::BindSocketWithClientAddress]
+[UDPClnt] - finished
+[main] Starting per-peer frame/control threads
+[main] Threads running

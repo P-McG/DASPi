@@ -106,6 +106,10 @@ int UDPSrv::BindSocketWithServerAddress(){
 #endif
     std::lock_guard<std::mutex> lock(servaddrMtx_);
     
+    std::cout << "sockfd_=" << sockfd_ << "\n";
+    std::cout << "ip=" << inet_ntoa(servaddr_.sin_addr) << "\n";
+    std::cout << "port=" << ntohs(servaddr_.sin_port) << "\n";
+    
     if ( bind(sockfd_, (const struct sockaddr *)&servaddr_,
             sizeof(servaddr_)) < 0 )
     {
