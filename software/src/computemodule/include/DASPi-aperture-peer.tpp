@@ -130,7 +130,7 @@ namespace DASPi{
 		}
 	
 		// Build new buffers outside the lock
-		std::vector<std::vector<uint16_t>> newBuffers(n_ + 1);
+		std::array<std::vector<uint16_t>, n + 1> newBuffers;
 	
 		auto unmasked0 = this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(this->sfdp_[0]);
 		newBuffers[0].resize(unmasked0.size());
@@ -154,6 +154,12 @@ namespace DASPi{
 		{
 			std::scoped_lock lock(bufferMutex_);
 			this->buffer_ = std::move(newBuffers);
+		}
+	
+		std::cout << "[RunFrameLoop] about to publish/write\n";
+		for (size_t i = 0; i < n_ + 1; ++i) {
+			std::cout << "[RunFrameLoop] newBuffers[" << i << "].size()="
+					  << newBuffers[i].size() << '\n';
 		}
 	
 		this->BufferToFile();
@@ -186,12 +192,12 @@ namespace DASPi{
 			}
 	
 			const size_t bytesToWrite = this->buffer_[i].size() * sizeof(uint16_t);
-	
+			
 			if (bytesToWrite == 0) {
-				std::cerr << "[BufferToFile] buffer_[" << i << "] is empty\n";
-				return false;
+				std::cerr << "[BufferToFile] buffer_[" << i << "] is empty, skipping\n";
+				continue;
 			}
-	
+			
 			if (!this->files_[i]->write(
 					reinterpret_cast<const char*>(this->buffer_[i].data()),
 					static_cast<std::streamsize>(bytesToWrite))) {

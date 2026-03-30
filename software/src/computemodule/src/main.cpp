@@ -17,12 +17,12 @@
 
 #include "DASPi-logger.h"
 #include "DASPi-aperture-peer.h"
-#include "DASPi-fisheye-camera-model.h"
-#include "DASPi-sphere-stitcher.h"
-#include "DASPi-image-rotation.h"
 #include "DASPi-camera-config.h"
+#include "DASPi-fisheye-camera-model.h"
 #include "DASPi-fisheye-params.h"
+#include "DASPi-image-rotation.h"
 #include "DASPi-live-frame-buffer.h"
+#include "DASPi-sphere-stitcher.h"
 
 using namespace DASPi;
 
@@ -33,24 +33,25 @@ constexpr int kFrameHeight = 1088;
 constexpr int kExpectedPixels = kFrameWidth * kFrameHeight;
 constexpr int kControlPortOffset = 1;
 constexpr size_t kPeerStreams = 3;
+constexpr auto kRetryDelay = std::chrono::milliseconds(5);
+constexpr auto kNoFrameDelay = std::chrono::milliseconds(20);
+constexpr auto kStitchDelay = std::chrono::milliseconds(30);
 
-struct ProgramOptions
-{
+struct ProgramOptions {
     int nApertureComputeModules{0};
     std::string usbBaseIp;
     int framePort{0};
 };
 
-struct NetworkAddressPlan
-{
+struct NetworkAddressPlan {
     in_addr_t gateway{};
     in_addr_t client{};
     std::vector<in_addr_t> servers;
 };
 
 template <size_t N>
-bool tryReceiveLatestFrameFromPeer(AperturePeer<N>& peer,
-                                   std::vector<std::uint16_t>& outBayer)
+bool tryCopyLatestFrameFromPeer(AperturePeer<N>& peer,
+                                std::vector<std::uint16_t>& outBayer)
 {
     return peer.CopyBuffer(0, outBayer);
 }
@@ -126,7 +127,7 @@ NetworkAddressPlan BuildNetworkAddressPlan(const std::string& usbBaseIp,
 
     NetworkAddressPlan plan;
     plan.gateway = StringToInAddrT(usbBaseIp);
-    plan.client  = StringToInAddrT(IncrementIpv4Host(usbBaseIp, 1));
+    plan.client = StringToInAddrT(IncrementIpv4Host(usbBaseIp, 1));
 
     if (plan.gateway == INADDR_NONE || plan.client == INADDR_NONE) {
         throw std::runtime_error("Failed to construct gateway/client IP addresses");
@@ -149,7 +150,7 @@ void PrintAddressPlan(const NetworkAddressPlan& plan)
 {
     std::cout << "[main] Address plan\n";
     std::cout << "  gateway=" << InAddrTToString(plan.gateway) << '\n';
-    std::cout << "  client="  << InAddrTToString(plan.client)  << '\n';
+    std::cout << "  client=" << InAddrTToString(plan.client) << '\n';
 
     for (size_t i = 0; i < plan.servers.size(); ++i) {
         std::cout << "  server[" << i << "]="
@@ -211,11 +212,9 @@ ProgramOptions ParseArgs(int argc, char* argv[])
     if (options.nApertureComputeModules <= 0) {
         throw std::runtime_error("No valid --nApertureComputeModules argument provided.");
     }
-
     if (options.usbBaseIp.empty()) {
         throw std::runtime_error("No valid --usbBaseIp argument provided.");
     }
-
     if (options.framePort <= 0) {
         throw std::runtime_error("No valid --port argument provided.");
     }
@@ -254,8 +253,7 @@ std::vector<std::unique_ptr<AperturePeer<N>>> CreateAperturePeers(
             addressPlan.client,
             framePort,
             controlPort,
-            addressPlan.servers[i]
-        );
+            addressPlan.servers[i]);
     }
 
     return aperturePeers;
@@ -316,8 +314,7 @@ std::shared_ptr<ICameraModel> makeFisheyeModelForRotation(ImageRotation rotation
         cx,
         cy,
         params.maxImageRadiusPx,
-        size
-    );
+        size);
 }
 
 CameraView makeCameraView(const cv::Mat& image,
@@ -333,7 +330,6 @@ CameraView makeCameraView(const cv::Mat& image,
 
     cam.maskNonOverlap = applyImageRotation(maskNonOverlap, imageRotation);
     cam.maskOverlap = applyImageRotation(maskOverlap, imageRotation);
-
     cam.model = model;
     cam.Rcw = Rcw;
     return cam;
@@ -367,6 +363,7 @@ bool tryGetLatestFrame(LiveFrameBuffer& src, cv::Mat& dst)
     if (!src.hasFrame || src.latestBgr8.empty()) {
         return false;
     }
+
     dst = src.latestBgr8.clone();
     return true;
 }
@@ -377,8 +374,7 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
         throw std::runtime_error("nApertureComputeModules must be > 0");
     }
 
-    struct CameraPreset
-    {
+    struct CameraPreset {
         std::string name;
         ImageRotation imageRotation;
         Eigen::Matrix3d Rcw;
@@ -389,8 +385,8 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
         Eigen::AngleAxisd(M_PI / 3.0, Eigen::Vector3d::UnitY()).toRotationMatrix();
 
     const std::vector<CameraPreset> presets = {
-        { "left",  ImageRotation::Rotate90CCW, R_identity },
-        { "right", ImageRotation::Rotate90CW,  R_right }
+        {"left", ImageRotation::Rotate90CCW, R_identity},
+        {"right", ImageRotation::Rotate90CW, R_right},
     };
 
     std::vector<CameraConfig> configs;
@@ -403,14 +399,14 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
                 preset.name,
                 "",
                 preset.imageRotation,
-                preset.Rcw
+                preset.Rcw,
             });
         } else {
             configs.push_back(CameraConfig{
                 "camera_" + std::to_string(i),
                 "",
                 ImageRotation::None,
-                R_identity
+                R_identity,
             });
         }
     }
@@ -488,14 +484,21 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
             raw.reserve(kExpectedPixels);
 
             for (;;) {
-                if (!tryReceiveLatestFrameFromPeer(*peer, raw)) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (!peer->RunFrameLoop()) {
+                    std::cerr << "[frame thread] RunFrameLoop failed\n";
+                    std::this_thread::sleep_for(kRetryDelay);
+                    continue;
+                }
+
+                if (!tryCopyLatestFrameFromPeer(*peer, raw)) {
+                    std::cerr << "[frame thread] CopyBuffer failed\n";
+                    std::this_thread::sleep_for(kRetryDelay);
                     continue;
                 }
 
                 if (static_cast<int>(raw.size()) != kExpectedPixels) {
                     std::cerr << "[frame thread] unexpected Bayer size: "
-                              << raw.size() << '\n';
+                              << raw.size() << " expected=" << kExpectedPixels << '\n';
                     continue;
                 }
 
@@ -517,6 +520,44 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
     std::cout << "[main] Threads running\n";
 }
 
+void DrawPanoramaOverlay(cv::Mat& img,
+                         uint64_t frameNumber,
+                         const cv::Mat& validMask)
+{
+    const int font = cv::FONT_HERSHEY_SIMPLEX;
+    const double scale = 0.8;
+    const int thickness = 2;
+    const cv::Scalar color(255, 255, 255);
+
+    cv::putText(img,
+                "Frame: " + std::to_string(frameNumber),
+                cv::Point(20, 35),
+                font, scale, color, thickness);
+
+    cv::putText(img,
+                "Size: " + std::to_string(img.cols) + "x" + std::to_string(img.rows),
+                cv::Point(20, 70),
+                font, scale, color, thickness);
+
+    if (!validMask.empty()) {
+        const int validPixels = cv::countNonZero(validMask);
+        cv::putText(img,
+                    "Valid pixels: " + std::to_string(validPixels),
+                    cv::Point(20, 105),
+                    font, scale, color, thickness);
+    }
+
+    cv::line(img,
+             cv::Point(img.cols / 2 - 20, img.rows / 2),
+             cv::Point(img.cols / 2 + 20, img.rows / 2),
+             color, 1);
+
+    cv::line(img,
+             cv::Point(img.cols / 2, img.rows / 2 - 20),
+             cv::Point(img.cols / 2, img.rows / 2 + 20),
+             color, 1);
+}
+
 void RunStitchLoop(std::vector<CameraView>& cameras,
                    const std::vector<CameraConfig>& configs,
                    std::vector<LiveFrameBuffer>& liveFrames)
@@ -526,9 +567,15 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
     stitchConfig.outputHeight = 1088;
     stitchConfig.blendPower = 4.0;
 
+    uint64_t frameNumber = 0;
+    const bool saveDebugImages = false;
+
+    cv::namedWindow("Stitched Panorama", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Stitched Panorama", 1200, 800);
+
     for (;;) {
         if (!haveAnyFrames(liveFrames)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::this_thread::sleep_for(kNoFrameDelay);
             continue;
         }
 
@@ -539,13 +586,34 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         cv::Mat validMask;
         cv::Mat pano = stitcher.stitchFisheye(&validMask);
 
-        cv::imwrite("panorama.png", pano);
-        cv::imwrite("valid_mask.png", validMask);
+        if (pano.empty()) {
+            std::cerr << "[RunStitchLoop] stitchFisheye returned empty pano\n";
+            std::this_thread::sleep_for(kStitchDelay);
+            continue;
+        }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        if (saveDebugImages) {
+            cv::imwrite("panorama.png", pano);
+            if (!validMask.empty()) {
+                cv::imwrite("valid_mask.png", validMask);
+            }
+        }
+
+        cv::Mat display = pano.clone();
+        DrawPanoramaOverlay(display, frameNumber++, validMask);
+
+        cv::imshow("Stitched Panorama", display);
+
+        const int key = cv::waitKey(1);
+        if (key == 27 || key == 'q' || key == 'Q') {
+            break;
+        }
+
+        std::this_thread::sleep_for(kStitchDelay);
     }
-}
 
+    cv::destroyWindow("Stitched Panorama");
+}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -577,8 +645,7 @@ int main(int argc, char* argv[])
 
         StartPeerThreads<n>(aperturePeers, liveFrames, frameThreads, controlThreads);
         RunStitchLoop(cameras, configs, liveFrames);
-    }
-    catch (const std::exception& e) {
+    } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';
         return EXIT_FAILURE;
     }
