@@ -127,6 +127,26 @@ namespace DASPi {
        
         template<typename index_t>
         static void SaveArrayToFile(const IndexMap<index_t> *data, const std::string& filename);
+        
+        template<typename SrcT, typename DstT>
+        static void FrameBufferScatterTo(
+            const SrcT& frameBuffer,
+            const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax,
+            DstT* dst,
+            size_t dstSize);
+    
+        template<typename SrcT, typename DstT>
+        static void FrameBufferScatterAccumulateTo(
+            const SrcT& frameBuffer,
+            const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax,
+            DstT* dst,
+            size_t dstSize);
+    
+        template<typename SrcT>
+        static void FrameBufferScatterToSpan(
+            const SrcT& frameBuffer,
+            const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax,
+            std::span<uint16_t> dst);
     };
     
     inline GlobalLinearShapeFunction<

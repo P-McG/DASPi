@@ -294,5 +294,47 @@ namespace DASPi{
                 outputBuffer
             );
         }
+		
+        template<size_t n, PointData center, DirectionData direction, double nonOverlapScale>
+        template<typename frameBuffer_t, typename DstT>
+        void OverlapShapeFunction<n, center, direction, nonOverlapScale>::FrameBufferScatterTo(
+            frameBuffer_t&& frameBuffer,
+            size_t overlapRegion,
+            DstT* dst,
+            size_t dstSize)
+        {
+            if (overlapRegion >= n) {
+                throw std::runtime_error("FrameBufferScatterTo: invalid overlap region.");
+            }
+        
+            using base_t = GlobalLinearShapeFunction<center, direction>;
+        
+            base_t::FrameBufferScatterTo(
+                std::forward<frameBuffer_t>(frameBuffer),
+                indexLinearMaxs_[overlapRegion].get(),
+                dst,
+                dstSize);
+        }
+                
+        template<size_t n, PointData center, DirectionData direction, double nonOverlapScale>
+        template<typename frameBuffer_t, typename DstT>
+        void OverlapShapeFunction<n, center, direction, nonOverlapScale>::FrameBufferScatterAccumulateTo(
+            frameBuffer_t&& frameBuffer,
+            size_t overlapRegion,
+            DstT* dst,
+            size_t dstSize)
+        {
+            if (overlapRegion >= n) {
+                throw std::runtime_error("FrameBufferScatterAccumulateTo: invalid overlap region.");
+            }
+        
+            using base_t = GlobalLinearShapeFunction<center, direction>;
+        
+            base_t::FrameBufferScatterAccumulateTo(
+                std::forward<frameBuffer_t>(frameBuffer),
+                indexLinearMaxs_[overlapRegion].get(),
+                dst,
+                dstSize);
+        }   
 };//ending namespace DASPi
 #include "DASPi-regularpolygonalshapefunction.tpp"

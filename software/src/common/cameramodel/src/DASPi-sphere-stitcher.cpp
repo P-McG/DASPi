@@ -453,11 +453,27 @@ cv::Mat SphereStitcher::stitchFisheye(cv::Mat* validMask) const
             }
 
             const cv::Vec3f sum = accum.at<cv::Vec3f>(y, x) / w;
-
+            
+            // Normalize to [0,1]
+            const cv::Vec3f linear(
+                std::clamp(sum[0] / 255.0f, 0.0f, 1.0f),
+                std::clamp(sum[1] / 255.0f, 0.0f, 1.0f),
+                std::clamp(sum[2] / 255.0f, 0.0f, 1.0f)
+            );
+            
+            // Gamma correction
+            constexpr float gamma = 1.0f / 2.2f;
+            const cv::Vec3f corrected(
+                std::pow(linear[0], gamma),
+                std::pow(linear[1], gamma),
+                std::pow(linear[2], gamma)
+            );
+            
+            // Back to [0,255]
             out.at<cv::Vec3b>(y, x) = cv::Vec3b(
-                static_cast<std::uint8_t>(std::clamp(sum[0], 0.0f, 255.0f)),
-                static_cast<std::uint8_t>(std::clamp(sum[1], 0.0f, 255.0f)),
-                static_cast<std::uint8_t>(std::clamp(sum[2], 0.0f, 255.0f))
+                static_cast<std::uint8_t>(std::clamp(corrected[0] * 255.0f, 0.0f, 255.0f)),
+                static_cast<std::uint8_t>(std::clamp(corrected[1] * 255.0f, 0.0f, 255.0f)),
+                static_cast<std::uint8_t>(std::clamp(corrected[2] * 255.0f, 0.0f, 255.0f))
             );
         }
     }

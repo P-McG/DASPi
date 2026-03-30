@@ -382,7 +382,7 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
 
     const Eigen::Matrix3d R_identity = Eigen::Matrix3d::Identity();
     const Eigen::Matrix3d R_right =
-        Eigen::AngleAxisd(M_PI / 3.0, Eigen::Vector3d::UnitY()).toRotationMatrix();
+        Eigen::AngleAxisd(2.0 * 41.81 * M_PI / 180.0, Eigen::Vector3d::UnitY()).toRotationMatrix();
 
     const std::vector<CameraPreset> presets = {
         {"left", ImageRotation::Rotate90CCW, R_identity},

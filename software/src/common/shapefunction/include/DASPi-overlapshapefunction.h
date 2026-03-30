@@ -94,6 +94,20 @@ namespace DASPi{
             size_t end,
             uint16_t* outputBuffer   // New output pointer
         );
+		
+		template<typename frameBuffer_t, typename DstT>
+		void FrameBufferScatterTo(
+			frameBuffer_t&& frameBuffer,
+			size_t overlapRegion,
+			DstT* dst,
+			size_t dstSize);
+		
+		template<typename frameBuffer_t, typename DstT>
+		void FrameBufferScatterAccumulateTo(
+			frameBuffer_t&& frameBuffer,
+			size_t overlapRegion,
+			DstT* dst,
+			size_t dstSize);
     };
     
     inline OverlapShapeFunction<

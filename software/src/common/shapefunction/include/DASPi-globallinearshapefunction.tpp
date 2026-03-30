@@ -224,44 +224,22 @@ namespace DASPi{
 	}
   
 	//FrameBufferUnmask
-    template<PointData center, DirectionData direction>
+	template<PointData center, DirectionData direction>
 	template<typename T0>
 	std::vector<uint16_t> GlobalLinearShapeFunction<center, direction>::FrameBufferUnmask(
-		const T0 &frameBuffer, 
-		const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index> *indexLinearMax
-	){
-		log_verbose("[GlobalLinearShapeFunction::FrameBufferUnmask]");
-		if (!indexLinearMax || frameBuffer.size() > indexLinearMax->size()) {
-			throw std::runtime_error("FrameBufferUnmask: invalid index map or size mismatch.");
-		}
-		assert(indexLinearMax != nullptr);
-		assert(indexLinearMax->size() >= frameBuffer.size());
-
-		std::vector<uint16_t> outputData(indexLinearMax->size());
-		
-		//Validate indexLinearMax_ contents before use
-		for (size_t i = 0; i < frameBuffer.size(); ++i) {
-			const auto& idx = (*indexLinearMax)[i];
-			if (idx.value() >= indexLinearMax->size()) {
-				std::cerr << "[ERROR] indexLinearMax[" << i << "].value() = " << idx.value()
-						  << " out of bounds!" << std::endl;
-				std::terminate();
-			}
-		}
-
-		//Performing a scatter/unmask on the framebuffer.
-		#pragma omp parallel for schedule(static)
-		for (size_t i = 0; i < frameBuffer.size(); i++) {
-			auto outIdx = (*indexLinearMax)[i].value();
-			if (outIdx >= outputData.size()) {
-				throw std::runtime_error("FrameBufferUnmask: index out of bounds.");
-			}
-			outputData[outIdx] = frameBuffer[i];
-		}
+	    const T0& frameBuffer,
+	    const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax)
+	{
+	    log_verbose("[GlobalLinearShapeFunction::FrameBufferUnmask]");
 	
-		return outputData;
-	}
+	    if (!indexLinearMax || frameBuffer.size() > indexLinearMax->size()) {
+	        throw std::runtime_error("FrameBufferUnmask: invalid index map or size mismatch.");
+	    }
 	
+	    std::vector<uint16_t> outputData(indexLinearMax->size(), 0);
+	    FrameBufferScatterTo(frameBuffer, indexLinearMax, outputData.data(), outputData.size());
+	    return outputData;
+	}	
 	//SaveArrayToFile
 	template<PointData center, DirectionData direction>
    template<typename index_t>  
@@ -311,5 +289,74 @@ namespace DASPi{
 		out.close();
 		std::cout << "Saved 1536x864 grid to " << filename << std::endl;
 	}
+	
+	template<PointData center, DirectionData direction>
+	template<typename SrcT, typename DstT>
+	void GlobalLinearShapeFunction<center, direction>::FrameBufferScatterTo(
+	    const SrcT& frameBuffer,
+	    const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax,
+	    DstT* dst,
+	    size_t dstSize)
+	{
+	    log_verbose("[GlobalLinearShapeFunction::FrameBufferScatterTo]");
+	
+	    if (!indexLinearMax) {
+	        throw std::runtime_error("FrameBufferScatterTo: null index map.");
+	    }
+	    if (frameBuffer.size() > indexLinearMax->size()) {
+	        throw std::runtime_error("FrameBufferScatterTo: size mismatch.");
+	    }
+	    if (!dst) {
+	        throw std::runtime_error("FrameBufferScatterTo: null dst.");
+	    }
+	
+	    for (size_t i = 0; i < frameBuffer.size(); ++i) {
+	        const auto outIdx = (*indexLinearMax)[i].value();
+	        if (outIdx >= dstSize) {
+	            throw std::runtime_error("FrameBufferScatterTo: index out of bounds.");
+	        }
+	        dst[outIdx] = static_cast<DstT>(frameBuffer[i]);
+	    }
+	}
+	
+	template<PointData center, DirectionData direction>
+	template<typename SrcT, typename DstT>
+	void GlobalLinearShapeFunction<center, direction>::FrameBufferScatterAccumulateTo(
+	    const SrcT& frameBuffer,
+	    const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax,
+	    DstT* dst,
+	    size_t dstSize)
+	{
+	    log_verbose("[GlobalLinearShapeFunction::FrameBufferScatterAccumulateTo]");
+	
+	    if (!indexLinearMax) {
+	        throw std::runtime_error("FrameBufferScatterAccumulateTo: null index map.");
+	    }
+	    if (frameBuffer.size() > indexLinearMax->size()) {
+	        throw std::runtime_error("FrameBufferScatterAccumulateTo: size mismatch.");
+	    }
+	    if (!dst) {
+	        throw std::runtime_error("FrameBufferScatterAccumulateTo: null dst.");
+	    }
+	
+	    for (size_t i = 0; i < frameBuffer.size(); ++i) {
+	        const auto outIdx = (*indexLinearMax)[i].value();
+	        if (outIdx >= dstSize) {
+	            throw std::runtime_error("FrameBufferScatterAccumulateTo: index out of bounds.");
+	        }
+	        dst[outIdx] += static_cast<DstT>(frameBuffer[i]);
+	    }
+	}
+	
+	template<PointData center, DirectionData direction>
+	template<typename SrcT>
+	void GlobalLinearShapeFunction<center, direction>::FrameBufferScatterToSpan(
+	    const SrcT& frameBuffer,
+	    const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax,
+	    std::span<uint16_t> dst)
+	{
+	    FrameBufferScatterTo(frameBuffer, indexLinearMax, dst.data(), dst.size());
+	}
+	
 };//ending namespace DASPi
 

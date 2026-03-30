@@ -133,6 +133,7 @@ namespace DASPi{
 		std::array<std::vector<uint16_t>, n + 1> newBuffers;
 	
 		auto unmasked0 = this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(this->sfdp_[0]);
+
 		newBuffers[0].resize(unmasked0.size());
 		std::memcpy(newBuffers[0].data(),
 					unmasked0.data(),
@@ -394,7 +395,7 @@ namespace DASPi{
 	    const size_t threads = std::max<size_t>(1, static_cast<size_t>(this->processingThreads_));
 	    const size_t total   = buf.size();
 	    const size_t chunk   = (total + threads - 1) / threads; // ceil
-	
+		
 	    std::vector<std::thread> workers;
 	    workers.reserve(threads);
 	
@@ -560,6 +561,101 @@ namespace DASPi{
 	
 	//template<size_t n> bool AperturePeer<n>::receivePeerFrame(AperturePeer<N>& peer, std::vector<std::uint16_t>& outBayer){
 	//}
+	
+	template<size_t n>
+	bool AperturePeer<n>::StitchWithPeer(AperturePeer<n>& other,
+										 size_t sharedSideThis,
+										 size_t sharedSideOther,
+										 std::vector<uint16_t>& out,
+										 bool reverseOther)
+	{
+		log_verbose("[AperturePeer::StitchWithPeer]");
+	
+		// --- Determine global output size ---
+		const auto* nonOverlapMap = sf_.sf_t::nonOverlapFacet_t::indexLinearMax_.get();
+		if (!nonOverlapMap) {
+			std::cerr << "StitchWithPeer: null nonOverlap map\n";
+			return false;
+		}
+	
+		const size_t globalSize = nonOverlapMap->size();
+	
+		if (out.size() != globalSize) {
+			out.assign(globalSize, 0);
+		} else {
+			std::fill(out.begin(), out.end(), uint16_t{0});
+		}
+	
+		// --- 1. Scatter THIS non-overlap ---
+		sf_.sf_t::nonOverlapFacet_t::FrameBufferScatterTo(
+			sfdp_[0],
+			nonOverlapMap,
+			out.data(),
+			out.size());
+	
+		// --- 2. Scatter OTHER non-overlap ---
+		const auto* otherMap =
+			other.sf_.sf_t::nonOverlapFacet_t::indexLinearMax_.get();
+	
+		if (!otherMap) {
+			std::cerr << "StitchWithPeer: other nonOverlap map null\n";
+			return false;
+		}
+	
+		other.sf_.sf_t::nonOverlapFacet_t::FrameBufferScatterTo(
+			other.sfdp_[0],
+			otherMap,
+			out.data(),
+			out.size());
+	
+		// --- 3. Blend ONLY the shared overlap side ---
+		const auto& blockA = sfdp_[sharedSideThis + 1];
+		const auto& blockB = other.sfdp_[sharedSideOther + 1];
+	
+		if (blockA.size() != blockB.size()) {
+			std::cerr << "StitchWithPeer: overlap size mismatch\n";
+			return false;
+		}
+	
+		const auto* mapA = sf_.indexLinearMaxs_[sharedSideThis].get();
+		const auto* mapB = other.sf_.indexLinearMaxs_[sharedSideOther].get();
+	
+		if (!mapA || !mapB) {
+			std::cerr << "StitchWithPeer: null overlap maps\n";
+			return false;
+		}
+	
+		const size_t count = blockA.size();
+	
+		for (size_t i = 0; i < count; ++i) {
+			const size_t j = reverseOther ? (count - 1 - i) : i;
+	
+			const size_t gA = (*mapA)[i].value();
+			const size_t gB = (*mapB)[j].value();
+	
+			if (gA >= out.size() || gB >= out.size()) {
+				std::cerr << "StitchWithPeer: global index OOB\n";
+				continue;
+			}
+	
+			// Debug (keep temporarily)
+			if (gA != gB) {
+				std::cerr << "[StitchWithPeer] seam mismatch "
+						  << "i=" << i
+						  << " gA=" << gA
+						  << " gB=" << gB
+						  << std::endl;
+			}
+	
+			const uint32_t a = static_cast<uint32_t>(blockA[i]);
+			const uint32_t b = static_cast<uint32_t>(blockB[j]);
+	
+			// Simple average (fast)
+			out[gA] = static_cast<uint16_t>((a + b) >> 1);
+		}
+	
+		return true;
+	}
 					  
 };//ending namespace DASPi
 

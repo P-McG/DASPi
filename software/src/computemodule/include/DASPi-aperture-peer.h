@@ -82,7 +82,11 @@ public:
     bool ReceiveApertureCapture();
     bool CopyBuffer(size_t index, std::vector<uint16_t>& out) const;
     //template<size_t N>bool receivePeerFrame(AperturePeer<N>& peer, std::vector<std::uint16_t>& outBayer);
-    
+    bool StitchWithPeer(AperturePeer<n>& other,
+                        size_t sharedSideThis,
+                        size_t sharedSideOther,
+                        std::vector<uint16_t>& out,
+                        bool reverseOther = false);
 private:
     const int processingThreads_{4};
 
