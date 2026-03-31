@@ -10,6 +10,10 @@
 #include <netinet/in.h>
 #include <array>
 #include <sys/epoll.h>
+#include <unordered_map>
+#include <span>
+#include <vector>
+#include <array>
 
 #include "DASPi-frameheader.h"
 
@@ -29,7 +33,7 @@ namespace DASPi{
 
 		};
 		
-		const size_t maximumTransmittableUnits_{1024};
+		const size_t maxUdpPayloadBytes_{1400};
 	    sockaddr_in clntAddr_;
 		const int port_;
 	
@@ -69,7 +73,8 @@ namespace DASPi{
 		int BindSocketWithClientAddress();
 		void FlushSocket();
 		int SetNonBlocking(bool enabled);
-
+		bool SendFramePackets(const std::vector<std::vector<uint8_t>>& packets);
+		std::vector<std::vector<uint8_t>> BuildPackets(const FrameHeader& header, const uint8_t* data, size_t bytes, size_t mtu);
 	};
 };//ending namespace DASPi
 #include "DASPi-udp-clnt.tpp"

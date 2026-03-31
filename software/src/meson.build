@@ -7,7 +7,12 @@ project('DASPi', 'c', 'cpp',
   ]
 )
 
-add_project_arguments('-Wno-unused-parameter', language : 'cpp')
+add_project_arguments(
+  '-Wno-unused-parameter',
+  '-Wno-error=deprecated-enum-enum-conversion',
+  '-Wno-deprecated-enum-enum-conversion',  # 👈 add this
+  language : 'cpp'
+)
 
 subdir('common')
 subdir('common/logger')

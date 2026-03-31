@@ -32,7 +32,7 @@ UDPSrv::~UDPSrv(){
 
 size_t UDPSrv::GetMaximumTransmittableUnits(){
     std::lock_guard<std::mutex> lock(maximumTransmittableUnitsMtx_);
-    return maximumTransmittableUnits_;
+    return maxUdpPayloadBytes_;
 };
 
 const sockaddr_in UDPSrv::GetServerAddress(){

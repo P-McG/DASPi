@@ -12,6 +12,7 @@
 #include <fstream>
 #include <limits>
 #include <iomanip>
+#include <opencv2/opencv.hpp>
         
 #include "DASPi-boundingbox.h"
 #include "DASPi-localcoordinates.h"

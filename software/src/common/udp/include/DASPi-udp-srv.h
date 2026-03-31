@@ -21,7 +21,7 @@ namespace DASPi{
     public:
         inline static size_t fnCallCount{0};
     //private:
-        inline static size_t maximumTransmittableUnits_{1024};
+        inline static size_t maxUdpPayloadBytes_{1400};;
         inline static std::mutex maximumTransmittableUnitsMtx_;
         const sockaddr_in cliaddr_;
         std::mutex cliaddrMtx_;
@@ -69,7 +69,7 @@ namespace DASPi{
         //FramePacket CreateFramePacket(std::vector<uint8_t>&& buffer);
         //void FrameBufferToUDP(std::vector<uint8_t> &&buffer);
     
-        template <typename T > ssize_t SendUDPPacketToClient(const T *buffer, const size_t bufferLength=maximumTransmittableUnits_ );
+        template <typename T > ssize_t SendUDPPacketToClient(const T *buffer, const size_t bufferLength=maxUdpPayloadBytes_ );
         template<class T> bool Receive(T& msg);
     };
 }//end namespace DASPi

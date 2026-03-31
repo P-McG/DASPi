@@ -18,6 +18,7 @@ aperture_deps = [
   dependency('libevent_pthreads', required : true),
   dependency('tbb', required : true),
   dependency('threads', required : true),
+  dependency('opencv4', required : true),
 ]
 
 executable(

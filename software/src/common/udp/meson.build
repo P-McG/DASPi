@@ -10,6 +10,7 @@ udp_lib = static_library(
   ],
   include_directories : [common_inc, logger_inc, udp_inc],
   dependencies : [logger_dep],
+  cpp_args : ['-D_GNU_SOURCE'],
 )
 
 udp_dep = declare_dependency(

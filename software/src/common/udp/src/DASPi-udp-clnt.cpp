@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include "DASPi-udp-clnt.h"
 #include "DASPi-framepacket.h"
+#include "DASPi-rx-frame-assembly.h"
 
 #define VERBATIUM_COUT
 
@@ -24,6 +25,8 @@ UDPClnt::UDPClnt(const in_addr_t clntAddr, const int port, const in_addr_t srvAd
 #ifdef VERBATIUM_COUT
    std::cout << "[UDPClnt]" << std::endl;
 #endif
+
+    connect(sockfd_, (struct sockaddr*)&srvAddr_, sizeof(srvAddr_));
 
     FillingServerInformation(srvAddr);
     CreatingSocketFileDescriptor();
@@ -42,7 +45,7 @@ UDPClnt::~UDPClnt(){
 }
 
 size_t UDPClnt::GetMaximumTransmittableUnits(){
-    return maximumTransmittableUnits_;
+    return maxUdpPayloadBytes_;
 }
 
 std::string UDPClnt::GetHostIp() {
@@ -340,15 +343,13 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
     std::cout << "[UDPClnt::ReceiveAndReassembleFramePacket]\n";
 #endif
 
-    bool headerReceived = false;
-    size_t totalBytesExpected = 0;
-    size_t totalBytesReceived = 0;
-
-    sockaddr_in sender{};
-    socklen_t senderLen = sizeof(sender);
-    std::vector<uint8_t> packet(maximumTransmittableUnits_);
+    std::unordered_map<uint32_t, RxFrameAssembly> assemblies;
+    std::vector<uint8_t> packet(maxUdpPayloadBytes_);
 
     while (true) {
+        sockaddr_in sender{};
+        socklen_t senderLen = sizeof(sender);
+
         const ssize_t received = recvfrom(sockfd_,
                                           packet.data(),
                                           packet.size(),
@@ -365,116 +366,123 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         }
 
         const size_t got = static_cast<size_t>(received);
+        if (got < sizeof(UdpChunkHeader)) {
+            continue;
+        }
 
-        if (!headerReceived) {
-            if (got < sizeof(FrameHeader)) {
-                std::cerr << "Packet too small for header\n";
-                continue;
-            }
+        UdpChunkHeader wire{};
+        std::memcpy(&wire, packet.data(), sizeof(wire));
 
-            std::memcpy(&outHeader, packet.data(), sizeof(FrameHeader));
+        wire.magic_ = ntohl(wire.magic_);
+        wire.frameId_ = ntohl(wire.frameId_);
+        wire.chunkId_ = ntohs(wire.chunkId_);
+        wire.chunkCount_ = ntohs(wire.chunkCount_);
+        wire.payloadBytes_ = ntohs(wire.payloadBytes_);
 
-            outHeader.magic_       = ntohl(outHeader.magic_);
-            outHeader.payloadSize_ = ntohl(outHeader.payloadSize_);
-            outHeader.checksum_    = ntohl(outHeader.checksum_);
+        if (wire.magic_ != MAGIC_NUMBER) {
+            continue;
+        }
 
-            for (auto& s : outHeader.regionSizes_) {
+        if (wire.chunkCount_ == 0 || wire.chunkId_ >= wire.chunkCount_) {
+            continue;
+        }
+
+        if (sizeof(UdpChunkHeader) + wire.payloadBytes_ > got) {
+            continue;
+        }
+
+        auto& a = assemblies[wire.frameId_];
+
+        if (a.frameId == 0) {
+            a.frameId = wire.frameId_;
+            a.chunkCount = wire.chunkCount_;
+            a.chunkSeen.assign(wire.chunkCount_, 0);
+        } else if (a.chunkCount != wire.chunkCount_) {
+            assemblies.erase(wire.frameId_);
+            continue;
+        }
+
+        if (wire.chunkId_ == 0 && !a.headerSeen) {
+            a.frameHeader = wire.frameHeader_;
+            a.frameHeader.magic_ = ntohl(a.frameHeader.magic_);
+            a.frameHeader.payloadSize_ = ntohl(a.frameHeader.payloadSize_);
+            a.frameHeader.checksum_ = ntohl(a.frameHeader.checksum_);
+
+            for (auto& s : a.frameHeader.regionSizes_) {
                 s = ntohl(s);
             }
 
-            if (outHeader.magic_ != MAGIC_NUMBER) {
-                std::cerr << "Invalid magic number received\n";
+            if (a.frameHeader.magic_ != MAGIC_NUMBER) {
+                assemblies.erase(wire.frameId_);
                 continue;
             }
 
-            if (outHeader.payloadSize_ == 0 ||
-                outHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_) {
-                std::cerr << "Invalid payload size received\n";
-                return false;
-            }
-
-            if (outHeader.payloadSize_ % sizeof(uint16_t) != 0) {
-                std::cerr << "Payload size not uint16_t aligned\n";
-                return false;
+            if (a.frameHeader.payloadSize_ == 0 ||
+                a.frameHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_ ||
+                (a.frameHeader.payloadSize_ % sizeof(uint16_t)) != 0) {
+                assemblies.erase(wire.frameId_);
+                continue;
             }
 
             size_t totalElems = 0;
-            for (const auto s : outHeader.regionSizes_) {
+            for (const auto s : a.frameHeader.regionSizes_) {
                 totalElems += s;
             }
 
-            if (totalElems * sizeof(uint16_t) != outHeader.payloadSize_) {
-                std::cerr << "[ERROR] payload mismatch: "
-                          << "expected=" << outHeader.payloadSize_
-                          << " actual=" << totalElems * sizeof(uint16_t)
-                          << std::endl;
-                return false;
+            if (totalElems * sizeof(uint16_t) != a.frameHeader.payloadSize_) {
+                assemblies.erase(wire.frameId_);
+                continue;
             }
 
-            totalBytesExpected = outHeader.payloadSize_;
-            outPayload.assign(totalBytesExpected / sizeof(uint16_t), 0);
-
-            const size_t payloadBytesInFirstPacket = got - sizeof(FrameHeader);
-            const size_t firstCopyBytes = std::min(payloadBytesInFirstPacket, totalBytesExpected);
-
-            auto dstBytes = std::as_writable_bytes(std::span(outPayload));
-            std::memcpy(dstBytes.data(),
-                        packet.data() + sizeof(FrameHeader),
-                        firstCopyBytes);
-
-            totalBytesReceived = firstCopyBytes;
-            headerReceived = true;
-        } else {
-            const size_t remaining = totalBytesExpected - totalBytesReceived;
-            const size_t toCopy = std::min(remaining, got);
-
-            auto dstBytes = std::as_writable_bytes(std::span(outPayload));
-            std::memcpy(dstBytes.data() + totalBytesReceived,
-                        packet.data(),
-                        toCopy);
-
-            totalBytesReceived += toCopy;
+            a.totalBytesExpected = a.frameHeader.payloadSize_;
+            a.payload.assign(a.totalBytesExpected / sizeof(uint16_t), 0);
+            a.headerSeen = true;
         }
 
-        if (headerReceived && totalBytesReceived >= totalBytesExpected) {
-            break;
+        if (!a.headerSeen) {
+            continue;
         }
-    }
 
-    const auto usedBytes = std::as_bytes(std::span(outPayload)).first(totalBytesExpected);
-    const uint32_t computed = SimpleChecksum(usedBytes);
+        if (a.chunkSeen[wire.chunkId_]) {
+            continue;
+        }
 
-    std::cout << "Header checksum: "   << outHeader.checksum_    << "\n"
-              << "Payload size: "      << outHeader.payloadSize_ << "\n"
-              << "Computed checksum: " << computed               << "\n";
+        const size_t maxChunkPayload =
+            maxUdpPayloadBytes_ - sizeof(UdpChunkHeader);
+        const size_t dstOffset = static_cast<size_t>(wire.chunkId_) * maxChunkPayload;
 
-    if (computed != outHeader.checksum_) {
-        std::cerr << "Checksum mismatch! Packet may be corrupted.\n";
-        return false;
-    }
+        if (dstOffset + wire.payloadBytes_ > a.totalBytesExpected) {
+            assemblies.erase(wire.frameId_);
+            continue;
+        }
 
-   size_t offset = 0;
-    for (size_t i = 0; i < outHeader.regionSizes_.size(); ++i) {
-        const size_t count = outHeader.regionSizes_[i];
-    
-        if (offset + count > outPayload.size()) {
-            std::cerr << "[RX] region overflow: region=" << i
-                      << " offset=" << offset
-                      << " count=" << count
-                      << " outPayload.size()=" << outPayload.size()
-                      << std::endl;
+        auto dstBytes = std::as_writable_bytes(std::span(a.payload));
+        std::memcpy(dstBytes.data() + dstOffset,
+                    packet.data() + sizeof(UdpChunkHeader),
+                    wire.payloadBytes_);
+
+        a.chunkSeen[wire.chunkId_] = 1;
+        a.totalBytesReceived += wire.payloadBytes_;
+
+        if (a.totalBytesReceived < a.totalBytesExpected) {
+            continue;
+        }
+
+        const auto usedBytes =
+            std::as_bytes(std::span(a.payload)).first(a.totalBytesExpected);
+        const uint32_t computed = SimpleChecksum(usedBytes);
+
+        if (computed != a.frameHeader.checksum_) {
+            assemblies.erase(wire.frameId_);
+            std::cerr << "Checksum mismatch! Packet may be corrupted.\n";
             return false;
         }
-    
-        std::span<const uint16_t> region(outPayload.data() + offset, count);
-    
-        std::cout << "[RX] region " << i
-                  << " size=" << count << std::endl;
-    
-        offset += count;
-    }
 
-    return true;
+        outHeader = a.frameHeader;
+        outPayload = std::move(a.payload);
+        assemblies.erase(wire.frameId_);
+        return true;
+    }
 }
 
 //bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload, FrameHeader& outHeader)
@@ -861,3 +869,87 @@ int UDPClnt::SetNonBlocking(bool enabled)
 
     return 0;
 }
+
+bool UDPClnt::SendFramePackets(const std::vector<std::vector<uint8_t>>& packets)
+{
+    constexpr size_t kBatchSize = 32;
+    size_t sentTotal = 0;
+
+    while (sentTotal < packets.size()) {
+        const size_t batchCount = std::min(kBatchSize, packets.size() - sentTotal);
+
+        std::array<mmsghdr, kBatchSize> msgs{};
+        std::array<iovec, kBatchSize> iovs{};
+
+        for (size_t i = 0; i < batchCount; ++i) {
+            const auto& pkt = packets[sentTotal + i];
+
+            iovs[i].iov_base = const_cast<uint8_t*>(pkt.data());
+            iovs[i].iov_len = pkt.size();
+
+            msgs[i].msg_hdr.msg_name = &srvAddr_;
+            msgs[i].msg_hdr.msg_namelen = sizeof(srvAddr_);
+            msgs[i].msg_hdr.msg_iov = &iovs[i];
+            msgs[i].msg_hdr.msg_iovlen = 1;
+        }
+
+        const int rc = sendmmsg(sockfd_,
+                                msgs.data(),
+                                static_cast<unsigned int>(batchCount),
+                                0);
+
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("sendmmsg");
+            return false;
+        }
+
+        if (rc == 0) {
+            std::cerr << "sendmmsg sent 0 packets\n";
+            return false;
+        }
+
+        sentTotal += static_cast<size_t>(rc);
+    }
+
+    return true;
+}
+std::vector<std::vector<uint8_t>>
+UDPClnt::BuildPackets(const FrameHeader& header,
+             const uint8_t* data,
+             size_t bytes,
+             size_t mtu)
+{
+    const size_t headerSize = sizeof(FrameHeader);
+    const size_t payloadPerPacket = mtu;
+
+    std::vector<std::vector<uint8_t>> packets;
+
+    size_t offset = 0;
+    bool first = true;
+
+    while (offset < bytes) {
+        size_t chunk = std::min(payloadPerPacket, bytes - offset);
+
+        std::vector<uint8_t> pkt;
+
+        if (first) {
+            pkt.resize(headerSize + chunk);
+            std::memcpy(pkt.data(), &header, headerSize);
+            std::memcpy(pkt.data() + headerSize, data + offset, chunk);
+            first = false;
+        } else {
+            pkt.resize(chunk);
+            std::memcpy(pkt.data(), data + offset, chunk);
+        }
+
+        offset += chunk;
+        packets.push_back(std::move(pkt));
+    }
+
+    return packets;
+}
+
+
