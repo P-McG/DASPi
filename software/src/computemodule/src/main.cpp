@@ -1,6 +1,7 @@
 #include <array>
 #include <chrono>
 #include <cstdlib>
+#include <cstdint>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -23,6 +24,8 @@
 #include "DASPi-image-rotation.h"
 #include "DASPi-live-frame-buffer.h"
 #include "DASPi-sphere-stitcher.h"
+#include "DASPi-logicalstreamrole.h"
+#include "DASPi-livecamerastate.h"
 
 using namespace DASPi;
 
@@ -32,7 +35,14 @@ constexpr int kFrameWidth = 1456;
 constexpr int kFrameHeight = 1088;
 constexpr int kExpectedPixels = kFrameWidth * kFrameHeight;
 constexpr int kControlPortOffset = 1;
-constexpr size_t kPeerStreams = 3;
+
+// n = overlap images per module
+constexpr size_t kOverlapStreams = 3;
+
+// total images per module = image 0 + overlaps 1..n
+constexpr size_t kPeerStreams = kOverlapStreams + 1;
+constexpr size_t kCamerasPerModule = kPeerStreams;
+
 constexpr auto kRetryDelay = std::chrono::milliseconds(5);
 constexpr auto kNoFrameDelay = std::chrono::milliseconds(20);
 constexpr auto kStitchDelay = std::chrono::milliseconds(30);
@@ -49,11 +59,22 @@ struct NetworkAddressPlan {
     std::vector<in_addr_t> servers;
 };
 
+size_t GlobalCameraIndex(size_t moduleIndex, size_t localCameraIndex)
+{
+    return moduleIndex * kCamerasPerModule + localCameraIndex;
+}
+
+size_t TotalCameraCount(int nApertureComputeModules)
+{
+    return static_cast<size_t>(nApertureComputeModules) * kCamerasPerModule;
+}
+
 template <size_t N>
 bool tryCopyLatestFrameFromPeer(AperturePeer<N>& peer,
+                                size_t localCameraIndex,
                                 std::vector<std::uint16_t>& outBayer)
 {
-    return peer.CopyBuffer(0, outBayer);
+    return peer.CopyBuffer(localCameraIndex, outBayer);
 }
 
 in_addr_t StringToInAddrT(const std::string& ipStr)
@@ -259,11 +280,6 @@ std::vector<std::unique_ptr<AperturePeer<N>>> CreateAperturePeers(
     return aperturePeers;
 }
 
-cv::Mat fullMask(int width, int height)
-{
-    return cv::Mat(height, width, CV_8U, cv::Scalar(255));
-}
-
 cv::Mat applyImageRotation(const cv::Mat& image, ImageRotation rotation)
 {
     cv::Mat out;
@@ -318,16 +334,14 @@ std::shared_ptr<ICameraModel> makeFisheyeModelForRotation(ImageRotation rotation
 }
 
 CameraView makeCameraView(const cv::Mat& image,
+                          const cv::Mat& maskNonOverlap,
+                          const cv::Mat& maskOverlap,
                           const std::shared_ptr<ICameraModel>& model,
                           const Eigen::Matrix3d& Rcw,
                           ImageRotation imageRotation)
 {
     CameraView cam;
     cam.image = applyImageRotation(image, imageRotation);
-
-    cv::Mat maskNonOverlap = fullMask(image.cols, image.rows);
-    cv::Mat maskOverlap = cv::Mat::zeros(image.rows, image.cols, CV_8U);
-
     cam.maskNonOverlap = applyImageRotation(maskNonOverlap, imageRotation);
     cam.maskOverlap = applyImageRotation(maskOverlap, imageRotation);
     cam.model = model;
@@ -374,40 +388,32 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
         throw std::runtime_error("nApertureComputeModules must be > 0");
     }
 
-    struct CameraPreset {
-        std::string name;
-        ImageRotation imageRotation;
-        Eigen::Matrix3d Rcw;
-    };
-
     const Eigen::Matrix3d R_identity = Eigen::Matrix3d::Identity();
     const Eigen::Matrix3d R_right =
-        Eigen::AngleAxisd(2.0 * 41.81 * M_PI / 180.0, Eigen::Vector3d::UnitY()).toRotationMatrix();
-
-    const std::vector<CameraPreset> presets = {
-        {"left", ImageRotation::Rotate90CCW, R_identity},
-        {"right", ImageRotation::Rotate90CW, R_right},
-    };
+        Eigen::AngleAxisd(2.0 * 41.81 * M_PI / 180.0,
+                          Eigen::Vector3d::UnitY()).toRotationMatrix();
 
     std::vector<CameraConfig> configs;
-    configs.reserve(static_cast<size_t>(nApertureComputeModules));
+    configs.reserve(TotalCameraCount(nApertureComputeModules));
 
-    for (int i = 0; i < nApertureComputeModules; ++i) {
-        if (static_cast<size_t>(i) < presets.size()) {
-            const auto& preset = presets[static_cast<size_t>(i)];
-            configs.push_back(CameraConfig{
-                preset.name,
-                "",
-                preset.imageRotation,
-                preset.Rcw,
-            });
-        } else {
-            configs.push_back(CameraConfig{
-                "camera_" + std::to_string(i),
+    for (int module = 0; module < nApertureComputeModules; ++module) {
+        for (size_t localCam = 0; localCam < kCamerasPerModule; ++localCam) {
+            CameraConfig cfg{
+                "module_" + std::to_string(module) + "_cam_" + std::to_string(localCam),
                 "",
                 ImageRotation::None,
                 R_identity,
-            });
+            };
+
+            if (module == 0) {
+                cfg.imageRotation = ImageRotation::Rotate90CCW;
+                cfg.Rcw = R_identity;
+            } else if (module == 1) {
+                cfg.imageRotation = ImageRotation::Rotate90CW;
+                cfg.Rcw = R_right;
+            }
+
+            configs.push_back(cfg);
         }
     }
 
@@ -421,12 +427,20 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
     cameras.reserve(configs.size());
 
     for (const auto& cfg : configs) {
-        cv::Mat empty(kFrameHeight, kFrameWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+        cv::Mat emptyImage(kFrameHeight, kFrameWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+        cv::Mat emptyMask(kFrameHeight, kFrameWidth, CV_8UC1, cv::Scalar(0));
+
         auto model = makeFisheyeModelForRotation(cfg.imageRotation,
                                                  kFrameWidth,
                                                  kFrameHeight,
                                                  fisheyeParams);
-        cameras.push_back(makeCameraView(empty, model, cfg.Rcw, cfg.imageRotation));
+
+        cameras.push_back(makeCameraView(emptyImage,
+                                         emptyMask,
+                                         emptyMask,
+                                         model,
+                                         cfg.Rcw,
+                                         cfg.imageRotation));
     }
 
     return cameras;
@@ -434,30 +448,46 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
 
 void updateCameraImages(std::vector<CameraView>& cameras,
                         const std::vector<CameraConfig>& configs,
-                        std::vector<LiveFrameBuffer>& liveFrames)
+                        std::vector<LiveCameraState>& liveCameras)
 {
+    if (cameras.size() != configs.size() || cameras.size() != liveCameras.size()) {
+        throw std::runtime_error("Camera/config/state size mismatch");
+    }
+
     for (size_t i = 0; i < cameras.size(); ++i) {
         cv::Mat latest;
-        if (!tryGetLatestFrame(liveFrames[i], latest)) {
+        if (!tryGetLatestFrame(liveCameras[i].frame, latest)) {
             continue;
+        }
+
+        if (!liveCameras[i].hasMask) {
+            throw std::runtime_error("Missing valid mask for logical camera " +
+                                     std::to_string(i));
         }
 
         const ImageRotation rotation = configs[i].imageRotation;
         cameras[i].image = applyImageRotation(latest, rotation);
 
-        cv::Mat maskNonOverlap = fullMask(latest.cols, latest.rows);
-        cv::Mat maskOverlap = cv::Mat::zeros(latest.rows, latest.cols, CV_8U);
+        const cv::Mat rotatedValidMask =
+            applyImageRotation(liveCameras[i].validMask, rotation);
 
-        cameras[i].maskNonOverlap = applyImageRotation(maskNonOverlap, rotation);
-        cameras[i].maskOverlap = applyImageRotation(maskOverlap, rotation);
+        if (liveCameras[i].role == LogicalStreamRole::NonOverlap) {
+            cameras[i].maskNonOverlap = rotatedValidMask;
+            cameras[i].maskOverlap =
+                cv::Mat::zeros(rotatedValidMask.rows, rotatedValidMask.cols, CV_8UC1);
+        } else {
+            cameras[i].maskNonOverlap =
+                cv::Mat::zeros(rotatedValidMask.rows, rotatedValidMask.cols, CV_8UC1);
+            cameras[i].maskOverlap = rotatedValidMask;
+        }
     }
 }
 
-bool haveAnyFrames(std::vector<LiveFrameBuffer>& liveFrames)
+bool haveAnyFrames(std::vector<LiveCameraState>& liveCameras)
 {
-    for (auto& frame : liveFrames) {
+    for (auto& camera : liveCameras) {
         cv::Mat tmp;
-        if (tryGetLatestFrame(frame, tmp)) {
+        if (tryGetLatestFrame(camera.frame, tmp)) {
             return true;
         }
     }
@@ -466,7 +496,7 @@ bool haveAnyFrames(std::vector<LiveFrameBuffer>& liveFrames)
 
 template <size_t N>
 void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePeers,
-                      std::vector<LiveFrameBuffer>& liveFrames,
+                      std::vector<LiveCameraState>& liveCameras,
                       std::vector<std::jthread>& frameThreads,
                       std::vector<std::jthread>& controlThreads)
 {
@@ -475,42 +505,58 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
     frameThreads.reserve(aperturePeers.size());
     controlThreads.reserve(aperturePeers.size());
 
-    for (size_t i = 0; i < aperturePeers.size(); ++i) {
-        AperturePeer<N>* peer = aperturePeers[i].get();
-        LiveFrameBuffer* live = &liveFrames[i];
+    for (size_t moduleIndex = 0; moduleIndex < aperturePeers.size(); ++moduleIndex) {
+        AperturePeer<N>* peer = aperturePeers[moduleIndex].get();
 
-        frameThreads.emplace_back([peer, live]() {
+        frameThreads.emplace_back([peer, moduleIndex, &liveCameras]() {
             std::vector<uint16_t> raw;
             raw.reserve(kExpectedPixels);
 
             for (;;) {
                 if (!peer->RunFrameLoop()) {
-                    std::cerr << "[frame thread] RunFrameLoop failed\n";
+                    std::cerr << "[frame thread] RunFrameLoop failed for module "
+                              << moduleIndex << '\n';
                     std::this_thread::sleep_for(kRetryDelay);
                     continue;
                 }
 
-                if (!tryCopyLatestFrameFromPeer(*peer, raw)) {
-                    std::cerr << "[frame thread] CopyBuffer failed\n";
-                    std::this_thread::sleep_for(kRetryDelay);
-                    continue;
-                }
+                for (size_t localCameraIndex = 0; localCameraIndex < (N + 1); ++localCameraIndex) {
+                    raw.clear();
 
-                if (static_cast<int>(raw.size()) != kExpectedPixels) {
-                    std::cerr << "[frame thread] unexpected Bayer size: "
-                              << raw.size() << " expected=" << kExpectedPixels << '\n';
-                    continue;
-                }
+                    if (!tryCopyLatestFrameFromPeer(*peer, localCameraIndex, raw)) {
+                        continue;
+                    }
 
-                cv::Mat bgr = decodeBayer16ToBgr8(raw);
-                updateLatestFrame(*live, bgr);
+                    if (static_cast<int>(raw.size()) != kExpectedPixels) {
+                        std::cerr << "[frame thread] unexpected Bayer size for module "
+                                  << moduleIndex
+                                  << " localCameraIndex=" << localCameraIndex
+                                  << " size=" << raw.size()
+                                  << " expected=" << kExpectedPixels << '\n';
+                        continue;
+                    }
+
+                    const size_t globalIndex =
+                        GlobalCameraIndex(moduleIndex, localCameraIndex);
+
+                    if (globalIndex >= liveCameras.size()) {
+                        std::cerr << "[frame thread] globalIndex out of range: "
+                                  << globalIndex
+                                  << " liveCameras.size()=" << liveCameras.size() << '\n';
+                        continue;
+                    }
+
+                    cv::Mat bgr = decodeBayer16ToBgr8(raw);
+                    updateLatestFrame(liveCameras[globalIndex].frame, bgr);
+                }
             }
         });
 
-        controlThreads.emplace_back([peer]() {
+        controlThreads.emplace_back([peer, moduleIndex]() {
             for (;;) {
                 if (!peer->RunControlLoop()) {
-                    std::cerr << "[control thread] RunControlLoop failed\n";
+                    std::cerr << "[control thread] RunControlLoop failed for module "
+                              << moduleIndex << '\n';
                     break;
                 }
             }
@@ -560,7 +606,7 @@ void DrawPanoramaOverlay(cv::Mat& img,
 
 void RunStitchLoop(std::vector<CameraView>& cameras,
                    const std::vector<CameraConfig>& configs,
-                   std::vector<LiveFrameBuffer>& liveFrames)
+                   std::vector<LiveCameraState>& liveCameras)
 {
     SphereStitchConfig stitchConfig;
     stitchConfig.outputWidth = 1456;
@@ -574,12 +620,12 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
     cv::resizeWindow("Stitched Panorama", 1200, 800);
 
     for (;;) {
-        if (!haveAnyFrames(liveFrames)) {
+        if (!haveAnyFrames(liveCameras)) {
             std::this_thread::sleep_for(kNoFrameDelay);
             continue;
         }
 
-        updateCameraImages(cameras, configs, liveFrames);
+        updateCameraImages(cameras, configs, liveCameras);
 
         SphereStitcher stitcher(cameras, stitchConfig);
 
@@ -614,6 +660,34 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
 
     cv::destroyWindow("Stitched Panorama");
 }
+
+template <size_t N>
+void InitializeCameraMasks(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePeers,
+                           std::vector<LiveCameraState>& liveCameras)
+{
+    for (size_t moduleIndex = 0; moduleIndex < aperturePeers.size(); ++moduleIndex) {
+        AperturePeer<N>* peer = aperturePeers[moduleIndex].get();
+
+        for (size_t localCameraIndex = 0; localCameraIndex < N + 1; ++localCameraIndex) {
+            const size_t globalIndex = GlobalCameraIndex(moduleIndex, localCameraIndex);
+
+            cv::Mat validMask;
+            if (!peer->CopyValidMask(localCameraIndex, validMask)) {
+                throw std::runtime_error("Failed to initialize valid mask for module " +
+                                         std::to_string(moduleIndex) +
+                                         ", localCameraIndex=" +
+                                         std::to_string(localCameraIndex));
+            }
+
+            liveCameras[globalIndex].validMask = std::move(validMask);
+            liveCameras[globalIndex].role =
+                (localCameraIndex == 0) ? LogicalStreamRole::NonOverlap
+                                        : LogicalStreamRole::Overlap;
+            liveCameras[globalIndex].hasMask = true;
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -628,23 +702,36 @@ int main(int argc, char* argv[])
             BuildNetworkAddressPlan(options.usbBaseIp, options.nApertureComputeModules);
         PrintAddressPlan(addressPlan);
 
-        constexpr size_t n = kPeerStreams;
+        constexpr size_t n = kOverlapStreams;
         auto aperturePeers = CreateAperturePeers<n>(options, addressPlan);
 
         const FisheyeParams fisheyeParams{600.0, 600.0, 580.0};
-        const std::vector<CameraConfig> configs =
-            makeCameraConfigs(options.nApertureComputeModules);
 
-        auto cameras = CreateCameraViews(configs, fisheyeParams);
-
-        std::vector<LiveFrameBuffer> liveFrames(
-            static_cast<size_t>(options.nApertureComputeModules));
-
-        std::vector<std::jthread> frameThreads;
-        std::vector<std::jthread> controlThreads;
-
-        StartPeerThreads<n>(aperturePeers, liveFrames, frameThreads, controlThreads);
-        RunStitchLoop(cameras, configs, liveFrames);
+        const size_t totalCameras =
+	    TotalCameraCount(options.nApertureComputeModules);
+	
+		const std::vector<CameraConfig> configs =
+		    makeCameraConfigs(options.nApertureComputeModules);
+		
+		auto cameras = CreateCameraViews(configs, fisheyeParams);
+		std::vector<LiveCameraState> liveCameras(totalCameras);
+		
+		if (configs.size() != totalCameras || cameras.size() != totalCameras) {
+		    throw std::runtime_error("Logical camera count mismatch during initialization");
+		}
+		
+		InitializeCameraMasks(aperturePeers, liveCameras);
+		
+		std::cout << "[main] configs.size()=" << configs.size()
+		          << " cameras.size()=" << cameras.size()
+		          << " liveCameras.size()=" << liveCameras.size()
+		          << '\n';
+		
+		std::vector<std::jthread> frameThreads;
+		std::vector<std::jthread> controlThreads;
+		
+		StartPeerThreads<n>(aperturePeers, liveCameras, frameThreads, controlThreads);
+		RunStitchLoop(cameras, configs, liveCameras);
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';
         return EXIT_FAILURE;

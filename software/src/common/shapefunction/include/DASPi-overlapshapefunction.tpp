@@ -335,6 +335,17 @@ namespace DASPi{
                 indexLinearMaxs_[overlapRegion].get(),
                 dst,
                 dstSize);
-        }   
+        }
+           
+        template<size_t n, PointData center, DirectionData direction, double nonOverlapScale>
+        void OverlapShapeFunction<n, center, direction, nonOverlapScale>::InitializeMasks(){
+            for (size_t i = 0; i < n + 1; ++i) {
+                maskNonOverlap_[i] = cv::Mat(sensorHeightValue_, sensorWidthValue_, CV_8U, cv::Scalar(0));
+                maskOverlap_[i]    = cv::Mat(sensorHeightValue_, sensorWidthValue_, CV_8U, cv::Scalar(0));
+            }
+        
+            // Fill exact valid pixels from sf_ / sfdp_ here.
+            
+        }
 };//ending namespace DASPi
 #include "DASPi-regularpolygonalshapefunction.tpp"

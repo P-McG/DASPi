@@ -14,6 +14,7 @@
 #include "DASPi-overlapshapefunction.h"
 #include "DASPi-shapefunctiondatapacket.h"
 
+
 namespace DASPi {
 
 template<size_t n>
@@ -87,6 +88,9 @@ public:
                         size_t sharedSideOther,
                         std::vector<uint16_t>& out,
                         bool reverseOther = false);
+    cv::Mat BuildValidMask(size_t regionIndex);
+    bool CopyValidMask(size_t regionIndex, cv::Mat& out);
+    
 private:
     const int processingThreads_{4};
 

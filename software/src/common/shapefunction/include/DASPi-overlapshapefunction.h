@@ -67,6 +67,8 @@ namespace DASPi{
 		static constexpr double nonOverlapScale_ = nonOverlapScale;
 		std::array<std::unique_ptr<IndexMap>, n> indexMaps_;
         std::array<std::unique_ptr<IndexLinearMax>, n> indexLinearMaxs_;
+        std::array<cv::Mat, n + 1> maskNonOverlap_;
+        std::array<cv::Mat, n + 1> maskOverlap_;
     public:
         OverlapShapeFunction();
 	    void GenerateIndexMap();
@@ -108,6 +110,9 @@ namespace DASPi{
 			size_t overlapRegion,
 			DstT* dst,
 			size_t dstSize);
+        void InitializeMasks();
+		bool CopyMaskNonOverlap(size_t index, cv::Mat& out) const;
+		bool CopyMaskOverlap(size_t index, cv::Mat& out) const;
     };
     
     inline OverlapShapeFunction<

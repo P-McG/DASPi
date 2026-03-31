@@ -656,6 +656,54 @@ namespace DASPi{
 	
 		return true;
 	}
+	
+	template<size_t n>
+	cv::Mat AperturePeer<n>::BuildValidMask(size_t regionIndex)
+	{
+		if (regionIndex >= n + 1) {
+			throw std::out_of_range("BuildValidMask regionIndex out of range");
+		}
+	
+		const size_t width = sensorWidthValue_;
+		const size_t height = sensorHeightValue_;
+	
+		std::vector<uint16_t> ones(width * height, static_cast<uint16_t>(1));
+	
+		const std::vector<uint16_t> masked =
+			sf_.FrameBufferMask(ones, regionIndex);
+	
+		std::cout << "[BuildValidMask] regionIndex=" << regionIndex
+          << " ones.size()=" << ones.size()
+          << " masked.size()=" << masked.size()
+          << " expected=" << (width * height)
+          << '\n';
+		  
+		if (masked.size() != width * height) {
+			throw std::runtime_error("BuildValidMask: unexpected masked buffer size");
+		}
+	
+		cv::Mat mask(static_cast<int>(height), static_cast<int>(width), CV_8UC1);
+	
+		for (size_t i = 0; i < masked.size(); ++i) {
+			mask.data[i] = (masked[i] != 0) ? static_cast<uint8_t>(255)
+											: static_cast<uint8_t>(0);
+		}
+		
+
+	
+		return mask;
+	}
+	
+	template<size_t n>
+	bool AperturePeer<n>::CopyValidMask(size_t regionIndex, cv::Mat& out)
+	{
+		if (regionIndex >= n + 1) {
+			return false;
+		}
+	
+		out = BuildValidMask(regionIndex);
+		return !out.empty();
+	}
 					  
 };//ending namespace DASPi
 
