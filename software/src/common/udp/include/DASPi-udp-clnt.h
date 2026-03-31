@@ -10,12 +10,13 @@
 #include <netinet/in.h>
 #include <array>
 #include <sys/epoll.h>
-#include <unordered_map>
 #include <span>
 #include <vector>
 #include <array>
-
+#include <unordered_map>
+#include "DASPi-rx-frame-assembly.h"
 #include "DASPi-frameheader.h"
+#include "DASPi-udp-chunk-header.h"
 
 
 struct sockaddr_in;
@@ -39,6 +40,8 @@ namespace DASPi{
 	
 		int sockfd_{0};
 		sockaddr_in srvAddr_;
+		
+		std::unordered_map<uint32_t, RxFrameAssembly> rxAssemblies_;
 		
 	    public:
 	    //sockaddr_in clntAddr_ = { INADDR_NONE, 0, { INADDR_NONE } };
@@ -75,6 +78,19 @@ namespace DASPi{
 		int SetNonBlocking(bool enabled);
 		bool SendFramePackets(const std::vector<std::vector<uint8_t>>& packets);
 		std::vector<std::vector<uint8_t>> BuildPackets(const FrameHeader& header, const uint8_t* data, size_t bytes, size_t mtu);
+	private:
+private:
+    static float HostToWireFloat(float v);
+    static float WireToHostFloat(float v);
+
+    static MessageHeader ToWireMessageHeader(MessageHeader h);
+    static MessageHeader FromWireMessageHeader(MessageHeader h);
+
+    static GainMsg ToWireGainMsg(GainMsg g);
+    static GainMsg FromWireGainMsg(GainMsg g);
+
+    static FrameHeader ToWireFrameHeader(FrameHeader h);
+    static FrameHeader FromWireFrameHeader(FrameHeader h);
 	};
 };//ending namespace DASPi
 #include "DASPi-udp-clnt.tpp"

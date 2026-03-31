@@ -9,9 +9,16 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <fcntl.h>
+#include <unordered_map>
+#include <span>
+#include <bit>
+#include <cstdint>
+#include <arpa/inet.h>
+
 #include "DASPi-udp-clnt.h"
 #include "DASPi-framepacket.h"
 #include "DASPi-rx-frame-assembly.h"
+#include "DASPi-udp-chunk-header.h"
 
 #define VERBATIUM_COUT
 
@@ -339,11 +346,6 @@ int UDPClnt::BindSocketWithClientAddress(){
 bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
                                               FrameHeader& outHeader)
 {
-#ifdef VERBATIUM_COUT
-    std::cout << "[UDPClnt::ReceiveAndReassembleFramePacket]\n";
-#endif
-
-    std::unordered_map<uint32_t, RxFrameAssembly> assemblies;
     std::vector<uint8_t> packet(maxUdpPayloadBytes_);
 
     while (true) {
@@ -373,11 +375,23 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         UdpChunkHeader wire{};
         std::memcpy(&wire, packet.data(), sizeof(wire));
 
-        wire.magic_ = ntohl(wire.magic_);
-        wire.frameId_ = ntohl(wire.frameId_);
-        wire.chunkId_ = ntohs(wire.chunkId_);
-        wire.chunkCount_ = ntohs(wire.chunkCount_);
+        wire.magic_        = ntohl(wire.magic_);
+        wire.frameId_      = ntohl(wire.frameId_);
+        wire.chunkId_      = ntohs(wire.chunkId_);
+        wire.chunkCount_   = ntohs(wire.chunkCount_);
         wire.payloadBytes_ = ntohs(wire.payloadBytes_);
+
+        char ipbuf[INET_ADDRSTRLEN] = {};
+        inet_ntop(AF_INET, &sender.sin_addr, ipbuf, sizeof(ipbuf));
+
+        std::cout << std::dec
+                  << "[RX] this=" << this
+                  << " src=" << ipbuf << ":" << ntohs(sender.sin_port)
+                  << " frameId=" << wire.frameId_
+                  << " chunkId=" << wire.chunkId_
+                  << "/" << wire.chunkCount_
+                  << " payloadBytes=" << wire.payloadBytes_
+                  << std::endl;
 
         if (wire.magic_ != MAGIC_NUMBER) {
             continue;
@@ -391,36 +405,36 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             continue;
         }
 
-        auto& a = assemblies[wire.frameId_];
+        auto dropFrame = [this, &wire]() {
+            rxAssemblies_.erase(wire.frameId_);
+        };
+
+        auto& a = rxAssemblies_[wire.frameId_];
 
         if (a.frameId == 0) {
             a.frameId = wire.frameId_;
             a.chunkCount = wire.chunkCount_;
             a.chunkSeen.assign(wire.chunkCount_, 0);
+            a.totalBytesExpected = 0;
+            a.totalBytesReceived = 0;
+            a.headerSeen = false;
         } else if (a.chunkCount != wire.chunkCount_) {
-            assemblies.erase(wire.frameId_);
+            dropFrame();
             continue;
         }
 
         if (wire.chunkId_ == 0 && !a.headerSeen) {
-            a.frameHeader = wire.frameHeader_;
-            a.frameHeader.magic_ = ntohl(a.frameHeader.magic_);
-            a.frameHeader.payloadSize_ = ntohl(a.frameHeader.payloadSize_);
-            a.frameHeader.checksum_ = ntohl(a.frameHeader.checksum_);
-
-            for (auto& s : a.frameHeader.regionSizes_) {
-                s = ntohl(s);
-            }
+            a.frameHeader = FromWireFrameHeader(wire.frameHeader_);
 
             if (a.frameHeader.magic_ != MAGIC_NUMBER) {
-                assemblies.erase(wire.frameId_);
+                dropFrame();
                 continue;
             }
 
             if (a.frameHeader.payloadSize_ == 0 ||
                 a.frameHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_ ||
                 (a.frameHeader.payloadSize_ % sizeof(uint16_t)) != 0) {
-                assemblies.erase(wire.frameId_);
+                dropFrame();
                 continue;
             }
 
@@ -430,7 +444,7 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             }
 
             if (totalElems * sizeof(uint16_t) != a.frameHeader.payloadSize_) {
-                assemblies.erase(wire.frameId_);
+                dropFrame();
                 continue;
             }
 
@@ -443,16 +457,20 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             continue;
         }
 
+        if (wire.chunkId_ >= a.chunkSeen.size()) {
+            dropFrame();
+            continue;
+        }
+
         if (a.chunkSeen[wire.chunkId_]) {
             continue;
         }
 
-        const size_t maxChunkPayload =
-            maxUdpPayloadBytes_ - sizeof(UdpChunkHeader);
+        const size_t maxChunkPayload = maxUdpPayloadBytes_ - sizeof(UdpChunkHeader);
         const size_t dstOffset = static_cast<size_t>(wire.chunkId_) * maxChunkPayload;
 
         if (dstOffset + wire.payloadBytes_ > a.totalBytesExpected) {
-            assemblies.erase(wire.frameId_);
+            dropFrame();
             continue;
         }
 
@@ -464,6 +482,14 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         a.chunkSeen[wire.chunkId_] = 1;
         a.totalBytesReceived += wire.payloadBytes_;
 
+        std::cout << std::dec
+                  << "[RX] this=" << this
+                  << " frameId=" << wire.frameId_
+                  << " received=" << a.totalBytesReceived
+                  << "/" << a.totalBytesExpected
+                  << " headerSeen=" << a.headerSeen
+                  << std::endl;
+
         if (a.totalBytesReceived < a.totalBytesExpected) {
             continue;
         }
@@ -473,18 +499,23 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         const uint32_t computed = SimpleChecksum(usedBytes);
 
         if (computed != a.frameHeader.checksum_) {
-            assemblies.erase(wire.frameId_);
-            std::cerr << "Checksum mismatch! Packet may be corrupted.\n";
+            std::cerr << "Checksum mismatch\n";
+            dropFrame();
             return false;
         }
 
+        std::cout << std::dec
+                  << "[RX] COMPLETE this=" << this
+                  << " frameId=" << wire.frameId_
+                  << " bytes=" << a.totalBytesExpected
+                  << std::endl;
+
         outHeader = a.frameHeader;
         outPayload = std::move(a.payload);
-        assemblies.erase(wire.frameId_);
+        dropFrame();
         return true;
     }
 }
-
 //bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload, FrameHeader& outHeader)
 //{
 //#ifdef VERBATIUM_COUT
@@ -916,6 +947,7 @@ bool UDPClnt::SendFramePackets(const std::vector<std::vector<uint8_t>>& packets)
 
     return true;
 }
+
 std::vector<std::vector<uint8_t>>
 UDPClnt::BuildPackets(const FrameHeader& header,
              const uint8_t* data,
@@ -952,4 +984,100 @@ UDPClnt::BuildPackets(const FrameHeader& header,
     return packets;
 }
 
+float UDPClnt::HostToWireFloat(float v)
+{
+    const uint32_t bits = std::bit_cast<uint32_t>(v);
+    return std::bit_cast<float>(htonl(bits));
+}
 
+float UDPClnt::WireToHostFloat(float v)
+{
+    const uint32_t bits = std::bit_cast<uint32_t>(v);
+    return std::bit_cast<float>(ntohl(bits));
+}
+
+MessageHeader UDPClnt::ToWireMessageHeader(MessageHeader h)
+{
+    using MT = std::underlying_type_t<MessageType>;
+    h.type = static_cast<MessageType>(
+        htons(static_cast<uint16_t>(static_cast<MT>(h.type)))
+    );
+    h.version = htons(h.version);
+    return h;
+}
+
+MessageHeader UDPClnt::FromWireMessageHeader(MessageHeader h)
+{
+    using MT = std::underlying_type_t<MessageType>;
+    h.type = static_cast<MessageType>(
+        ntohs(static_cast<uint16_t>(static_cast<MT>(h.type)))
+    );
+    h.version = ntohs(h.version);
+    return h;
+}
+
+GainMsg UDPClnt::ToWireGainMsg(GainMsg g)
+{
+    g.header = ToWireMessageHeader(g.header);
+
+    g.camera_id = htonl(g.camera_id);
+    g.frame_id  = htonl(g.frame_id);
+
+    g.mean_brightness   = HostToWireFloat(g.mean_brightness);
+    g.target_brightness = HostToWireFloat(g.target_brightness);
+    g.r_gain            = HostToWireFloat(g.r_gain);
+    g.b_gain            = HostToWireFloat(g.b_gain);
+    g.r_gain_apply      = HostToWireFloat(g.r_gain_apply);
+    g.b_gain_apply      = HostToWireFloat(g.b_gain_apply);
+    g.exposure_us       = HostToWireFloat(g.exposure_us);
+    g.analogue_gain     = HostToWireFloat(g.analogue_gain);
+
+    return g;
+}
+
+GainMsg UDPClnt::FromWireGainMsg(GainMsg g)
+{
+    g.header = FromWireMessageHeader(g.header);
+
+    g.camera_id = ntohl(g.camera_id);
+    g.frame_id  = ntohl(g.frame_id);
+
+    g.mean_brightness   = WireToHostFloat(g.mean_brightness);
+    g.target_brightness = WireToHostFloat(g.target_brightness);
+    g.r_gain            = WireToHostFloat(g.r_gain);
+    g.b_gain            = WireToHostFloat(g.b_gain);
+    g.r_gain_apply      = WireToHostFloat(g.r_gain_apply);
+    g.b_gain_apply      = WireToHostFloat(g.b_gain_apply);
+    g.exposure_us       = WireToHostFloat(g.exposure_us);
+    g.analogue_gain     = WireToHostFloat(g.analogue_gain);
+
+    return g;
+}
+
+FrameHeader UDPClnt::ToWireFrameHeader(FrameHeader h)
+{
+    h.magic_ = htonl(h.magic_);
+    h.gainMsg = ToWireGainMsg(h.gainMsg);
+    h.payloadSize_ = htonl(h.payloadSize_);
+
+    for (auto& s : h.regionSizes_) {
+        s = htonl(s);
+    }
+
+    h.checksum_ = htonl(h.checksum_);
+    return h;
+}
+
+FrameHeader UDPClnt::FromWireFrameHeader(FrameHeader h)
+{
+    h.magic_ = ntohl(h.magic_);
+    h.gainMsg = FromWireGainMsg(h.gainMsg);
+    h.payloadSize_ = ntohl(h.payloadSize_);
+
+    for (auto& s : h.regionSizes_) {
+        s = ntohl(s);
+    }
+
+    h.checksum_ = ntohl(h.checksum_);
+    return h;
+}

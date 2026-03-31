@@ -1,6 +1,8 @@
 // DASPi-rx-frame-assembly.h
 #pragma once
+#include "DASPi-framepacket.h"
 
+namespace DASPi{
 struct RxFrameAssembly
 {
     FrameHeader frameHeader{};
@@ -14,3 +16,4 @@ struct RxFrameAssembly
     std::vector<uint16_t> payload;
     std::vector<uint8_t> chunkSeen;
 };
+}//namespace DASPi
