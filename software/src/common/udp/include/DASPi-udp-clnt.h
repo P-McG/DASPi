@@ -17,6 +17,7 @@
 #include "DASPi-rx-frame-assembly.h"
 #include "DASPi-frameheader.h"
 #include "DASPi-udp-chunk-header.h"
+#include "DASPi-wire-utils.h"
 
 
 struct sockaddr_in;
@@ -79,18 +80,6 @@ namespace DASPi{
 		bool SendFramePackets(const std::vector<std::vector<uint8_t>>& packets);
 		std::vector<std::vector<uint8_t>> BuildPackets(const FrameHeader& header, const uint8_t* data, size_t bytes, size_t mtu);
 	private:
-private:
-    static float HostToWireFloat(float v);
-    static float WireToHostFloat(float v);
-
-    static MessageHeader ToWireMessageHeader(MessageHeader h);
-    static MessageHeader FromWireMessageHeader(MessageHeader h);
-
-    static GainMsg ToWireGainMsg(GainMsg g);
-    static GainMsg FromWireGainMsg(GainMsg g);
-
-    static FrameHeader ToWireFrameHeader(FrameHeader h);
-    static FrameHeader FromWireFrameHeader(FrameHeader h);
 	};
 };//ending namespace DASPi
 #include "DASPi-udp-clnt.tpp"

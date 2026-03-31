@@ -83,24 +83,43 @@ using namespace DASPi;
 //}
 
 
-
-
-template <typename T >
-ssize_t UDPSrv::SendUDPPacketToClient(const T *buffer, const size_t bufferLength){
+template <typename T>
+ssize_t UDPSrv::SendRawDatagramToClient(const T* buffer, const size_t byteCount)
+{
 #ifdef VERBATIUM_COUT
-    std::cout << "SendUDPPacketToClient" << std::endl;
-	char ipstr[INET_ADDRSTRLEN];
-	inet_ntop(AF_INET, &(cliaddr_.sin_addr), ipstr, sizeof(ipstr));
-	std::cout << "Sending to " << ipstr << ":" << ntohs(cliaddr_.sin_port) << std::endl;
-	
+    std::cout << "SendRawDatagramToClient" << std::endl;
+    char ipstr[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &(cliaddr_.sin_addr), ipstr, sizeof(ipstr));
+    std::cout << "Sending to " << ipstr << ":" << ntohs(cliaddr_.sin_port) << std::endl;
 #endif
 
-	socklen_t len{sizeof(cliaddr_)};
-	ssize_t sendN = sendto(sockfd_, (const char *)buffer, bufferLength,
-		MSG_CONFIRM, (const struct sockaddr *) &cliaddr_,
-			len);
-	   return sendN;
+    socklen_t len{sizeof(cliaddr_)};
+    return sendto(sockfd_,
+                  reinterpret_cast<const char*>(buffer),
+                  byteCount,
+                  MSG_CONFIRM,
+                  reinterpret_cast<const struct sockaddr*>(&cliaddr_),
+                  len);
 }
+
+
+
+//template <typename T >
+//ssize_t UDPSrv::SendUDPPacketToClient(const T *buffer, const size_t bufferLength){
+//#ifdef VERBATIUM_COUT
+    //std::cout << "SendUDPPacketToClient" << std::endl;
+	//char ipstr[INET_ADDRSTRLEN];
+	//inet_ntop(AF_INET, &(cliaddr_.sin_addr), ipstr, sizeof(ipstr));
+	//std::cout << "Sending to " << ipstr << ":" << ntohs(cliaddr_.sin_port) << std::endl;
+	
+//#endif
+
+	//socklen_t len{sizeof(cliaddr_)};
+	//ssize_t sendN = sendto(sockfd_, (const char *)buffer, bufferLength,
+		//MSG_CONFIRM, (const struct sockaddr *) &cliaddr_,
+			//len);
+	   //return sendN;
+//}
 
 template<class T>
 bool UDPSrv::Receive(T& msg)

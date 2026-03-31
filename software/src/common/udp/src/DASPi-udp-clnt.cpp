@@ -19,6 +19,7 @@
 #include "DASPi-framepacket.h"
 #include "DASPi-rx-frame-assembly.h"
 #include "DASPi-udp-chunk-header.h"
+#include "DASPi-wire-utils.h"
 
 #define VERBATIUM_COUT
 
@@ -32,6 +33,12 @@ UDPClnt::UDPClnt(const in_addr_t clntAddr, const int port, const in_addr_t srvAd
 #ifdef VERBATIUM_COUT
    std::cout << "[UDPClnt]" << std::endl;
 #endif
+
+    std::cout << "[RX sizeof]\n";
+    std::cout << "sizeof(MessageHeader)=" << sizeof(MessageHeader) << '\n';
+    std::cout << "sizeof(GainMsg)=" << sizeof(GainMsg) << '\n';
+    std::cout << "sizeof(FrameHeader)=" << sizeof(FrameHeader) << '\n';
+    std::cout << "sizeof(UdpChunkHeader)=" << sizeof(UdpChunkHeader) << '\n';
 
     connect(sockfd_, (struct sockaddr*)&srvAddr_, sizeof(srvAddr_));
 
@@ -369,6 +376,20 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
 
         const size_t got = static_cast<size_t>(received);
         if (got < sizeof(UdpChunkHeader)) {
+            continue;
+        }
+
+        uint32_t magic;
+        std::memcpy(&magic, packet.data(), sizeof(uint32_t));
+        magic = ntohl(magic);
+        
+        if (magic != MAGIC_NUMBER) {
+            std::cout << "[RX] BAD MAGIC → skipping packet\n";
+            
+            for (int i = 0; i < std::min<int>(16, got); ++i) {
+                printf("%02x ", packet[i]);
+            }
+            printf("\n");
             continue;
         }
 
@@ -856,27 +877,27 @@ end:
 
 void UDPClnt::FlushSocket()
 {
-#ifdef VERBATIUM_COUT
-    std::cout << "[UDPClnt::FlushSocket]" << std::endl;
-#endif
+//#ifdef VERBATIUM_COUT
+    //std::cout << "[UDPClnt::FlushSocket]" << std::endl;
+//#endif
 
-    char discardBuffer[2048]; // Large enough for a single packet
-    sockaddr_in sender {};
-    socklen_t senderLen = sizeof(sender);
+    //char discardBuffer[2048]; // Large enough for a single packet
+    //sockaddr_in sender {};
+    //socklen_t senderLen = sizeof(sender);
 
-    int flags = MSG_DONTWAIT; // Non-blocking read
+    //int flags = MSG_DONTWAIT; // Non-blocking read
 
-    while (true) {
-        ssize_t received = recvfrom(sockfd_, discardBuffer, sizeof(discardBuffer), flags,
-                                    reinterpret_cast<sockaddr*>(&sender), &senderLen);
-        if (received <= 0) {
-            // Nothing more to read
-            break;
-        }
-#ifdef VERBATIUM_COUT
-        std::cout << "Flushed " << received << " bytes from socket" << std::endl;
-#endif
-    }
+    //while (true) {
+        //ssize_t received = recvfrom(sockfd_, discardBuffer, sizeof(discardBuffer), flags,
+                                    //reinterpret_cast<sockaddr*>(&sender), &senderLen);
+        //if (received <= 0) {
+            //// Nothing more to read
+            //break;
+        //}
+//#ifdef VERBATIUM_COUT
+        //std::cout << "Flushed " << received << " bytes from socket" << std::endl;
+//#endif
+//    }
 }
 
 int UDPClnt::SetNonBlocking(bool enabled)
@@ -982,102 +1003,4 @@ UDPClnt::BuildPackets(const FrameHeader& header,
     }
 
     return packets;
-}
-
-float UDPClnt::HostToWireFloat(float v)
-{
-    const uint32_t bits = std::bit_cast<uint32_t>(v);
-    return std::bit_cast<float>(htonl(bits));
-}
-
-float UDPClnt::WireToHostFloat(float v)
-{
-    const uint32_t bits = std::bit_cast<uint32_t>(v);
-    return std::bit_cast<float>(ntohl(bits));
-}
-
-MessageHeader UDPClnt::ToWireMessageHeader(MessageHeader h)
-{
-    using MT = std::underlying_type_t<MessageType>;
-    h.type = static_cast<MessageType>(
-        htons(static_cast<uint16_t>(static_cast<MT>(h.type)))
-    );
-    h.version = htons(h.version);
-    return h;
-}
-
-MessageHeader UDPClnt::FromWireMessageHeader(MessageHeader h)
-{
-    using MT = std::underlying_type_t<MessageType>;
-    h.type = static_cast<MessageType>(
-        ntohs(static_cast<uint16_t>(static_cast<MT>(h.type)))
-    );
-    h.version = ntohs(h.version);
-    return h;
-}
-
-GainMsg UDPClnt::ToWireGainMsg(GainMsg g)
-{
-    g.header = ToWireMessageHeader(g.header);
-
-    g.camera_id = htonl(g.camera_id);
-    g.frame_id  = htonl(g.frame_id);
-
-    g.mean_brightness   = HostToWireFloat(g.mean_brightness);
-    g.target_brightness = HostToWireFloat(g.target_brightness);
-    g.r_gain            = HostToWireFloat(g.r_gain);
-    g.b_gain            = HostToWireFloat(g.b_gain);
-    g.r_gain_apply      = HostToWireFloat(g.r_gain_apply);
-    g.b_gain_apply      = HostToWireFloat(g.b_gain_apply);
-    g.exposure_us       = HostToWireFloat(g.exposure_us);
-    g.analogue_gain     = HostToWireFloat(g.analogue_gain);
-
-    return g;
-}
-
-GainMsg UDPClnt::FromWireGainMsg(GainMsg g)
-{
-    g.header = FromWireMessageHeader(g.header);
-
-    g.camera_id = ntohl(g.camera_id);
-    g.frame_id  = ntohl(g.frame_id);
-
-    g.mean_brightness   = WireToHostFloat(g.mean_brightness);
-    g.target_brightness = WireToHostFloat(g.target_brightness);
-    g.r_gain            = WireToHostFloat(g.r_gain);
-    g.b_gain            = WireToHostFloat(g.b_gain);
-    g.r_gain_apply      = WireToHostFloat(g.r_gain_apply);
-    g.b_gain_apply      = WireToHostFloat(g.b_gain_apply);
-    g.exposure_us       = WireToHostFloat(g.exposure_us);
-    g.analogue_gain     = WireToHostFloat(g.analogue_gain);
-
-    return g;
-}
-
-FrameHeader UDPClnt::ToWireFrameHeader(FrameHeader h)
-{
-    h.magic_ = htonl(h.magic_);
-    h.gainMsg = ToWireGainMsg(h.gainMsg);
-    h.payloadSize_ = htonl(h.payloadSize_);
-
-    for (auto& s : h.regionSizes_) {
-        s = htonl(s);
-    }
-
-    h.checksum_ = htonl(h.checksum_);
-    return h;
-}
-
-FrameHeader UDPClnt::FromWireFrameHeader(FrameHeader h)
-{
-    h.magic_ = ntohl(h.magic_);
-    h.gainMsg = FromWireGainMsg(h.gainMsg);
-    h.payloadSize_ = ntohl(h.payloadSize_);
-
-    for (auto& s : h.regionSizes_) {
-        s = ntohl(s);
-    }
-
-    h.checksum_ = ntohl(h.checksum_);
-    return h;
 }

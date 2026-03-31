@@ -14,7 +14,7 @@ constexpr uint32_t MAGIC_NUMBER = 0xCAFEBABE;
 #pragma pack(push, 1)
 struct FrameHeader {
     uint32_t magic_;           // Magic number
-    GainMsg gainMsg;           // Gain + frame metadata
+    GainMsg gainMsg_;           // Gain + frame metadata
 
     uint32_t payloadSize_;     // Total payload bytes
 

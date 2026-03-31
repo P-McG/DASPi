@@ -10,6 +10,7 @@
 #include <ifaddrs.h>
 #include <mutex>
 #include "DASPi-framepacket.h"
+#include "DASPi-wire-utils.h"
 
 //#define VERBATIUM_COUT
 
@@ -57,7 +58,7 @@ namespace DASPi{
         void printSockAddr(const sockaddr_in &addr);
         //uint32_t SimpleChecksum(const uint8_t* data, size_t size);
         uint32_t SimpleChecksum(std::span<const std::byte> bytes);
-        void SendFramePacketToClient(const FramePacket &framePacket);
+        //void SendFramePacketToClient(const FramePacket &framePacket);
         void TransmitFrame(const DASPi::FramePacket&&);
 //        void SubmitFrameOutput(uint64_t frameNumber, std::vector<uint8_t>&& payload);
         void SubmitFrameOutput(uint64_t, FramePacket&&);
@@ -68,8 +69,9 @@ namespace DASPi{
         
         //FramePacket CreateFramePacket(std::vector<uint8_t>&& buffer);
         //void FrameBufferToUDP(std::vector<uint8_t> &&buffer);
-    
-        template <typename T > ssize_t SendUDPPacketToClient(const T *buffer, const size_t bufferLength=maxUdpPayloadBytes_ );
+        template<class T> ssize_t SendRawDatagramToClient(const T* buffer, size_t byteCount);
+        void SendFramePacketToClient(const FramePacket& framePacket);
+        //template <typename T > ssize_t SendUDPPacketToClient(const T *buffer, const size_t bufferLength=maxUdpPayloadBytes_ );
         template<class T> bool Receive(T& msg);
     };
 }//end namespace DASPi

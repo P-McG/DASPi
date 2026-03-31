@@ -32,6 +32,14 @@ Aperture::Aperture(const std::string clientIp, const size_t port)
                    static_cast<int>(port + 1),
                    inet_addr(clientIp.c_str())}
 {
+	
+	std::cout << "[TX sizeof]\n";
+    std::cout << "sizeof(MessageHeader)=" << sizeof(MessageHeader) << '\n';
+    std::cout << "sizeof(GainMsg)=" << sizeof(GainMsg) << '\n';
+    std::cout << "sizeof(FrameHeader)=" << sizeof(FrameHeader) << '\n';
+    std::cout << "sizeof(UdpChunkHeader)=" << sizeof(UdpChunkHeader) << '\n';
+
+	
     log_verbose("[Aperture::Aperture]");
     CreateCameraManager();
     AquireCamera();

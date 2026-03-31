@@ -12,6 +12,7 @@
 
 #include "DASPi-logger.h"
 #include "DASPi-udp-srv.h"
+#include "DASPi-udp-chunk-header.h"
 
 #define VERBATIUM_COUT
 
@@ -246,61 +247,6 @@ uint32_t UDPSrv::SimpleChecksum(std::span<const std::byte> bytes) {
 //#endif
 //}
 
-void UDPSrv::SendFramePacketToClient(const FramePacket &framePacket) {
-    log_verbose("[UDPSrv::SendUDPPacketToClient]");
-
-    // FPS tracking
-    static int count = 0;
-    static auto last = std::chrono::steady_clock::now();
-    if (++count, std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::steady_clock::now() - last).count() >= 1) {
-        std::cout << "[Output FPS] " << count << " frames/sec" << std::endl;
-        count = 0;
-        last = std::chrono::steady_clock::now();
-    }
-
-    const size_t mtu = GetMaximumTransmittableUnits();
-    auto payloadBytes = framePacket.payload_as_bytes(); // already a byte span
-    const size_t payloadSize = payloadBytes.size();
-
-    // --- First Packet (header + partial payload) ---
-    const size_t firstPayloadBytes = std::min(mtu - sizeof(FrameHeader), payloadSize);
-
-    std::vector<uint8_t> firstChunk(sizeof(FrameHeader) + firstPayloadBytes);
-    std::memcpy(firstChunk.data(), &framePacket.header_, sizeof(FrameHeader));
-    std::memcpy(firstChunk.data() + sizeof(FrameHeader),
-                payloadBytes.data(), firstPayloadBytes);
-
-    if (SendUDPPacketToClient(firstChunk.data(), firstChunk.size()) < 0) {
-        std::cerr << "Send to client failed at offset: 0" << std::endl;
-        std::exit(1);
-    }
-
-    // --- Remaining Payload Packets ---
-    size_t bytesSent = firstPayloadBytes;
-    const uint8_t* payloadPtr = reinterpret_cast<const uint8_t*>(payloadBytes.data());
-
-    while (bytesSent < payloadSize) {
-        size_t chunkSize = std::min(mtu, payloadSize - bytesSent);
-
-#ifdef VERBATIUM_COUT
-        std::cout << "Sending chunk of size " << chunkSize
-                  << " at offset " << bytesSent << std::endl;
-#endif
-        if (SendUDPPacketToClient(payloadPtr + bytesSent, chunkSize) < 0) {
-            std::cerr << "Send to client failed at offset: " << bytesSent << std::endl;
-            std::exit(1);
-        }
-        bytesSent += chunkSize;
-    }
-
-#ifdef VERBATIUM_COUT
-    std::cout << "Finished sending frame packet. Total bytes sent: "
-              << (bytesSent + sizeof(FrameHeader)) << std::endl;
-#endif
-}
-
-
 void UDPSrv::TransmitFrame(const FramePacket &&data) {
   log_verbose("[UDPSrv::TransmitFrame]");
     SendFramePacketToClient(std::move(data));
@@ -451,6 +397,65 @@ bool UDPSrv::TrySendFramesInOrder() {
     return didSend;
 }
 
+void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
+{
+    const auto* payloadPtr =
+        reinterpret_cast<const uint8_t*>(framePacket.payload_.data());
+    const size_t totalBytes = framePacket.payload_.size() * sizeof(uint16_t);
+
+    if (maxUdpPayloadBytes_ <= sizeof(UdpChunkHeader)) {
+        std::cerr << "maxUdpPayloadBytes_ too small\n";
+        return;
+    }
+
+    const size_t maxChunkPayload = maxUdpPayloadBytes_ - sizeof(UdpChunkHeader);
+    const size_t chunkCount =
+        (totalBytes + maxChunkPayload - 1) / maxChunkPayload;
+
+    static std::atomic<uint32_t> nextFrameId{1};
+    const uint32_t frameId = nextFrameId.fetch_add(1, std::memory_order_relaxed);
+
+    FrameHeader fh{};
+    fh.magic_ = MAGIC_NUMBER;
+    fh.gainMsg_ = framePacket.header_.gainMsg_;
+    fh.payloadSize_ = static_cast<uint32_t>(totalBytes);
+    fh.regionSizes_ = framePacket.header_.regionSizes_;
+    fh.checksum_ = SimpleChecksum(
+        std::as_bytes(std::span(framePacket.payload_))
+    );
+
+    size_t offset = 0;
+    for (size_t chunkId = 0; chunkId < chunkCount; ++chunkId) {
+        const size_t payloadBytes = std::min(maxChunkPayload, totalBytes - offset);
+
+        UdpChunkHeader hdr{};
+        hdr.magic_        = htonl(MAGIC_NUMBER);
+        hdr.frameId_      = htonl(frameId);
+        hdr.chunkId_      = htons(static_cast<uint16_t>(chunkId));
+        hdr.chunkCount_   = htons(static_cast<uint16_t>(chunkCount));
+        hdr.payloadBytes_ = htons(static_cast<uint16_t>(payloadBytes));
+        hdr.reserved_     = 0;
+
+        if (chunkId == 0) {
+            hdr.frameHeader_ = ToWireFrameHeader(fh);
+        }
+
+        std::vector<uint8_t> datagram(sizeof(UdpChunkHeader) + payloadBytes);
+        std::memcpy(datagram.data(), &hdr, sizeof(UdpChunkHeader));
+        std::memcpy(datagram.data() + sizeof(UdpChunkHeader),
+                    payloadPtr + offset,
+                    payloadBytes);
+
+        if (SendRawDatagramToClient(datagram.data(), datagram.size()) < 0) {
+            perror("sendto failed");
+            return;
+        }
+
+        offset += payloadBytes;
+    }
+}
+
+
 //void UDPSrv::SendToServer(const uint8_t* buffer, size_t bufferLength) {
 	//socklen_t len = sizeof(servaddr_);
 	//ssize_t sendN = sendto(sockfd_, buffer, bufferLength, MSG_CONFIRM,
@@ -509,7 +514,7 @@ FramePacket UDPSrv::CreateFramePacket(
     pkt.payload_ = std::move(buffer);
 
     pkt.header_.magic_ = htonl(MAGIC_NUMBER);
-    pkt.header_.gainMsg = gainMsg;
+    pkt.header_.gainMsg_ = gainMsg;
 
     pkt.header_.payloadSize_ =
         htonl(static_cast<uint32_t>(pkt.payload_.size() * sizeof(uint16_t)));
