@@ -355,9 +355,30 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
 {
     std::vector<uint8_t> packet(maxUdpPayloadBytes_);
 
+    static std::mutex rxLogMutex;
+
+    auto logLine = [](std::mutex& m, const std::string& s) {
+        std::lock_guard<std::mutex> lock(m);
+        std::cout << s << std::endl;
+    };
+
+    auto logHex16 = [&](const uint8_t* data, size_t len) {
+        std::lock_guard<std::mutex> lock(rxLogMutex);
+        const size_t n = std::min<size_t>(16, len);
+        for (size_t i = 0; i < n; ++i) {
+            std::printf("%02x ", data[i]);
+        }
+        std::printf("\n");
+        std::fflush(stdout);
+    };
+
+    logLine(rxLogMutex, "[RXF] enter ReceiveAndReassembleFramePacket");
+
     while (true) {
         sockaddr_in sender{};
         socklen_t senderLen = sizeof(sender);
+
+        logLine(rxLogMutex, "[RXF] before recvfrom");
 
         const ssize_t received = recvfrom(sockfd_,
                                           packet.data(),
@@ -368,28 +389,32 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
 
         if (received < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                logLine(rxLogMutex, "[RXF] recvfrom EAGAIN");
                 continue;
             }
+
             perror("recvfrom failed");
             return false;
         }
 
+        {
+            std::lock_guard<std::mutex> lock(rxLogMutex);
+            std::cout << "[RXF] after recvfrom received=" << received << std::endl;
+        }
+
         const size_t got = static_cast<size_t>(received);
         if (got < sizeof(UdpChunkHeader)) {
+            logLine(rxLogMutex, "[RXF] packet too small for UdpChunkHeader");
             continue;
         }
 
-        uint32_t magic;
+        uint32_t magic = 0;
         std::memcpy(&magic, packet.data(), sizeof(uint32_t));
         magic = ntohl(magic);
-        
+
         if (magic != MAGIC_NUMBER) {
-            std::cout << "[RX] BAD MAGIC → skipping packet\n";
-            
-            for (int i = 0; i < std::min<int>(16, got); ++i) {
-                printf("%02x ", packet[i]);
-            }
-            printf("\n");
+            logLine(rxLogMutex, "[RX] BAD MAGIC -> skipping packet");
+            logHex16(packet.data(), got);
             continue;
         }
 
@@ -405,24 +430,29 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         char ipbuf[INET_ADDRSTRLEN] = {};
         inet_ntop(AF_INET, &sender.sin_addr, ipbuf, sizeof(ipbuf));
 
-        std::cout << std::dec
-                  << "[RX] this=" << this
-                  << " src=" << ipbuf << ":" << ntohs(sender.sin_port)
-                  << " frameId=" << wire.frameId_
-                  << " chunkId=" << wire.chunkId_
-                  << "/" << wire.chunkCount_
-                  << " payloadBytes=" << wire.payloadBytes_
-                  << std::endl;
+        {
+            std::lock_guard<std::mutex> lock(rxLogMutex);
+            std::cout << "[RXF] decoded this=" << this
+                      << " src=" << ipbuf << ":" << ntohs(sender.sin_port)
+                      << " frameId=" << wire.frameId_
+                      << " chunkId=" << wire.chunkId_
+                      << "/" << wire.chunkCount_
+                      << " payloadBytes=" << wire.payloadBytes_
+                      << std::endl;
+        }
 
         if (wire.magic_ != MAGIC_NUMBER) {
+            logLine(rxLogMutex, "[RXF] decoded magic mismatch");
             continue;
         }
 
         if (wire.chunkCount_ == 0 || wire.chunkId_ >= wire.chunkCount_) {
+            logLine(rxLogMutex, "[RXF] invalid chunkCount/chunkId");
             continue;
         }
 
         if (sizeof(UdpChunkHeader) + wire.payloadBytes_ > got) {
+            logLine(rxLogMutex, "[RXF] payloadBytes exceeds datagram size");
             continue;
         }
 
@@ -439,7 +469,15 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             a.totalBytesExpected = 0;
             a.totalBytesReceived = 0;
             a.headerSeen = false;
+
+            {
+                std::lock_guard<std::mutex> lock(rxLogMutex);
+                std::cout << "[RXF] new assembly frameId=" << wire.frameId_
+                          << " chunkCount=" << wire.chunkCount_
+                          << std::endl;
+            }
         } else if (a.chunkCount != wire.chunkCount_) {
+            logLine(rxLogMutex, "[RXF] chunkCount mismatch, dropping frame");
             dropFrame();
             continue;
         }
@@ -448,6 +486,7 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             a.frameHeader = FromWireFrameHeader(wire.frameHeader_);
 
             if (a.frameHeader.magic_ != MAGIC_NUMBER) {
+                logLine(rxLogMutex, "[RXF] frameHeader magic mismatch");
                 dropFrame();
                 continue;
             }
@@ -455,6 +494,7 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             if (a.frameHeader.payloadSize_ == 0 ||
                 a.frameHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_ ||
                 (a.frameHeader.payloadSize_ % sizeof(uint16_t)) != 0) {
+                logLine(rxLogMutex, "[RXF] invalid frameHeader payloadSize");
                 dropFrame();
                 continue;
             }
@@ -465,6 +505,7 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             }
 
             if (totalElems * sizeof(uint16_t) != a.frameHeader.payloadSize_) {
+                logLine(rxLogMutex, "[RXF] regionSizes sum does not match payloadSize");
                 dropFrame();
                 continue;
             }
@@ -472,18 +513,28 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             a.totalBytesExpected = a.frameHeader.payloadSize_;
             a.payload.assign(a.totalBytesExpected / sizeof(uint16_t), 0);
             a.headerSeen = true;
+
+            {
+                std::lock_guard<std::mutex> lock(rxLogMutex);
+                std::cout << "[RXF] header accepted frameId=" << wire.frameId_
+                          << " totalBytesExpected=" << a.totalBytesExpected
+                          << std::endl;
+            }
         }
 
         if (!a.headerSeen) {
+            logLine(rxLogMutex, "[RXF] header not seen yet, waiting for chunk 0");
             continue;
         }
 
         if (wire.chunkId_ >= a.chunkSeen.size()) {
+            logLine(rxLogMutex, "[RXF] chunkId outside chunkSeen size, dropping frame");
             dropFrame();
             continue;
         }
 
         if (a.chunkSeen[wire.chunkId_]) {
+            logLine(rxLogMutex, "[RXF] duplicate chunk, skipping");
             continue;
         }
 
@@ -491,6 +542,7 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         const size_t dstOffset = static_cast<size_t>(wire.chunkId_) * maxChunkPayload;
 
         if (dstOffset + wire.payloadBytes_ > a.totalBytesExpected) {
+            logLine(rxLogMutex, "[RXF] chunk write would exceed payload, dropping frame");
             dropFrame();
             continue;
         }
@@ -503,13 +555,15 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         a.chunkSeen[wire.chunkId_] = 1;
         a.totalBytesReceived += wire.payloadBytes_;
 
-        std::cout << std::dec
-                  << "[RX] this=" << this
-                  << " frameId=" << wire.frameId_
-                  << " received=" << a.totalBytesReceived
-                  << "/" << a.totalBytesExpected
-                  << " headerSeen=" << a.headerSeen
-                  << std::endl;
+        {
+            std::lock_guard<std::mutex> lock(rxLogMutex);
+            std::cout << "[RX-ENDCHECK] frameId=" << wire.frameId_
+                      << " received=" << a.totalBytesReceived
+                      << " expected=" << a.totalBytesExpected
+                      << " lastChunk=" << wire.chunkId_
+                      << "/" << wire.chunkCount_
+                      << std::endl;
+        }
 
         if (a.totalBytesReceived < a.totalBytesExpected) {
             continue;
@@ -520,23 +574,45 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         const uint32_t computed = SimpleChecksum(usedBytes);
 
         if (computed != a.frameHeader.checksum_) {
-            std::cerr << "Checksum mismatch\n";
+            {
+                std::lock_guard<std::mutex> lock(rxLogMutex);
+                std::cout << "[RX-CHECKSUM-FAIL] frameId=" << wire.frameId_
+                          << " computed=" << computed
+                          << " expected=" << a.frameHeader.checksum_
+                          << std::endl;
+            }
+
             dropFrame();
             return false;
         }
 
-        std::cout << std::dec
-                  << "[RX] COMPLETE this=" << this
-                  << " frameId=" << wire.frameId_
-                  << " bytes=" << a.totalBytesExpected
-                  << std::endl;
+        const size_t completedBytes = a.totalBytesExpected;
+        const size_t completedElems = a.payload.size();
+
+        {
+            std::lock_guard<std::mutex> lock(rxLogMutex);
+            std::cout << "[RX-COMPLETE] frameId=" << wire.frameId_
+                      << " bytes=" << completedBytes
+                      << " payloadElems=" << completedElems
+                      << std::endl;
+        }
 
         outHeader = a.frameHeader;
         outPayload = std::move(a.payload);
         dropFrame();
+
+        {
+            std::lock_guard<std::mutex> lock(rxLogMutex);
+            std::cout << "[RXF] returning success frameId=" << wire.frameId_
+                      << " totalBytesExpected=" << completedBytes
+                      << std::endl;
+        }
+
         return true;
     }
 }
+
+
 //bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload, FrameHeader& outHeader)
 //{
 //#ifdef VERBATIUM_COUT

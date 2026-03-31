@@ -1,5 +1,8 @@
 // DASPi-wire-utils.h
 #pragma once
+#include <bit>
+#include <type_traits>
+#include <arpa/inet.h>
 
 #include "DASPi-frameheader.h"
 #include "DASPi-messages.h"

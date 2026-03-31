@@ -5,6 +5,7 @@ logger_inc = include_directories('../logger/include')
 udp_lib = static_library(
   'udp',
   [
+    'src/DASPi-wire-utils.cpp',
     'src/DASPi-udp-srv.cpp',
     'src/DASPi-udp-clnt.cpp',
   ],

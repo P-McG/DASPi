@@ -247,9 +247,9 @@ uint32_t UDPSrv::SimpleChecksum(std::span<const std::byte> bytes) {
 //#endif
 //}
 
-void UDPSrv::TransmitFrame(const FramePacket &&data) {
+void UDPSrv::TransmitFrame(const FramePacket &data) {
   log_verbose("[UDPSrv::TransmitFrame]");
-    SendFramePacketToClient(std::move(data));
+    SendFramePacketToClient(data);
 }
 
 void UDPSrv::SubmitFrameOutput(uint64_t frameNumber, FramePacket &&framePacket) {
@@ -413,16 +413,31 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
         (totalBytes + maxChunkPayload - 1) / maxChunkPayload;
 
     static std::atomic<uint32_t> nextFrameId{1};
-    const uint32_t frameId = nextFrameId.fetch_add(1, std::memory_order_relaxed);
+    const uint32_t frameId =
+        nextFrameId.fetch_add(1, std::memory_order_relaxed);
 
     FrameHeader fh{};
     fh.magic_ = MAGIC_NUMBER;
-    fh.gainMsg_ = framePacket.header_.gainMsg_;
+    fh.gainMsg = framePacket.header_.gainMsg;          // or gainMsg_ if that is truly your field
     fh.payloadSize_ = static_cast<uint32_t>(totalBytes);
     fh.regionSizes_ = framePacket.header_.regionSizes_;
-    fh.checksum_ = SimpleChecksum(
-        std::as_bytes(std::span(framePacket.payload_))
-    );
+    fh.checksum_ = SimpleChecksum(std::as_bytes(std::span(framePacket.payload_)));
+
+    size_t totalElems = 0;
+    for (size_t i = 0; i < fh.regionSizes_.size(); ++i) {
+        totalElems += fh.regionSizes_[i];
+        std::cout << "[TX-HDR] regionSizes_[" << i << "]=" << fh.regionSizes_[i] << std::endl;
+    }
+
+    std::cout << "[TX-HDR] totalElems=" << totalElems
+              << " payloadElems=" << framePacket.payload_.size()
+              << " payloadBytes=" << fh.payloadSize_
+              << std::endl;
+
+    if (totalElems != framePacket.payload_.size()) {
+        std::cerr << "[TX-HDR] regionSizes sum does not match payload size" << std::endl;
+        return;
+    }
 
     size_t offset = 0;
     for (size_t chunkId = 0; chunkId < chunkCount; ++chunkId) {

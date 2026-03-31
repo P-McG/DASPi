@@ -1,7 +1,6 @@
 compute_inc = include_directories('include')
 
 compute_src = files(
-  'src/DASPi-wire-utils.cpp',
   'src/DASPi-aperture-peer.cpp',
   'src/main.cpp',
 )

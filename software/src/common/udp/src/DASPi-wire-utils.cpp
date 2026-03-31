@@ -1,7 +1,7 @@
 // DASPi-wire-utils.cpp
 #include "DASPi-wire-utils.h"
 
-using namespace DASPi
+namespace DASPi{
 
 float HostToWireFloat(float v)
 {
@@ -76,7 +76,7 @@ GainMsg FromWireGainMsg(GainMsg g)
 FrameHeader ToWireFrameHeader(FrameHeader h)
 {
     h.magic_ = htonl(h.magic_);
-    h.gainMsg = ToWireGainMsg(h.gainMsg);
+    h.gainMsg_ = ToWireGainMsg(h.gainMsg_);
     h.payloadSize_ = htonl(h.payloadSize_);
 
     for (auto& s : h.regionSizes_) {
@@ -90,7 +90,7 @@ FrameHeader ToWireFrameHeader(FrameHeader h)
 FrameHeader FromWireFrameHeader(FrameHeader h)
 {
     h.magic_ = ntohl(h.magic_);
-    h.gainMsg = FromWireGainMsg(h.gainMsg);
+    h.gainMsg_ = FromWireGainMsg(h.gainMsg_);
     h.payloadSize_ = ntohl(h.payloadSize_);
 
     for (auto& s : h.regionSizes_) {
@@ -100,3 +100,4 @@ FrameHeader FromWireFrameHeader(FrameHeader h)
     h.checksum_ = ntohl(h.checksum_);
     return h;
 }
+};//namespace DASPi

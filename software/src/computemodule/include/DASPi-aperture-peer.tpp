@@ -81,19 +81,43 @@ namespace DASPi{
 		std::vector<uint16_t> maskedBuffer;
 	
 		UDPClnt::EpollData epollData;
+		bool epollInitialized = false;
+	
+		auto finalizeEpoll = [&]() -> bool {
+			if (!epollInitialized) {
+				return true;
+			}
+			if (!frameClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
+				std::cerr << "Finalize Epoll for Server UDP Packets\n";
+				return false;
+			}
+			epollInitialized = false;
+			return true;
+		};
+	
 		if (!frameClnt_.InitEpollForSrvUDPPackets(epollData)) {
 			std::cerr << "Initializing Epoll for Server UDP Packets\n";
 			return false;
 		}
+		epollInitialized = true;
 	
-		if (!frameClnt_.ReceiveAndReassembleFramePacket(maskedBuffer, frameHeader)) {
+		std::cout << "[RF] after InitEpollForSrvUDPPackets" << std::endl;
+		std::cout << "[RF] before ReceiveAndReassembleFramePacket" << std::endl;
+	
+		const bool ok = frameClnt_.ReceiveAndReassembleFramePacket(maskedBuffer, frameHeader);
+	
+		std::cout << "[RF] after ReceiveAndReassembleFramePacket ok=" << ok
+				  << " maskedBuffer.size()=" << maskedBuffer.size()
+				  << " payloadSize=" << frameHeader.payloadSize_
+				  << std::endl;
+	
+		if (!ok) {
 			std::cerr << "Read data from server FAILED\n";
-			frameClnt_.FinalizeEpollForSrvUDPPackets(epollData);
+			finalizeEpoll();
 			return false;
 		}
 	
-		if (!frameClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
-			std::cerr << "Finalize Epoll for Server UDP Packets\n";
+		if (!finalizeEpoll()) {
 			return false;
 		}
 	
@@ -129,41 +153,57 @@ namespace DASPi{
 			offset += count;
 		}
 	
-		// Build new buffers outside the lock
+		if (offset != maskedBuffer.size()) {
+			std::cerr << "[RunFrameLoop] payload size mismatch after unpack: offset=" << offset
+					  << " maskedBuffer.size()=" << maskedBuffer.size()
+					  << std::endl;
+			return false;
+		}
+	
 		std::array<std::vector<uint16_t>, n + 1> newBuffers;
 	
-		auto unmasked0 = this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(this->sfdp_[0]);
-
+		auto unmasked0 =
+			this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(this->sfdp_[0]);
+	
 		newBuffers[0].resize(unmasked0.size());
-		std::memcpy(newBuffers[0].data(),
-					unmasked0.data(),
-					unmasked0.size() * sizeof(uint16_t));
+		if (!unmasked0.empty()) {
+			std::memcpy(newBuffers[0].data(),
+						unmasked0.data(),
+						unmasked0.size() * sizeof(uint16_t));
+		}
 	
 		for (size_t i = 0; i < n_; ++i) {
 			auto unmasked = this->sf_.FrameBufferUnmask(this->sfdp_[i + 1], i);
 			newBuffers[i + 1].resize(unmasked.size());
-			std::memcpy(newBuffers[i + 1].data(),
-						unmasked.data(),
-						unmasked.size() * sizeof(uint16_t));
+			if (!unmasked.empty()) {
+				std::memcpy(newBuffers[i + 1].data(),
+							unmasked.data(),
+							unmasked.size() * sizeof(uint16_t));
+			}
 		}
 	
 		for (size_t i = 0; i < n_ + 1; ++i) {
 			this->BrightenImageInplace(std::span<uint16_t>(newBuffers[i]), 6);
 		}
 	
-		// Only lock while publishing new buffers
 		{
 			std::scoped_lock lock(bufferMutex_);
 			this->buffer_ = std::move(newBuffers);
 		}
 	
-		std::cout << "[RunFrameLoop] about to publish/write\n";
+		std::cout << "[RunFrameLoop] published buffers" << std::endl;
 		for (size_t i = 0; i < n_ + 1; ++i) {
-			std::cout << "[RunFrameLoop] newBuffers[" << i << "].size()="
-					  << newBuffers[i].size() << '\n';
+			std::cout << "[RunFrameLoop] buffer_[" << i << "].size()="
+					  << this->buffer_[i].size() << std::endl;
 		}
 	
-		this->BufferToFile();
+		std::cout << "[RunFrameLoop] about to BufferToFile" << std::endl;
+		if (!this->BufferToFile()) {
+			std::cerr << "[RunFrameLoop] BufferToFile failed" << std::endl;
+			return false;
+		}
+	
+		std::cout << "[RunFrameLoop] completed" << std::endl;
 		return true;
 	}
 	

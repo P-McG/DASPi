@@ -648,9 +648,15 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         cv::Mat display = pano.clone();
         DrawPanoramaOverlay(display, frameNumber++, validMask);
 
+		std::cout << "[GUI] rows=" << display.rows
+		          << " cols=" << display.cols
+		          << " empty=" << display.empty()
+		          << std::endl;
+		          
         cv::imshow("Stitched Panorama", display);
 
         const int key = cv::waitKey(1);
+        
         if (key == 27 || key == 'q' || key == 'Q') {
             break;
         }
