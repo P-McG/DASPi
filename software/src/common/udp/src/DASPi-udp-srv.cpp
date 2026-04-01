@@ -383,7 +383,7 @@ bool UDPSrv::TrySendFramesInOrder() {
 
         // Frame is ready → transmit
         std::cout << "[TSFO] Sending frame with metadata" << nextFrameToSend_ << std::endl;
-        TransmitFrame(std::move(it->second));
+        TransmitFrame(it->second);
         orderedFrames_.erase(it);
 
         ++nextFrameToSend_;
@@ -418,7 +418,7 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
 
     FrameHeader fh{};
     fh.magic_ = MAGIC_NUMBER;
-    fh.gainMsg = framePacket.header_.gainMsg;          // or gainMsg_ if that is truly your field
+    fh.gainMsg_ = framePacket.header_.gainMsg_;          // or gainMsg_ if that is truly your field
     fh.payloadSize_ = static_cast<uint32_t>(totalBytes);
     fh.regionSizes_ = framePacket.header_.regionSizes_;
     fh.checksum_ = SimpleChecksum(std::as_bytes(std::span(framePacket.payload_)));
@@ -528,18 +528,18 @@ FramePacket UDPSrv::CreateFramePacket(
 
     pkt.payload_ = std::move(buffer);
 
-    pkt.header_.magic_ = htonl(MAGIC_NUMBER);
-    pkt.header_.gainMsg_ = gainMsg;
+    pkt.header_.magic_ = MAGIC_NUMBER;
+    pkt.header_.gainMsg_ = gainMsg;   // or gainMsg_ if that is truly your field
 
     pkt.header_.payloadSize_ =
-        htonl(static_cast<uint32_t>(pkt.payload_.size() * sizeof(uint16_t)));
+        static_cast<uint32_t>(pkt.payload_.size() * sizeof(uint16_t));
 
     for (size_t i = 0; i < NUM_REGIONS; ++i) {
-        pkt.header_.regionSizes_[i] = htonl(regionSizes[i]);
+        pkt.header_.regionSizes_[i] = regionSizes[i];
     }
 
     pkt.header_.checksum_ =
-        htonl(SimpleChecksum(pkt.payload_as_bytes()));
+        SimpleChecksum(pkt.payload_as_bytes());
 
     return pkt;
 }

@@ -59,9 +59,9 @@ namespace DASPi{
         //uint32_t SimpleChecksum(const uint8_t* data, size_t size);
         uint32_t SimpleChecksum(std::span<const std::byte> bytes);
         //void SendFramePacketToClient(const FramePacket &framePacket);
-        void TransmitFrame(const DASPi::FramePacket&&);
+        void TransmitFrame(const DASPi::FramePacket& data);
 //        void SubmitFrameOutput(uint64_t frameNumber, std::vector<uint8_t>&& payload);
-        void SubmitFrameOutput(uint64_t, FramePacket&&);
+        void SubmitFrameOutput(uint64_t, FramePacket&& data);
         bool TrySendFramesInOrder();
         void SendToServer(const uint8_t* buffer, size_t bufferLength);
         FramePacket CreateFramePacket(const GainMsg& gainMsg, const std::array<uint32_t, NUM_REGIONS>& regionSizes, std::vector<uint16_t>&& buffer);        //template<typename T0>
