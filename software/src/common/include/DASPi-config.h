@@ -3,6 +3,6 @@
 
 namespace DASPi {
 
-// 1 non-overlap + n overlap regions
-constexpr size_t NUM_REGIONS = 4;
+inline constexpr size_t NUM_SIDES   = 4;          // your n
+inline constexpr size_t NUM_REGIONS = NUM_SIDES + 1;
 }

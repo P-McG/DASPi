@@ -57,6 +57,7 @@ namespace DASPi{
                     },
                     0.75
                 >;
+        //Check DASPi-config.h if triggered
         static_assert(NUM_REGIONS == sfdp_t::NumberOfRegions(),
           "NUM_REGIONS must match ShapeFunctionDataPacket regions");
     
