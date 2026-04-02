@@ -37,7 +37,7 @@ constexpr int kExpectedPixels = kFrameWidth * kFrameHeight;
 constexpr int kControlPortOffset = 1;
 
 // n = overlap images per module
-constexpr size_t kOverlapStreams = 3;
+constexpr size_t kOverlapStreams = 4;
 
 // total images per module = image 0 + overlaps 1..n
 constexpr size_t kPeerStreams = kOverlapStreams + 1;

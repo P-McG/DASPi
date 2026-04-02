@@ -116,6 +116,8 @@ namespace DASPi{
 			finalizeEpoll();
 			return false;
 		}
+		
+		this->fpsReceived_.Tick();
 	
 		if (!finalizeEpoll()) {
 			return false;
@@ -190,6 +192,8 @@ namespace DASPi{
 			std::scoped_lock lock(bufferMutex_);
 			this->buffer_ = std::move(newBuffers);
 		}
+		
+		this->fpsPublished_.Tick();
 	
 		std::cout << "[RunFrameLoop] published buffers" << std::endl;
 		for (size_t i = 0; i < n_ + 1; ++i) {
@@ -202,6 +206,8 @@ namespace DASPi{
 			std::cerr << "[RunFrameLoop] BufferToFile failed" << std::endl;
 			return false;
 		}
+		
+		this->fpsRunFrameLoop_.Tick();
 	
 		std::cout << "[RunFrameLoop] completed" << std::endl;
 		return true;

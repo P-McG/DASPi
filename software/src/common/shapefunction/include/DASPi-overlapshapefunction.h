@@ -116,26 +116,26 @@ namespace DASPi{
 		bool CopyMaskOverlap(size_t index, cv::Mat& out) const;
     };
     
-    inline OverlapShapeFunction<
-        3,
-        { static_cast<size_t>((+1.0/2.0)*sensorWidthValue_), 
-          static_cast<size_t>((+1.0/2.0)*sensorHeightValue_)
-        },
-        { static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / 3)),
-          static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / 3))
-        },
-        0.75
-    > overlapShapeFunctionInstance0;
-    inline OverlapShapeFunction<
-        3,
-        { static_cast<size_t>((+1.0/2.0)*sensorWidthValue_), 
-          static_cast<size_t>((+1.0/2.0)*sensorHeightValue_)
-        },
-        { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / 3)),
-          -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / 3))
-        },
-        0.75
-    > overlapShapeFunctionInstance1;
+    //inline OverlapShapeFunction<
+        //n,
+        //{ static_cast<size_t>((+1.0/2.0)*sensorWidthValue_), 
+          //static_cast<size_t>((+1.0/2.0)*sensorHeightValue_)
+        //},
+        //{ static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / n)),
+          //static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / n))
+        //},
+        //0.75
+    //> overlapShapeFunctionInstance0;
+    //inline OverlapShapeFunction<
+        //n,
+        //{ static_cast<size_t>((+1.0/2.0)*sensorWidthValue_), 
+          //static_cast<size_t>((+1.0/2.0)*sensorHeightValue_)
+        //},
+        //{ -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / n)),
+          //-1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / n))
+        //},
+        //0.75
+    //> overlapShapeFunctionInstance1;
     
 };//ending namespace DASPi
 #include "DASPi-overlapshapefunction.tpp"

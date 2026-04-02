@@ -378,7 +378,7 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         sockaddr_in sender{};
         socklen_t senderLen = sizeof(sender);
 
-        logLine(rxLogMutex, "[RXF] before recvfrom");
+        //logLine(rxLogMutex, "[RXF] before recvfrom");
 
         const ssize_t received = recvfrom(sockfd_,
                                           packet.data(),
@@ -389,7 +389,7 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
 
         if (received < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                logLine(rxLogMutex, "[RXF] recvfrom EAGAIN");
+                //logLine(rxLogMutex, "[RXF] recvfrom EAGAIN");
                 continue;
             }
 
@@ -397,10 +397,10 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             return false;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(rxLogMutex);
-            std::cout << "[RXF] after recvfrom received=" << received << std::endl;
-        }
+        //{
+            //std::lock_guard<std::mutex> lock(rxLogMutex);
+            //std::cout << "[RXF] after recvfrom received=" << received << std::endl;
+        //}
 
         const size_t got = static_cast<size_t>(received);
         if (got < sizeof(UdpChunkHeader)) {
@@ -430,16 +430,16 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         char ipbuf[INET_ADDRSTRLEN] = {};
         inet_ntop(AF_INET, &sender.sin_addr, ipbuf, sizeof(ipbuf));
 
-        {
-            std::lock_guard<std::mutex> lock(rxLogMutex);
-            std::cout << "[RXF] decoded this=" << this
-                      << " src=" << ipbuf << ":" << ntohs(sender.sin_port)
-                      << " frameId=" << wire.frameId_
-                      << " chunkId=" << wire.chunkId_
-                      << "/" << wire.chunkCount_
-                      << " payloadBytes=" << wire.payloadBytes_
-                      << std::endl;
-        }
+        //{
+            //std::lock_guard<std::mutex> lock(rxLogMutex);
+            //std::cout << "[RXF] decoded this=" << this
+                      //<< " src=" << ipbuf << ":" << ntohs(sender.sin_port)
+                      //<< " frameId=" << wire.frameId_
+                      //<< " chunkId=" << wire.chunkId_
+                      //<< "/" << wire.chunkCount_
+                      //<< " payloadBytes=" << wire.payloadBytes_
+                      //<< std::endl;
+        //}
 
         if (wire.magic_ != MAGIC_NUMBER) {
             logLine(rxLogMutex, "[RXF] decoded magic mismatch");
@@ -555,15 +555,15 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         a.chunkSeen[wire.chunkId_] = 1;
         a.totalBytesReceived += wire.payloadBytes_;
 
-        {
-            std::lock_guard<std::mutex> lock(rxLogMutex);
-            std::cout << "[RX-ENDCHECK] frameId=" << wire.frameId_
-                      << " received=" << a.totalBytesReceived
-                      << " expected=" << a.totalBytesExpected
-                      << " lastChunk=" << wire.chunkId_
-                      << "/" << wire.chunkCount_
-                      << std::endl;
-        }
+        //{
+            //std::lock_guard<std::mutex> lock(rxLogMutex);
+            //std::cout << "[RX-ENDCHECK] frameId=" << wire.frameId_
+                      //<< " received=" << a.totalBytesReceived
+                      //<< " expected=" << a.totalBytesExpected
+                      //<< " lastChunk=" << wire.chunkId_
+                      //<< "/" << wire.chunkCount_
+                      //<< std::endl;
+        //}
 
         if (a.totalBytesReceived < a.totalBytesExpected) {
             continue;
@@ -601,12 +601,12 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         outPayload = std::move(a.payload);
         dropFrame();
 
-        {
-            std::lock_guard<std::mutex> lock(rxLogMutex);
-            std::cout << "[RXF] returning success frameId=" << wire.frameId_
-                      << " totalBytesExpected=" << completedBytes
-                      << std::endl;
-        }
+        //{
+            //std::lock_guard<std::mutex> lock(rxLogMutex);
+            //std::cout << "[RXF] returning success frameId=" << wire.frameId_
+                      //<< " totalBytesExpected=" << completedBytes
+                      //<< std::endl;
+        //}
 
         return true;
     }

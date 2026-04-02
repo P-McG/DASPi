@@ -30,27 +30,30 @@
 #include "DASPi-shapefunctiondatapacket.h"
 #include "DASPi-overlapshapefunction.h"
 #include "DASPi-postprocessitem.h"
+#include "DASPi-fps-counter.h"
 
 namespace DASPi{
+    
+    template<size_t n>
     class Aperture {
         
         using sf_t = OverlapShapeFunction<
-                            3,
+                            n,
                             { static_cast<size_t>(0.5*sensorWidthValue_), 
                               static_cast<size_t>(0.5*sensorHeightValue_)
                             },
-                            { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / 3)),
-                              -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / 3))
+                            { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / n)),
+                              -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / n))
                             },
                             0.75
                         >;
         using sfdp_t = ShapeFunctionDataPacket<
-                    3,
+                    n,
                     { static_cast<size_t>(0.5*sensorWidthValue_), 
                       static_cast<size_t>(0.5*sensorHeightValue_)
                     },
-                    { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / 3)), 
-                      -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / 3))
+                    { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / n)), 
+                      -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / n))
                     },
                     0.75
                 >;
@@ -119,6 +122,8 @@ namespace DASPi{
     public:
         UDPSrv frameSrv_;
         UDPClnt controlClnt_;
+        
+        FPSCounter fpsSent_{"aperturecomputemodule sent"};
     
     public:
         Aperture(const std::string clientIp, const size_t port);

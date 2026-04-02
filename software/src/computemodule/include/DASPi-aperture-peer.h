@@ -13,6 +13,7 @@
 #include "DASPi-messages.h"
 #include "DASPi-overlapshapefunction.h"
 #include "DASPi-shapefunctiondatapacket.h"
+#include "DASPi-fps-counter.h"
 
 
 namespace DASPi {
@@ -27,8 +28,8 @@ class AperturePeer {
         n,
         { static_cast<size_t>(0.5*sensorWidthValue_),
           static_cast<size_t>(0.5*sensorHeightValue_) },
-        { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / 3)),
-          -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / 3)) },
+        { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / n)),
+          -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / n)) },
         0.75
     >;
 
@@ -36,8 +37,8 @@ class AperturePeer {
         n,
         { static_cast<size_t>(0.5*sensorWidthValue_),
           static_cast<size_t>(0.5*sensorHeightValue_) },
-        { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / 3)),
-          -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / 3)) },
+        { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / n)),
+          -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / n)) },
         0.75
     >;
 
@@ -59,7 +60,11 @@ class AperturePeer {
     float latestBGainApply_{1.0f};
     uint32_t latestFrameId_{0};
     bool gainValid_{false};
-
+    
+    FPSCounter fpsReceived_{"computemodule received"};
+    FPSCounter fpsPublished_{"computemodule published"};
+    FPSCounter fpsRunFrameLoop_{"computemodule total"};
+    
 public:
     AperturePeer(in_addr_t clntAddr,
                  int framePort,

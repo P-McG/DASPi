@@ -1,3 +1,4 @@
+common_inc = include_directories('../common/include')
 compute_inc = include_directories('include')
 
 compute_src = files(
@@ -17,7 +18,7 @@ compute_deps = [
 executable(
   'computemodule',
   compute_src,
-  include_directories : compute_inc,
+  include_directories : [common_inc, compute_inc],
   dependencies : compute_deps,
   cpp_args : ['-Ddebug'],
 )

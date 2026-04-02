@@ -94,7 +94,7 @@ int main(int argc, char* argv[])
     std::cout << "Client Ip: " << clientIp << std::endl;
     std::cout << "Port: " << port << std::endl;
     
-    Aperture aperture(clientIp, port);
+    Aperture<4> aperture(clientIp, port);
     
     std::cout << ">>> BEFORE ContinuousCapture <<<" << std::endl;
     aperture.ContinuousCapture(0);
