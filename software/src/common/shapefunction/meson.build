@@ -1,5 +1,6 @@
 shapefunction_inc = include_directories('include')
 
+
 #shapefunction_lib = static_library(
 #  'shapefunction',
 #  [

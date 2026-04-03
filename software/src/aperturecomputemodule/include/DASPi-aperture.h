@@ -22,6 +22,7 @@
 #include <libcamera/request.h>
 #include <libcamera/framebuffer.h>
 
+#include "DASPi-shape-config.h"
 #include "event_loop.h"
 #include "DASPi-logger.h"
 #include "DASPi-udp-srv.h"
@@ -37,26 +38,9 @@ namespace DASPi{
     template<size_t n>
     class Aperture {
         
-        using sf_t = OverlapShapeFunction<
-                            n,
-                            { static_cast<size_t>(0.5*sensorWidthValue_), 
-                              static_cast<size_t>(0.5*sensorHeightValue_)
-                            },
-                            { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / n)),
-                              -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / n))
-                            },
-                            0.75
-                        >;
-        using sfdp_t = ShapeFunctionDataPacket<
-                    n,
-                    { static_cast<size_t>(0.5*sensorWidthValue_), 
-                      static_cast<size_t>(0.5*sensorHeightValue_)
-                    },
-                    { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / n)), 
-                      -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / n))
-                    },
-                    0.75
-                >;
+        using sf_t   = DASPi::sf_t<n>;
+        using sfdp_t = DASPi::sfdp_t<n>;
+
         //Check DASPi-config.h if triggered
         static_assert(NUM_REGIONS == sfdp_t::NumberOfRegions(),
           "NUM_REGIONS must match ShapeFunctionDataPacket regions");

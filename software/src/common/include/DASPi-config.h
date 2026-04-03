@@ -1,8 +1,14 @@
 #pragma once
 #include <cstddef>
+#include <numbers>
+#include <cmath>
 
 namespace DASPi {
 
 inline constexpr size_t NUM_SIDES   = 4;          // your n
 inline constexpr size_t NUM_REGIONS = NUM_SIDES + 1;
-}
+inline constexpr double orientationValue_ = 1.5;
+inline constexpr double overlapScaleValue_ = 0.75;
+inline constexpr double faceNormalAngle_ = std::acos(std::sqrt(5.0) / 3.0);
+
+} // namespace DASPi}

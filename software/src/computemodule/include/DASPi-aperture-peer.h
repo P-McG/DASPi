@@ -9,6 +9,7 @@
 #include <cmath>
 #include <numbers>
 
+#include "DASPi-shape-config.h"
 #include "DASPi-udp-clnt.h"
 #include "DASPi-messages.h"
 #include "DASPi-overlapshapefunction.h"
@@ -21,26 +22,8 @@ namespace DASPi {
 template<size_t n>
 class AperturePeer {
     
-    static constexpr size_t sensorWidthValue_  = 1456;
-    static constexpr size_t sensorHeightValue_ = 1088;
-
-    using sf_t = OverlapShapeFunction<
-        n,
-        { static_cast<size_t>(0.5*sensorWidthValue_),
-          static_cast<size_t>(0.5*sensorHeightValue_) },
-        { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / n)),
-          -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / n)) },
-        0.75
-    >;
-
-    using sfdp_t = ShapeFunctionDataPacket<
-        n,
-        { static_cast<size_t>(0.5*sensorWidthValue_),
-          static_cast<size_t>(0.5*sensorHeightValue_) },
-        { -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(2.0 * std::numbers::pi * 0.0 / n)),
-          -1 * static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(2.0 * std::numbers::pi * 0.0 / n)) },
-        0.75
-    >;
+    using sf_t   = DASPi::sf_t<n>;
+    using sfdp_t = DASPi::sfdp_t<n>;
 
     static constexpr size_t n_ = n;
 

@@ -389,9 +389,10 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
     }
 
     const Eigen::Matrix3d R_identity = Eigen::Matrix3d::Identity();
-    const Eigen::Matrix3d R_right =
-        Eigen::AngleAxisd(2.0 * 41.81 * M_PI / 180.0,
-                          Eigen::Vector3d::UnitY()).toRotationMatrix();
+	//const double faceNormalAngle = std::acos(std::sqrt(5.0) / 3.0);
+	
+	const Eigen::Matrix3d R_right =
+	    Eigen::AngleAxisd(faceNormalAngle_, Eigen::Vector3d::UnitY()).toRotationMatrix();
 
     std::vector<CameraConfig> configs;
     configs.reserve(TotalCameraCount(nApertureComputeModules));
