@@ -10,7 +10,7 @@ public:
         : width_(width), height_(height) {}
 
     inline Eigen::Vector3d pixelToRay(int x, int y) const {
-        return spherical::EquirectPixelToWorldRay(x, y, width_, height_);
+        return spherical::EquirectPixelToRay(x, y, width_, height_);
     }
 
     inline Eigen::Vector2d rayToPixel(const Eigen::Vector3d& ray) const {

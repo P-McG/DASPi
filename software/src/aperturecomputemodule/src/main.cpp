@@ -29,6 +29,7 @@
 #include "DASPi-logger.h"
 #include "DASPi-udp-srv.h"
 #include "DASPi-aperture.h"
+#include "DASPi-config.h"
 
 using namespace DASPi;
 
@@ -94,7 +95,7 @@ int main(int argc, char* argv[])
     std::cout << "Client Ip: " << clientIp << std::endl;
     std::cout << "Port: " << port << std::endl;
     
-    Aperture<4> aperture(clientIp, port);
+    Aperture<NUM_SIDES> aperture(clientIp, port);
     
     std::cout << ">>> BEFORE ContinuousCapture <<<" << std::endl;
     aperture.ContinuousCapture(0);

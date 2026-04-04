@@ -5,7 +5,7 @@
 
 namespace DASPi {
 
-inline constexpr size_t NUM_SIDES   = 4;          // your n
+inline constexpr size_t NUM_SIDES   = 3;      // your n
 inline constexpr size_t NUM_REGIONS = NUM_SIDES + 1;
 inline constexpr double orientationValue_ = 1.5;
 inline constexpr double overlapScaleValue_ = 0.75;

@@ -223,14 +223,23 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world) const {
         // Flip camera forward axis to match the pinhole model convention
         //ray_cam.z() = -ray_cam.z();
 
-        if (ray_cam.z() <= 0.0f) {
-            ++rejectedBehind;
-            continue;
-        }
+        //if (ray_cam.z() <= 0.0f) {
+            //++rejectedBehind;
+            //continue;
+        //}
 
         const ProjectionResult proj = cam.model->project(ray_cam.cast<double>());
 
-        if (!proj.valid) {
+        //if (!proj.valid) {
+            //++rejectedProject;
+            //continue;
+        //}
+        
+        const double u = proj.uv.x;
+        const double v = proj.uv.y;
+        
+        if (u < 0.0 || u >= static_cast<double>(cam.image.cols) ||
+            v < 0.0 || v >= static_cast<double>(cam.image.rows)) {
             ++rejectedProject;
             continue;
         }

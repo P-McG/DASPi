@@ -9,6 +9,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <algorithm>
+#include <cmath>
+#include <limits>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -16,6 +19,7 @@
 #include <opencv2/opencv.hpp>
 #include <Eigen/Dense>
 
+#include "DASPi-config.h"
 #include "DASPi-logger.h"
 #include "DASPi-aperture-peer.h"
 #include "DASPi-camera-config.h"
@@ -26,6 +30,8 @@
 #include "DASPi-sphere-stitcher.h"
 #include "DASPi-logicalstreamrole.h"
 #include "DASPi-livecamerastate.h"
+#include "DASPi-rig-data.h"
+#include "DASPi-rig-geometry.h"
 
 using namespace DASPi;
 
@@ -37,15 +43,15 @@ constexpr int kExpectedPixels = kFrameWidth * kFrameHeight;
 constexpr int kControlPortOffset = 1;
 
 // n = overlap images per module
-constexpr size_t kOverlapStreams = 4;
+constexpr size_t kOverlapStreams = NUM_SIDES;
 
 // total images per module = image 0 + overlaps 1..n
 constexpr size_t kPeerStreams = kOverlapStreams + 1;
 constexpr size_t kCamerasPerModule = kPeerStreams;
 
-constexpr auto kRetryDelay = std::chrono::milliseconds(5);
+constexpr auto kRetryDelay  = std::chrono::milliseconds(5);
 constexpr auto kNoFrameDelay = std::chrono::milliseconds(20);
-constexpr auto kStitchDelay = std::chrono::milliseconds(30);
+constexpr auto kStitchDelay  = std::chrono::milliseconds(30);
 
 struct ProgramOptions {
     int nApertureComputeModules{0};
@@ -59,6 +65,25 @@ struct NetworkAddressPlan {
     std::vector<in_addr_t> servers;
 };
 
+
+
+Eigen::Matrix3d RotationFromImageRotation(ImageRotation rot)
+{
+    switch (rot) {
+    case ImageRotation::Rotate90CW:
+        return Eigen::AngleAxisd(-M_PI / 2, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+
+    case ImageRotation::Rotate90CCW:
+        return Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+
+    case ImageRotation::Rotate180:
+        return Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+
+    case ImageRotation::None:
+    default:
+        return Eigen::Matrix3d::Identity();
+    }
+}
 size_t GlobalCameraIndex(size_t moduleIndex, size_t localCameraIndex)
 {
     return moduleIndex * kCamerasPerModule + localCameraIndex;
@@ -280,27 +305,27 @@ std::vector<std::unique_ptr<AperturePeer<N>>> CreateAperturePeers(
     return aperturePeers;
 }
 
-cv::Mat applyImageRotation(const cv::Mat& image, ImageRotation rotation)
-{
-    cv::Mat out;
+//cv::Mat applyImageRotation(const cv::Mat& image, ImageRotation rotation)
+//{
+    //cv::Mat out;
 
-    switch (rotation) {
-    case ImageRotation::None:
-        out = image.clone();
-        break;
-    case ImageRotation::Rotate90CW:
-        cv::rotate(image, out, cv::ROTATE_90_CLOCKWISE);
-        break;
-    case ImageRotation::Rotate90CCW:
-        cv::rotate(image, out, cv::ROTATE_90_COUNTERCLOCKWISE);
-        break;
-    case ImageRotation::Rotate180:
-        cv::rotate(image, out, cv::ROTATE_180);
-        break;
-    }
+    //switch (rotation) {
+    //case ImageRotation::None:
+        //out = image.clone();
+        //break;
+    //case ImageRotation::Rotate90CW:
+        //cv::rotate(image, out, cv::ROTATE_90_CLOCKWISE);
+        //break;
+    //case ImageRotation::Rotate90CCW:
+        //cv::rotate(image, out, cv::ROTATE_90_COUNTERCLOCKWISE);
+        //break;
+    //case ImageRotation::Rotate180:
+        //cv::rotate(image, out, cv::ROTATE_180);
+        //break;
+    //}
 
-    return out;
-}
+    //return out;
+//}
 
 cv::Size rotatedSize(const cv::Size& size, ImageRotation rotation)
 {
@@ -321,12 +346,40 @@ std::shared_ptr<ICameraModel> makeFisheyeModelForRotation(ImageRotation rotation
                                                           const FisheyeParams& params)
 {
     const cv::Size size = rotatedSize(cv::Size(width, height), rotation);
-    const double cx = static_cast<double>(size.width) / 2.0;
-    const double cy = static_cast<double>(size.height) / 2.0;
+
+    //const double cx = static_cast<double>(size.width) / 2.0;
+    //const double cy = static_cast<double>(size.height) / 2.0;
+
+	double fx = params.fx;
+	double fy = params.fy;
+	double cx = params.cx;
+	double cy = params.cy;
+	
+	switch (rotation) {
+	case ImageRotation::Rotate90CW:
+	    std::swap(fx, fy);
+	    std::swap(cx, cy);
+	    cx = size.width - cx;
+	    break;
+	
+	case ImageRotation::Rotate90CCW:
+	    std::swap(fx, fy);
+	    std::swap(cx, cy);
+	    cy = size.height - cy;
+	    break;
+	
+	case ImageRotation::Rotate180:
+	    cx = size.width  - cx;
+	    cy = size.height - cy;
+	    break;
+	
+	default:
+	    break;
+	}
 
     return std::make_shared<FisheyeCameraModel>(
-        params.fx,
-        params.fy,
+        fx,
+        fy,
         cx,
         cy,
         params.maxImageRadiusPx,
@@ -341,11 +394,15 @@ CameraView makeCameraView(const cv::Mat& image,
                           ImageRotation imageRotation)
 {
     CameraView cam;
-    cam.image = applyImageRotation(image, imageRotation);
-    cam.maskNonOverlap = applyImageRotation(maskNonOverlap, imageRotation);
-    cam.maskOverlap = applyImageRotation(maskOverlap, imageRotation);
+
+    // ✅ NO ROTATION
+    cam.image = image;
+    cam.maskNonOverlap = maskNonOverlap;
+    cam.maskOverlap = maskOverlap;
+
     cam.model = model;
     cam.Rcw = Rcw;
+
     return cam;
 }
 
@@ -382,43 +439,240 @@ bool tryGetLatestFrame(LiveFrameBuffer& src, cv::Mat& dst)
     return true;
 }
 
-std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
+
+
+
+
+
+
+std::vector<Eigen::Vector3d> MakeIcosahedronVertices()
 {
-    if (nApertureComputeModules <= 0) {
-        throw std::runtime_error("nApertureComputeModules must be > 0");
-    }
+    const double phi = (1.0 + std::sqrt(5.0)) * 0.5;
 
-    const Eigen::Matrix3d R_identity = Eigen::Matrix3d::Identity();
-	//const double faceNormalAngle = std::acos(std::sqrt(5.0) / 3.0);
+    std::vector<Eigen::Vector3d> v = {
+        {-1,  phi, 0}, { 1,  phi, 0}, {-1, -phi, 0}, { 1, -phi, 0},
+        {0, -1,  phi}, {0,  1,  phi}, {0, -1, -phi}, {0,  1, -phi},
+        { phi, 0, -1}, { phi, 0,  1}, {-phi, 0, -1}, {-phi, 0,  1},
+    };
+
+	// Rotate icosahedron to avoid alignment with pano axes
+	Eigen::Matrix3d R =
+	    Eigen::AngleAxisd(M_PI / 5.0, Eigen::Vector3d::UnitY()).toRotationMatrix() *
+	    Eigen::AngleAxisd(M_PI / 7.0, Eigen::Vector3d::UnitX()).toRotationMatrix();
 	
-	const Eigen::Matrix3d R_right =
-	    Eigen::AngleAxisd(faceNormalAngle_, Eigen::Vector3d::UnitY()).toRotationMatrix();
+	for (auto& p : v) {
+	    p = R * p;
+	}
+	
+    return v;
+}
 
-    std::vector<CameraConfig> configs;
-    configs.reserve(TotalCameraCount(nApertureComputeModules));
+std::vector<std::array<int, 3>> MakeIcosahedronFaceIndices()
+{
+    return {
+        {0,11,5},{0,5,1},{0,1,7},{0,7,10},{0,10,11},
+        {1,5,9},{5,11,4},{11,10,2},{10,7,6},{7,1,8},
+        {3,9,4},{3,4,2},{3,2,6},{3,6,8},{3,8,9},
+        {4,9,5},{2,4,11},{6,2,10},{8,6,7},{9,8,1}
+    };
+}
 
-    for (int module = 0; module < nApertureComputeModules; ++module) {
-        for (size_t localCam = 0; localCam < kCamerasPerModule; ++localCam) {
-            CameraConfig cfg{
-                "module_" + std::to_string(module) + "_cam_" + std::to_string(localCam),
-                "",
-                ImageRotation::None,
-                R_identity,
-            };
+RigData MakeRigData(RigGeometry geometry)
+{
+    switch (geometry) {
+    case RigGeometry::Icosahedron: {
+        RigData rig;
+        rig.vertices = MakeIcosahedronVertices();
 
-            if (module == 0) {
-                cfg.imageRotation = ImageRotation::Rotate90CCW;
-                cfg.Rcw = R_identity;
-            } else if (module == 1) {
-                cfg.imageRotation = ImageRotation::Rotate90CW;
-                cfg.Rcw = R_right;
+        const auto faceIndices = MakeIcosahedronFaceIndices();
+        rig.faces.reserve(faceIndices.size());
+
+        for (const auto& f : faceIndices) {
+            const Eigen::Vector3d& a = rig.vertices[f[0]];
+            const Eigen::Vector3d& b = rig.vertices[f[1]];
+            const Eigen::Vector3d& c = rig.vertices[f[2]];
+
+            const Eigen::Vector3d center = (a + b + c).normalized();
+
+            Eigen::Vector3d normal = (b - a).cross(c - a).normalized();
+            if (normal.dot(center) < 0.0) {
+                normal = -normal;
             }
 
-            configs.push_back(cfg);
+            rig.faces.push_back(RigFace{
+                f,
+                normal,
+                center
+            });
+        }
+
+        return rig;
+    }
+    }
+
+    throw std::runtime_error("Unsupported rig geometry");
+}
+
+bool FacesAreNeighbors(const RigFace& a, const RigFace& b)
+{
+    int shared = 0;
+    for (int va : a.vi) {
+        for (int vb : b.vi) {
+            if (va == vb) {
+                ++shared;
+            }
+        }
+    }
+    return shared == 2;
+}
+
+std::vector<std::vector<int>> BuildFaceNeighborGraph(const std::vector<RigFace>& faces)
+{
+    std::vector<std::vector<int>> graph(faces.size());
+
+    for (size_t i = 0; i < faces.size(); ++i) {
+        for (size_t j = i + 1; j < faces.size(); ++j) {
+            if (FacesAreNeighbors(faces[i], faces[j])) {
+                graph[i].push_back(static_cast<int>(j));
+                graph[j].push_back(static_cast<int>(i));
+            }
         }
     }
 
-    return configs;
+    return graph;
+}
+
+void DebugPrintRigFaces(const std::vector<RigFace>& faces)
+{
+    std::cout << "\n[DebugPrintRigFaces]\n";
+
+    for (size_t i = 0; i < faces.size(); ++i) {
+        const auto& f = faces[i];
+
+        std::cout << "codeFace[" << i << "]"
+                  << " verts=("
+                  << f.vi[0] << ", "
+                  << f.vi[1] << ", "
+                  << f.vi[2] << ")"
+                  << " lookDir=("
+                  << f.lookDir.transpose() << ")"
+                  << " center=("
+                  << f.center.transpose() << ")"
+                  << '\n';
+    }
+
+    std::cout << std::endl;
+}
+
+cv::Mat RenderCameraFootprintDebug(const CameraView& cam,
+                                   int width,
+                                   int height)
+{
+    cv::Mat out(height, width, CV_8UC1, cv::Scalar(0));
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+
+            const Eigen::Vector3d ray_world =
+                spherical::EquirectPixelToRay(x, y, width, height);
+
+            Eigen::Vector3d ray_cam =
+                cam.Rcw.transpose() * ray_world;
+
+            if (ray_cam.z() <= 0.0)
+                continue;
+
+            const ProjectionResult proj =
+                cam.model->project(ray_cam);
+
+            if (!proj.valid)
+                continue;
+
+            out.at<uint8_t>(y, x) = 255;
+        }
+    }
+
+    return out;
+}
+
+cv::Mat RenderCameraIntersectionDebug(const CameraView& cam,
+                                      int width,
+                                      int height)
+{
+    cv::Mat out(height, width, CV_8UC1, cv::Scalar(0));
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const Eigen::Vector3d ray_world =
+                spherical::EquirectPixelToRay(x, y, width, height);
+
+            const Eigen::Vector3d ray_cam =
+                cam.Rcw.transpose() * ray_world;
+
+            if (ray_cam.z() <= 0.0) {
+                continue;
+            }
+
+            const ProjectionResult proj = cam.model->project(ray_cam);
+            if (!proj.valid) {
+                continue;
+            }
+
+            const bool inNonOverlap = IsInsideMask(cam.maskNonOverlap, proj.uv);
+            const bool inOverlap    = IsInsideMask(cam.maskOverlap, proj.uv);
+
+            if (inNonOverlap || inOverlap) {
+                out.at<std::uint8_t>(y, x) = 255;
+            }
+        }
+    }
+
+    return out;
+}
+
+cv::Mat RenderCameraMaskDebug(const CameraView& cam,
+                              int width,
+                              int height)
+{
+    cv::Mat out(height, width, CV_8UC1, cv::Scalar(0));
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const Eigen::Vector3d ray_world =
+                spherical::EquirectPixelToRay(x, y, width, height);
+
+            const Eigen::Vector3d ray_cam =
+                cam.Rcw.transpose() * ray_world;
+
+            const ProjectionResult proj = cam.model->project(ray_cam);
+
+            const bool inNonOverlap = IsInsideMask(cam.maskNonOverlap, proj.uv);
+            const bool inOverlap    = IsInsideMask(cam.maskOverlap, proj.uv);
+
+            if (inNonOverlap || inOverlap) {
+                out.at<std::uint8_t>(y, x) = 255;
+            }
+        }
+    }
+
+    return out;
+}
+
+void DebugPrintRigAdjacency(const std::vector<RigFace>& faces)
+{
+    const auto graph = BuildFaceNeighborGraph(faces);
+
+    std::cout << "\n[DebugPrintRigAdjacency]\n";
+
+    for (size_t i = 0; i < graph.size(); ++i) {
+        std::cout << "codeFace[" << i << "] neighbors = ";
+        for (int n : graph[i]) {
+            std::cout << n << ' ';
+        }
+        std::cout << '\n';
+    }
+
+    std::cout << std::endl;
 }
 
 std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& configs,
@@ -435,6 +689,13 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
                                                  kFrameWidth,
                                                  kFrameHeight,
                                                  fisheyeParams);
+                                                 
+		//static bool printedOnce = false;
+		//if (!printedOnce) {
+		    ////DebugCanonicalProjection(*model);
+		    ////DebugProjectUnprojectConsistency(*model);
+		    //printedOnce = true;
+		//}                                      
 
         cameras.push_back(makeCameraView(emptyImage,
                                          emptyMask,
@@ -447,6 +708,344 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
     return cameras;
 }
 
+//int PickBestNeighborFace(const std::vector<RigFace>& faces,
+                         //int anchorFaceIndex,
+                         //const std::vector<std::vector<int>>& graph)
+//{
+    //if (anchorFaceIndex < 0 ||
+        //static_cast<size_t>(anchorFaceIndex) >= faces.size()) {
+        //throw std::runtime_error("anchorFaceIndex out of range");
+    //}
+
+    //const auto& neighbors = graph[static_cast<size_t>(anchorFaceIndex)];
+    //if (neighbors.empty()) {
+        //throw std::runtime_error("Anchor face has no neighbors");
+    //}
+
+    //const Eigen::Vector3d forward =
+        //faces[static_cast<size_t>(anchorFaceIndex)].lookDir.normalized();
+
+    //Eigen::Vector3d worldUp(0.0, 1.0, 0.0);
+    //if (std::abs(forward.dot(worldUp)) > 0.95) {
+        //worldUp = Eigen::Vector3d(1.0, 0.0, 0.0);
+    //}
+
+    //const Eigen::Vector3d right = worldUp.cross(forward).normalized();
+    //const Eigen::Vector3d up = forward.cross(right).normalized();
+
+    //double bestScore = -std::numeric_limits<double>::infinity();
+    //int bestIndex = -1;
+
+    //for (int candidate : neighbors) {
+        //const Eigen::Vector3d candDir =
+            //faces[static_cast<size_t>(candidate)].lookDir.normalized();
+
+        //// Difference projected into the local tangent frame at the anchor face
+        //const Eigen::Vector3d delta = candDir - forward;
+
+        //const double side = delta.dot(right); // +right, -left
+        //const double elev = delta.dot(up);    // +up, -down
+
+        //// We want: strongly left, minimally up/down
+        //const double score = (-side * 10.0) - std::abs(elev);
+
+        //std::cout << "[neighbor pick] candidate=" << candidate
+                  //<< " side=" << side
+                  //<< " elev=" << elev
+                  //<< " score=" << score
+                  //<< '\n';
+
+        //if (score > bestScore) {
+            //bestScore = score;
+            //bestIndex = candidate;
+        //}
+    //}
+
+    //if (bestIndex < 0) {
+        //throw std::runtime_error("Failed to pick neighboring face");
+    //}
+
+    //return bestIndex;
+//}
+
+//int PickFaceClosestToDirection(const std::vector<RigFace>& faces,
+                               //const Eigen::Vector3d& direction)
+//{
+    //if (faces.empty()) {
+        //throw std::runtime_error("No rig faces available");
+    //}
+
+    //const Eigen::Vector3d dir = direction.normalized();
+
+    //double bestDot = -std::numeric_limits<double>::infinity();
+    //int bestIndex = -1;
+
+    //for (size_t i = 0; i < faces.size(); ++i) {
+        //const double dot = faces[i].lookDir.dot(dir);
+        //if (dot > bestDot) {
+            //bestDot = dot;
+            //bestIndex = static_cast<int>(i);
+        //}
+    //}
+
+    //if (bestIndex < 0) {
+        //throw std::runtime_error("Failed to pick face closest to direction");
+    //}
+
+    //return bestIndex;
+//}
+
+
+std::vector<int> BuildModuleFaceIndices(const std::vector<RigFace>& faces,
+                                        int moduleCount)
+{
+    if (moduleCount <= 0) {
+        throw std::runtime_error("moduleCount must be > 0");
+    }
+    if (moduleCount > 2) {
+        throw std::runtime_error("Current explicit mapping only handles 2 modules");
+    }
+    if (faces.size() != 20) {
+        throw std::runtime_error("Expected 20 rig faces for icosahedron");
+    }
+
+    // Explicit mapping from your unfolded icosahedron numbering
+    // to the codeFace indices from MakeRigFaceSet().
+    //
+    // camera 0 -> diagram face 8 -> codeFace[6]
+    // camera 1 -> diagram face 3 -> codeFace[0]
+    const std::vector<int> codeFaceMapping = {
+        6, // module 0
+        0  // module 1
+    };
+
+    std::vector<int> out;
+    out.reserve(static_cast<size_t>(moduleCount));
+
+    for (int i = 0; i < moduleCount; ++i) {
+        const int faceIndex = codeFaceMapping[static_cast<size_t>(i)];
+        if (faceIndex < 0 || faceIndex >= static_cast<int>(faces.size())) {
+            throw std::runtime_error("Mapped face index out of range");
+        }
+        out.push_back(faceIndex);
+    }
+
+    return out;
+}
+
+Eigen::Matrix3d MakeCameraRcwFromLookDirection(const Eigen::Vector3d& lookDir)
+{
+    const Eigen::Vector3d forward = lookDir.normalized();
+
+    Eigen::Vector3d worldUp(0.0, 1.0, 0.0);
+    if (std::abs(forward.dot(worldUp)) > 0.95) {
+        worldUp = Eigen::Vector3d(1.0, 0.0, 0.0);
+    }
+
+    const Eigen::Vector3d right = worldUp.cross(forward).normalized();
+    const Eigen::Vector3d up = forward.cross(right).normalized();
+
+    Eigen::Matrix3d Rcw;
+    Rcw.col(0) = right;
+    Rcw.col(1) = up;
+    Rcw.col(2) = forward;
+
+    return Rcw;
+}
+
+ImageRotation ImageRotationForModule(int moduleIndex)
+{
+    if (moduleIndex == 0) {
+        return ImageRotation::Rotate90CCW;
+    }
+    if (moduleIndex == 1) {
+        return ImageRotation::Rotate90CW;
+    }
+    return ImageRotation::None;
+}
+
+void PrintRigAssignment(const std::vector<RigFace>& faces,
+                        const std::vector<int>& moduleFaceIndices)
+{
+    std::cout << "[rig] module assignments\n";
+
+    for (size_t module = 0; module < moduleFaceIndices.size(); ++module) {
+        const int faceIndex = moduleFaceIndices[module];
+        const auto& face = faces[static_cast<size_t>(faceIndex)];
+
+        std::cout << "  module[" << module << "] -> face[" << faceIndex
+                  << "] dir=(" << face.lookDir.transpose() << ")\n";
+    }
+
+    for (size_t i = 1; i < moduleFaceIndices.size(); ++i) {
+        const auto& a = faces[static_cast<size_t>(moduleFaceIndices[i - 1])];
+        const auto& b = faces[static_cast<size_t>(moduleFaceIndices[i])];
+
+        const double angleDeg =
+            std::acos(std::clamp(a.lookDir.dot(b.lookDir), -1.0, 1.0)) * 180.0 / M_PI;
+
+        std::cout << "  angle(module[" << (i - 1) << "], module[" << i
+                  << "]) = " << angleDeg << " deg\n";
+    }
+}
+
+//std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
+//{
+    //if (nApertureComputeModules <= 0) {
+        //throw std::runtime_error("nApertureComputeModules must be > 0");
+    //}
+
+    //constexpr RigGeometry kRigGeometry = RigGeometry::Icosahedron;
+
+    //const auto faces = MakeRigFaceSet(kRigGeometry);
+    //const auto moduleFaceIndices = BuildModuleFaceIndices(faces, nApertureComputeModules);
+
+    //PrintRigAssignment(faces, moduleFaceIndices);
+
+    //std::vector<Eigen::Matrix3d> moduleRotations;
+    //moduleRotations.reserve(static_cast<size_t>(nApertureComputeModules));
+
+    //for (int module = 0; module < nApertureComputeModules; ++module) {
+        //const int faceIndex = moduleFaceIndices[static_cast<size_t>(module)];
+        //moduleRotations.push_back(
+            //MakeCameraRcwFromLookDirection(faces[static_cast<size_t>(faceIndex)].lookDir));
+    //}
+
+    //std::vector<CameraConfig> configs;
+    //configs.reserve(TotalCameraCount(nApertureComputeModules));
+
+    //for (int module = 0; module < nApertureComputeModules; ++module) {
+        //for (size_t localCam = 0; localCam < kCamerasPerModule; ++localCam) {
+            //CameraConfig cfg{
+                //"module_" + std::to_string(module) + "_cam_" + std::to_string(localCam),
+                //"",
+                //ImageRotationForModule(module),
+                //moduleRotations[static_cast<size_t>(module)],
+            //};
+
+            //configs.push_back(cfg);
+        //}
+    //}
+
+    //return configs;
+//}
+
+
+Eigen::Matrix3d CameraModelToRigAlignment()
+{
+    // Start with Identity.
+    // If the image is upside down and mirrored, the first thing to try is
+    // a 180-degree rotation about camera Z.
+     // return Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+
+    // Other candidates to try if needed:
+   return Eigen::Matrix3d::Identity();
+	// return Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+	// return Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitY()).toRotationMatrix();
+}
+
+std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
+{
+    if (nApertureComputeModules <= 0) {
+        throw std::runtime_error("nApertureComputeModules must be > 0");
+    }
+
+    constexpr RigGeometry kRigGeometry = RigGeometry::Icosahedron;
+
+    //const auto faces = MakeRigFaceSet(kRigGeometry);
+    const auto rig = MakeRigData(kRigGeometry);
+	const auto& faces = rig.faces;
+    
+    static bool printedFaces = false;
+	if (!printedFaces) {
+	    DebugPrintRigFaces(faces);
+	    DebugPrintRigAdjacency(faces);
+	    printedFaces = true;
+	}
+    
+    const auto moduleFaceIndices = BuildModuleFaceIndices(faces, nApertureComputeModules);
+
+    PrintRigAssignment(faces, moduleFaceIndices);
+
+    const Eigen::Matrix3d Ralign = CameraModelToRigAlignment();
+
+    std::vector<CameraConfig> configs;
+    configs.reserve(TotalCameraCount(nApertureComputeModules));
+
+    for (int module = 0; module < nApertureComputeModules; ++module) {
+        const int faceIndex = moduleFaceIndices[static_cast<size_t>(module)];
+        const Eigen::Vector3d& lookDir =
+            faces[static_cast<size_t>(faceIndex)].lookDir;
+
+        const Eigen::Matrix3d Rlook =
+            MakeCameraRcwFromLookDirection(lookDir);
+
+        const ImageRotation imageRotation = ImageRotationForModule(module);
+        const Eigen::Matrix3d Rimg =
+            RotationFromImageRotation(imageRotation);
+
+        // camera-to-world
+        const Eigen::Matrix3d Rfinal = Rlook * Ralign * Rimg;
+        
+        const Eigen::Vector3d camForwardWorld = Rfinal.col(2);
+		
+		std::cout << "[camera config] module=" << module
+		          << " faceIndex=" << faceIndex
+		          << " lookDir=(" << lookDir.transpose() << ")"
+		          << " camForwardWorld=(" << camForwardWorld.transpose() << ")\n";
+
+        for (size_t localCam = 0; localCam < kCamerasPerModule; ++localCam) {
+            configs.push_back(CameraConfig{
+                "module_" + std::to_string(module) + "_cam_" + std::to_string(localCam),
+                "",
+                imageRotation,
+                Rfinal,
+            });
+        }
+    }
+
+    return configs;
+}
+
+
+
+//void updateCameraImages(std::vector<CameraView>& cameras,
+                        //const std::vector<CameraConfig>& configs,
+                        //std::vector<LiveCameraState>& liveCameras)
+//{
+    //if (cameras.size() != configs.size() || cameras.size() != liveCameras.size()) {
+        //throw std::runtime_error("Camera/config/state size mismatch");
+    //}
+
+    //for (size_t i = 0; i < cameras.size(); ++i) {
+        //cv::Mat latest;
+        //if (!tryGetLatestFrame(liveCameras[i].frame, latest)) {
+            //continue;
+        //}
+
+        //if (!liveCameras[i].hasMask) {
+            //throw std::runtime_error("Missing valid mask for logical camera " +
+                                     //std::to_string(i));
+        //}
+
+        //const ImageRotation rotation = configs[i].imageRotation;
+        //cameras[i].image = applyImageRotation(latest, rotation);
+
+        //const cv::Mat rotatedValidMask =
+            //applyImageRotation(liveCameras[i].validMask, rotation);
+
+        //if (liveCameras[i].role == LogicalStreamRole::NonOverlap) {
+            //cameras[i].maskNonOverlap = rotatedValidMask;
+            //cameras[i].maskOverlap =
+                //cv::Mat::zeros(rotatedValidMask.rows, rotatedValidMask.cols, CV_8UC1);
+        //} else {
+            //cameras[i].maskNonOverlap =
+                //cv::Mat::zeros(rotatedValidMask.rows, rotatedValidMask.cols, CV_8UC1);
+            //cameras[i].maskOverlap = rotatedValidMask;
+        //}
+    //}
+//}
+
 void updateCameraImages(std::vector<CameraView>& cameras,
                         const std::vector<CameraConfig>& configs,
                         std::vector<LiveCameraState>& liveCameras)
@@ -455,7 +1054,13 @@ void updateCameraImages(std::vector<CameraView>& cameras,
         throw std::runtime_error("Camera/config/state size mismatch");
     }
 
+    constexpr bool kUseFullDebugMasks = true;
+    constexpr bool kSaveDebugMasks = false;
+
+    static int debugSaveCount = 0;
+
     for (size_t i = 0; i < cameras.size(); ++i) {
+
         cv::Mat latest;
         if (!tryGetLatestFrame(liveCameras[i].frame, latest)) {
             continue;
@@ -466,23 +1071,64 @@ void updateCameraImages(std::vector<CameraView>& cameras,
                                      std::to_string(i));
         }
 
-        const ImageRotation rotation = configs[i].imageRotation;
-        cameras[i].image = applyImageRotation(latest, rotation);
+        // 🔥 NO IMAGE ROTATION — pixels stay in native sensor orientation
+        cameras[i].image = latest;
 
-        const cv::Mat rotatedValidMask =
-            applyImageRotation(liveCameras[i].validMask, rotation);
+        const cv::Mat& validMask = liveCameras[i].validMask;
 
-        if (liveCameras[i].role == LogicalStreamRole::NonOverlap) {
-            cameras[i].maskNonOverlap = rotatedValidMask;
-            cameras[i].maskOverlap =
-                cv::Mat::zeros(rotatedValidMask.rows, rotatedValidMask.cols, CV_8UC1);
-        } else {
-            cameras[i].maskNonOverlap =
-                cv::Mat::zeros(rotatedValidMask.rows, rotatedValidMask.cols, CV_8UC1);
-            cameras[i].maskOverlap = rotatedValidMask;
+        if (validMask.empty()) {
+            throw std::runtime_error("Valid mask is empty for logical camera " +
+                                     std::to_string(i));
         }
+
+        // Optional debug override
+        cv::Mat effectiveMask;
+        if (kUseFullDebugMasks) {
+            effectiveMask = cv::Mat(validMask.rows,
+                                    validMask.cols,
+                                    CV_8UC1,
+                                    cv::Scalar(255));
+        } else {
+            effectiveMask = validMask;
+        }
+
+        const cv::Mat zeroMask =
+            cv::Mat::zeros(effectiveMask.rows, effectiveMask.cols, CV_8UC1);
+
+        // Assign masks based on stream role
+        if (liveCameras[i].role == LogicalStreamRole::NonOverlap) {
+            cameras[i].maskNonOverlap = effectiveMask;
+            cameras[i].maskOverlap = zeroMask;
+        } else {
+            cameras[i].maskNonOverlap = zeroMask;
+            cameras[i].maskOverlap = effectiveMask;
+        }
+
+        // Optional debug dump
+        if (kSaveDebugMasks && debugSaveCount < 5) {
+            cv::imwrite("debug_mask_effective_" + std::to_string(i) + ".png",
+                        effectiveMask);
+
+            cv::imwrite("debug_mask_nonoverlap_" + std::to_string(i) + ".png",
+                        cameras[i].maskNonOverlap);
+
+            cv::imwrite("debug_mask_overlap_" + std::to_string(i) + ".png",
+                        cameras[i].maskOverlap);
+        }
+        
+        std::cout << "[mask] camera " << i
+          << " role=" << static_cast<int>(liveCameras[i].role)
+          << " nonzero=" << cv::countNonZero(effectiveMask)
+          << " rows=" << effectiveMask.rows
+          << " cols=" << effectiveMask.cols
+          << '\n';
+    }
+
+    if (kSaveDebugMasks && debugSaveCount < 5) {
+        ++debugSaveCount;
     }
 }
+
 
 bool haveAnyFrames(std::vector<LiveCameraState>& liveCameras)
 {
@@ -627,6 +1273,19 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         }
 
         updateCameraImages(cameras, configs, liveCameras);
+        
+		static bool savedDebug = false;
+		if (!savedDebug) {
+		    cv::Mat footprint = RenderCameraFootprintDebug(cameras[0], 1456, 1088);
+		    cv::Mat maskOnly = RenderCameraMaskDebug(cameras[0], 1456, 1088);
+		    cv::Mat intersect = RenderCameraIntersectionDebug(cameras[0], 1456, 1088);
+		
+		    cv::imwrite("/tmp/debug_camera0_footprint.png", footprint);
+		    cv::imwrite("/tmp/debug_camera0_mask.png", maskOnly);
+		    cv::imwrite("/tmp/debug_camera0_intersection.png", intersect);
+		
+		    savedDebug = true;
+		}
 
         SphereStitcher stitcher(cameras, stitchConfig);
 
@@ -649,15 +1308,14 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         cv::Mat display = pano.clone();
         DrawPanoramaOverlay(display, frameNumber++, validMask);
 
-		std::cout << "[GUI] rows=" << display.rows
-		          << " cols=" << display.cols
-		          << " empty=" << display.empty()
-		          << std::endl;
-		          
+        std::cout << "[GUI] rows=" << display.rows
+                  << " cols=" << display.cols
+                  << " empty=" << display.empty()
+                  << std::endl;
+
         cv::imshow("Stitched Panorama", display);
 
         const int key = cv::waitKey(1);
-        
         if (key == 27 || key == 'q' || key == 'Q') {
             break;
         }
@@ -712,34 +1370,82 @@ int main(int argc, char* argv[])
         constexpr size_t n = kOverlapStreams;
         auto aperturePeers = CreateAperturePeers<n>(options, addressPlan);
 
-        const FisheyeParams fisheyeParams{600.0, 600.0, 580.0};
+		const FisheyeParams fisheyeParams{
+		    .fx = 600.0,
+		    .fy = 600.0,
+		    .cx = 728.0,
+		    .cy = 544.0,
+		    .maxImageRadiusPx = 580.0
+		};
+        //const FisheyeParams fisheyeParams{600.0, 600.0, 580.0};
+		//const FisheyeParams fisheyeParams{550.0, 650.0, 580.0};
+		//const FisheyeParams fisheyeParams{650.0, 550.0, 580.0};
+		//const FisheyeParams fisheyeParams{575.0, 625.0, 580.0};
+		//const FisheyeParams fisheyeParams{625.0, 575.0, 580.0};
+		//const FisheyeParams fisheyeParams{634.6, 628.7, 580.0};
 
         const size_t totalCameras =
-	    TotalCameraCount(options.nApertureComputeModules);
-	
-		const std::vector<CameraConfig> configs =
-		    makeCameraConfigs(options.nApertureComputeModules);
+            TotalCameraCount(options.nApertureComputeModules);
+
+        const std::vector<CameraConfig> configs =
+            makeCameraConfigs(options.nApertureComputeModules);
+            
+		// 🔥 DEBUG: render pure spherical face (no camera involved)
+		{
+		    const auto rig = MakeRigData(RigGeometry::Icosahedron);
 		
-		auto cameras = CreateCameraViews(configs, fisheyeParams);
-		std::vector<LiveCameraState> liveCameras(totalCameras);
+		    cv::Mat faceMask6 = RenderFaceMaskDebug(rig, 6, 1456, 1088);
+		    cv::Mat faceMask0 = RenderFaceMaskDebug(rig, 0, 1456, 1088);
 		
-		if (configs.size() != totalCameras || cameras.size() != totalCameras) {
-		    throw std::runtime_error("Logical camera count mismatch during initialization");
+		    const bool ok6 = cv::imwrite("/tmp/debug_face6_mask.png", faceMask6);
+		    const bool ok0 = cv::imwrite("/tmp/debug_face0_mask.png", faceMask0);
+		
+		    std::cout << "[DEBUG] faceMask6 empty=" << faceMask6.empty()
+		              << " rows=" << faceMask6.rows
+		              << " cols=" << faceMask6.cols << '\n';
+		
+		    std::cout << "[DEBUG] faceMask0 empty=" << faceMask0.empty()
+		              << " rows=" << faceMask0.rows
+		              << " cols=" << faceMask0.cols << '\n';
+		
+		    std::cout << "[DEBUG] imwrite face6=" << ok6
+		              << " face0=" << ok0 << '\n';
 		}
+
+        auto cameras = CreateCameraViews(configs, fisheyeParams);
+        
+        // 🔥 DEBUG: camera footprint on sphere
+		{
+		    if (!cameras.empty()) {
+		        cv::Mat footprint =
+		            RenderCameraFootprintDebug(cameras[0], 1456, 1088);
 		
-		InitializeCameraMasks(aperturePeers, liveCameras);
+		        cv::imwrite("/tmp/debug_camera0_footprint.png", footprint);
 		
-		std::cout << "[main] configs.size()=" << configs.size()
-		          << " cameras.size()=" << cameras.size()
-		          << " liveCameras.size()=" << liveCameras.size()
-		          << '\n';
-		
-		std::vector<std::jthread> frameThreads;
-		std::vector<std::jthread> controlThreads;
-		
-		StartPeerThreads<n>(aperturePeers, liveCameras, frameThreads, controlThreads);
-		RunStitchLoop(cameras, configs, liveCameras);
-    } catch (const std::exception& e) {
+		        std::cout << "[DEBUG] Saved camera footprint\n";
+		    }
+		}
+        
+        std::vector<LiveCameraState> liveCameras(totalCameras);
+
+        if (configs.size() != totalCameras || cameras.size() != totalCameras) {
+            throw std::runtime_error("Logical camera count mismatch during initialization");
+        }
+
+        InitializeCameraMasks(aperturePeers, liveCameras);
+
+        std::cout << "[main] configs.size()=" << configs.size()
+                  << " cameras.size()=" << cameras.size()
+                  << " liveCameras.size()=" << liveCameras.size()
+                  << '\n';
+
+        std::vector<std::jthread> frameThreads;
+        std::vector<std::jthread> controlThreads;
+
+        StartPeerThreads<n>(aperturePeers, liveCameras, frameThreads, controlThreads);
+        RunStitchLoop(cameras, configs, liveCameras);
+    }
+    catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';
         return EXIT_FAILURE;
     }
