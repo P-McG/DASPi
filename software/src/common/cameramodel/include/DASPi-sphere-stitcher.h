@@ -42,6 +42,7 @@ public:
 	cv::Mat stitch() const;
 	cv::Mat stitch(cv::Mat* validMask) const;
 	cv::Mat stitchFisheye(cv::Mat* validMask = nullptr) const;
+	static bool IsInsideMask(const cv::Mat& mask, const cv::Point2d& uv);
 
 private:
     void precomputeWorldRays();
@@ -51,7 +52,6 @@ private:
     cv::Vec3b resolvePixel(const std::vector<Contribution>& contributions) const;
 	cv::Vec3b renderPixel(int x, int y, std::uint8_t* valid) const;
 	cv::Mat makePolygonMask(int width, int height, const std::vector<std::vector<cv::Point>>& polygons);
-	static bool IsInsideMask(const cv::Mat& mask, const cv::Point2d& uv);
 
 private:
     std::vector<CameraView> cameras_;

@@ -32,20 +32,7 @@ void LogCenterDebugIfNeeded(int x,
     }
 }
 
-bool IsInsideMask(const cv::Mat& mask, const cv::Point2d& uv) {
-    if (mask.empty()) {
-        return false;
-    }
 
-    const int x = static_cast<int>(uv.x);
-    const int y = static_cast<int>(uv.y);
-
-    if (x < 0 || y < 0 || x >= mask.cols || y >= mask.rows) {
-        return false;
-    }
-
-    return mask.at<std::uint8_t>(y, x) != 0;
-}
 
 cv::Vec3d SampleBilinear(const cv::Mat& img, const cv::Point2d& uv) {
     const int x0 = static_cast<int>(std::floor(uv.x));
@@ -121,6 +108,22 @@ SphereStitcher::SphereStitcher(std::vector<CameraView> cameras,
       projection_(config.outputWidth, config.outputHeight)
 {
     precomputeWorldRays();
+}
+
+bool SphereStitcher::IsInsideMask(const cv::Mat& mask, const cv::Point2d& uv)
+{
+    if (mask.empty()) {
+        return false;
+    }
+
+    const int x = static_cast<int>(std::floor(uv.x));
+    const int y = static_cast<int>(std::floor(uv.y));
+
+    if (x < 0 || x >= mask.cols || y < 0 || y >= mask.rows) {
+        return false;
+    }
+
+    return mask.at<std::uint8_t>(y, x) != 0;
 }
 
 std::size_t SphereStitcher::rayIndex(int x, int y) const {

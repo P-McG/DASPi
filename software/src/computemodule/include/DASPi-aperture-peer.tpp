@@ -201,11 +201,11 @@ namespace DASPi{
 					  << this->buffer_[i].size() << std::endl;
 		}
 	
-		std::cout << "[RunFrameLoop] about to BufferToFile" << std::endl;
-		if (!this->BufferToFile()) {
-			std::cerr << "[RunFrameLoop] BufferToFile failed" << std::endl;
-			return false;
-		}
+		//std::cout << "[RunFrameLoop] about to BufferToFile" << std::endl;
+		//if (!this->BufferToFile()) {
+			//std::cerr << "[RunFrameLoop] BufferToFile failed" << std::endl;
+			//return false;
+		//}
 		
 		this->fpsRunFrameLoop_.Tick();
 	
