@@ -3,7 +3,6 @@
 
 #include <array>
 
-namespace {
 /*
  * =========================
  * Generic rig geometry layer
@@ -18,5 +17,4 @@ struct RigFace
     std::array<int, 3> vi;
     Eigen::Vector3d lookDir;
     Eigen::Vector3d center;
-};
 };

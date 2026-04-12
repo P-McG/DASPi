@@ -367,8 +367,8 @@ CameraView makeCameraView(const cv::Mat& image,
 
     // ✅ NO ROTATION
     cam.image = image;
-    cam.maskNonOverlap = maskNonOverlap;
-    cam.maskOverlap = maskOverlap;
+    //cam.maskNonOverlap = maskNonOverlap;
+    //cam.maskOverlap = maskOverlap;
 
     cam.model = model;
     cam.Rcw = Rcw;
@@ -715,7 +715,7 @@ cv::Mat RenderCameraFootprintDebug(const CameraView& cam,
                                       //int width,
                                       //int height)
 //{
-    //return RenderCameraMaskDebug(cam, width, height);
+    ////return RenderCameraMaskDebug(cam, width, height);
 //}
 
 
@@ -1344,12 +1344,14 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
         }
 
         for (size_t localCam = 0; localCam < kCamerasPerModule; ++localCam) {
-            configs.push_back(CameraConfig{
-                "module_" + std::to_string(module) + "_cam_" + std::to_string(localCam),
-                "",
-                imageRotation,
-                Rfinal,
-            });
+			configs.push_back(CameraConfig{
+			    "module_" + std::to_string(module) + "_cam_" + std::to_string(localCam),
+			    "",
+			    imageRotation,
+			    Rfinal,
+			    module,
+			    faceIndex
+			});
         }
     }
 
@@ -1533,33 +1535,55 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
 
 void updateCameraImages(std::vector<CameraView>& cameras,
                         const std::vector<CameraConfig>& configs,
-                        std::vector<LiveCameraState>& liveCameras,
-                        const std::vector<cv::Mat>& moduleFaceMasks)
+                        std::vector<LiveCameraState>& liveCameras)
 {
     if (cameras.size() != configs.size() || cameras.size() != liveCameras.size()) {
         throw std::runtime_error("Camera/config/state size mismatch");
     }
 
-    if (moduleFaceMasks.empty()) {
-        throw std::runtime_error("moduleFaceMasks is empty");
-    }
-
-    constexpr bool kUseFullDebugMasks = false;
-    constexpr bool kSaveDebugMasks = false;
-
-    static int debugSaveCount = 0;
-
-    auto makeFullMask = [](int rows, int cols) {
-        return cv::Mat(rows, cols, CV_8UC1, cv::Scalar(255));
-    };
-
-    auto saveDebugMaskSet = [&](size_t i,
-                                const cv::Mat& effectiveMask,
-                                const cv::Mat& nonOverlapMask,
-                                const cv::Mat& overlapMask) {
-        if (!(kSaveDebugMasks && debugSaveCount < 5)) {
-            return;
+    for (size_t i = 0; i < cameras.size(); ++i) {
+        cv::Mat latest;
+        if (!tryGetLatestFrame(liveCameras[i].frame, latest)) {
+            continue;
         }
+
+        cameras[i].image = latest;
+
+        // Optional: keep only true sensor/image validity here.
+        cameras[i].sensorValidMask = liveCameras[i].validMask.clone();
+    }
+}
+
+
+//void updateCameraImages(std::vector<CameraView>& cameras,
+                        //const std::vector<CameraConfig>& configs,
+                        //std::vector<LiveCameraState>& liveCameras,
+                        //const std::vector<cv::Mat>& moduleFaceMasks)
+//{
+    //if (cameras.size() != configs.size() || cameras.size() != liveCameras.size()) {
+        //throw std::runtime_error("Camera/config/state size mismatch");
+    //}
+
+    //if (moduleFaceMasks.empty()) {
+        //throw std::runtime_error("moduleFaceMasks is empty");
+    //}
+
+    //constexpr bool kUseFullDebugMasks = false;
+    //constexpr bool kSaveDebugMasks = false;
+
+    //static int debugSaveCount = 0;
+
+    //auto makeFullMask = [](int rows, int cols) {
+        //return cv::Mat(rows, cols, CV_8UC1, cv::Scalar(255));
+    //};
+
+    //auto saveDebugMaskSet = [&](size_t i,
+                                //const cv::Mat& effectiveMask,
+                                //const cv::Mat& nonOverlapMask,
+                                //const cv::Mat& overlapMask) {
+        //if (!(kSaveDebugMasks && debugSaveCount < 5)) {
+            //return;
+        //}
 
         //cv::imwrite("debug_mask_effective_" + std::to_string(i) + ".png",
                     //effectiveMask);
@@ -1569,98 +1593,98 @@ void updateCameraImages(std::vector<CameraView>& cameras,
 
         //cv::imwrite("debug_mask_overlap_" + std::to_string(i) + ".png",
                     //overlapMask);
-    };
+    //};
 
-    for (size_t i = 0; i < cameras.size(); ++i) {
-        cv::Mat latest;
-        if (!tryGetLatestFrame(liveCameras[i].frame, latest)) {
-            continue;
-        }
+    //for (size_t i = 0; i < cameras.size(); ++i) {
+        //cv::Mat latest;
+        //if (!tryGetLatestFrame(liveCameras[i].frame, latest)) {
+            //continue;
+        //}
 
-        if (!liveCameras[i].hasMask) {
-            throw std::runtime_error("Missing valid mask for logical camera " +
-                                     std::to_string(i));
-        }
+        //if (!liveCameras[i].hasMask) {
+            //throw std::runtime_error("Missing valid mask for logical camera " +
+                                     //std::to_string(i));
+        //}
 
-        const cv::Mat& validMask = liveCameras[i].validMask;
-        if (validMask.empty()) {
-            throw std::runtime_error("Valid mask is empty for logical camera " +
-                                     std::to_string(i));
-        }
+        //const cv::Mat& validMask = liveCameras[i].validMask;
+        //if (validMask.empty()) {
+            //throw std::runtime_error("Valid mask is empty for logical camera " +
+                                     //std::to_string(i));
+        //}
 
-        const size_t module = i / kCamerasPerModule;
-        if (module >= moduleFaceMasks.size()) {
-            throw std::runtime_error("moduleFaceMasks index out of range for logical camera " +
-                                     std::to_string(i));
-        }
+        //const size_t module = i / kCamerasPerModule;
+        //if (module >= moduleFaceMasks.size()) {
+            //throw std::runtime_error("moduleFaceMasks index out of range for logical camera " +
+                                     //std::to_string(i));
+        //}
 
-        const cv::Mat& sphericalFaceMask = moduleFaceMasks[module];
-        if (sphericalFaceMask.empty()) {
-            throw std::runtime_error("Spherical face mask is empty for module " +
-                                     std::to_string(module));
-        }
+        //const cv::Mat& sphericalFaceMask = moduleFaceMasks[module];
+        //if (sphericalFaceMask.empty()) {
+            //throw std::runtime_error("Spherical face mask is empty for module " +
+                                     //std::to_string(module));
+        //}
 
-        if (validMask.size() != sphericalFaceMask.size()) {
-            throw std::runtime_error("Mask size mismatch for logical camera " +
-                                     std::to_string(i) +
-                                     ": validMask=" +
-                                     std::to_string(validMask.cols) + "x" +
-                                     std::to_string(validMask.rows) +
-                                     " sphericalFaceMask=" +
-                                     std::to_string(sphericalFaceMask.cols) + "x" +
-                                     std::to_string(sphericalFaceMask.rows));
-        }
+        //if (validMask.size() != sphericalFaceMask.size()) {
+            //throw std::runtime_error("Mask size mismatch for logical camera " +
+                                     //std::to_string(i) +
+                                     //": validMask=" +
+                                     //std::to_string(validMask.cols) + "x" +
+                                     //std::to_string(validMask.rows) +
+                                     //" sphericalFaceMask=" +
+                                     //std::to_string(sphericalFaceMask.cols) + "x" +
+                                     //std::to_string(sphericalFaceMask.rows));
+        //}
 
-        if (latest.cols != validMask.cols || latest.rows != validMask.rows) {
-            throw std::runtime_error("Image/mask size mismatch for logical camera " +
-                                     std::to_string(i) +
-                                     ": image=" +
-                                     std::to_string(latest.cols) + "x" +
-                                     std::to_string(latest.rows) +
-                                     " mask=" +
-                                     std::to_string(validMask.cols) + "x" +
-                                     std::to_string(validMask.rows));
-        }
+        //if (latest.cols != validMask.cols || latest.rows != validMask.rows) {
+            //throw std::runtime_error("Image/mask size mismatch for logical camera " +
+                                     //std::to_string(i) +
+                                     //": image=" +
+                                     //std::to_string(latest.cols) + "x" +
+                                     //std::to_string(latest.rows) +
+                                     //" mask=" +
+                                     //std::to_string(validMask.cols) + "x" +
+                                     //std::to_string(validMask.rows));
+        //}
 
-        // Keep source pixels in native sensor orientation.
-        cameras[i].image = latest;
+        //// Keep source pixels in native sensor orientation.
+        //cameras[i].image = latest;
 
-        cv::Mat effectiveMask;
-        if (kUseFullDebugMasks) {
-            effectiveMask = makeFullMask(validMask.rows, validMask.cols);
-        } else {
-            cv::bitwise_and(validMask, sphericalFaceMask, effectiveMask);
-        }
+        //cv::Mat effectiveMask;
+        //if (kUseFullDebugMasks) {
+            //effectiveMask = makeFullMask(validMask.rows, validMask.cols);
+        //} else {
+            //cv::bitwise_and(validMask, sphericalFaceMask, effectiveMask);
+        //}
 
-        const cv::Mat zeroMask =
-            cv::Mat::zeros(effectiveMask.rows, effectiveMask.cols, CV_8UC1);
+        //const cv::Mat zeroMask =
+            //cv::Mat::zeros(effectiveMask.rows, effectiveMask.cols, CV_8UC1);
 
-        if (liveCameras[i].role == LogicalStreamRole::NonOverlap) {
-            cameras[i].maskNonOverlap = effectiveMask;
-            cameras[i].maskOverlap = zeroMask;
-        } else {
-            cameras[i].maskNonOverlap = zeroMask;
-            cameras[i].maskOverlap = effectiveMask;
-        }
+        //if (liveCameras[i].role == LogicalStreamRole::NonOverlap) {
+            //cameras[i].maskNonOverlap = effectiveMask;
+            //cameras[i].maskOverlap = zeroMask;
+        //} else {
+            //cameras[i].maskNonOverlap = zeroMask;
+            //cameras[i].maskOverlap = effectiveMask;
+        //}
 
-        saveDebugMaskSet(i,
-                         effectiveMask,
-                         cameras[i].maskNonOverlap,
-                         cameras[i].maskOverlap);
+        //saveDebugMaskSet(i,
+                         //effectiveMask,
+                         //cameras[i].maskNonOverlap,
+                         //cameras[i].maskOverlap);
 
-        std::cout << "[mask] camera " << i
-                  << " module=" << module
-                  << " role=" << static_cast<int>(liveCameras[i].role)
-                  << " nonzero=" << cv::countNonZero(effectiveMask)
-                  << " rows=" << effectiveMask.rows
-                  << " cols=" << effectiveMask.cols
-                  << '\n';
-    }
+        //std::cout << "[mask] camera " << i
+                  //<< " module=" << module
+                  //<< " role=" << static_cast<int>(liveCameras[i].role)
+                  //<< " nonzero=" << cv::countNonZero(effectiveMask)
+                  //<< " rows=" << effectiveMask.rows
+                  //<< " cols=" << effectiveMask.cols
+                  //<< '\n';
+    //}
 
-    if (kSaveDebugMasks && debugSaveCount < 5) {
-        ++debugSaveCount;
-    }
-}
+    //if (kSaveDebugMasks && debugSaveCount < 5) {
+        //++debugSaveCount;
+    //}
+//}
 
 
 bool haveAnyFrames(std::vector<LiveCameraState>& liveCameras)
@@ -1787,7 +1811,8 @@ void DrawPanoramaOverlay(cv::Mat& img,
 void RunStitchLoop(std::vector<CameraView>& cameras,
                    const std::vector<CameraConfig>& configs,
                    std::vector<LiveCameraState>& liveCameras,
-                   const std::vector<cv::Mat>& moduleFaceMasks)
+                   const std::vector<cv::Mat>& moduleFaceMasks,
+                   const RigData& rig)
 {
     if (cameras.size() != configs.size() || cameras.size() != liveCameras.size()) {
         throw std::runtime_error("RunStitchLoop: camera/config/state size mismatch");
@@ -1803,39 +1828,39 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
     stitchConfig.blendPower = 4.0;
 
     uint64_t frameNumber = 0;
-    //constexpr bool kSaveDebugImages = false;
+    constexpr bool kSaveDebugImages = true;
 
-    //cv::namedWindow("Stitched Panorama", cv::WINDOW_NORMAL);
-    //cv::resizeWindow("Stitched Panorama", 1200, 800);
+    cv::namedWindow("Stitched Panorama", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Stitched Panorama", 1200, 800);
 
-    //auto saveOneShotDebugImages = [&](const cv::Mat& sourceImage) {
-        //static bool savedSource = false;
-        ////if (!savedSource) {
-            ////cv::imwrite("/tmp/debug_camera0_source.png", sourceImage);
-            ////savedSource = true;
-        ////}
+    auto saveOneShotDebugImages = [&](const cv::Mat& sourceImage) {
+        static bool savedSource = false;
+        if (!savedSource) {
+            cv::imwrite("/tmp/debug_camera0_source.png", sourceImage);
+            savedSource = true;
+        }
 
-        ////static bool savedDebug = false;
-        ////if (!savedDebug) {
-            ////const cv::Mat footprint = RenderCameraFootprintDebug(cameras[0], 1456, 1088);
+        //static bool savedDebug = false;
+        //if (!savedDebug) {
+            //const cv::Mat footprint = RenderCameraFootprintDebug(cameras[0], 1456, 1088);
             ////const cv::Mat maskOnly = RenderCameraMaskDebug(cameras[0], 1456, 1088);
             ////const cv::Mat intersect = RenderCameraIntersectionDebug(cameras[0], 1456, 1088);
 
-            //////const bool ok1 = cv::imwrite("/tmp/debug_camera0_footprint.png", footprint);
-            //////const bool ok2 = cv::imwrite("/tmp/debug_camera0_mask.png", maskOnly);
-            //////const bool ok3 = cv::imwrite("/tmp/debug_camera0_intersection.png", intersect);
+            //const bool ok1 = cv::imwrite("/tmp/debug_camera0_footprint.png", footprint);
+            ////const bool ok2 = cv::imwrite("/tmp/debug_camera0_mask.png", maskOnly);
+            ////const bool ok3 = cv::imwrite("/tmp/debug_camera0_intersection.png", intersect);
 
             ////std::cout << "[DEBUG] saved footprint=" << ok1
                       ////<< " mask=" << ok2
                       ////<< " intersection=" << ok3 << '\n';
 
-            ////std::cout << "[DEBUG] nonzero footprint=" << cv::countNonZero(footprint)
-                      ////<< " mask=" << cv::countNonZero(maskOnly)
-                      ////<< " intersection=" << cv::countNonZero(intersect) << '\n';
+            //std::cout << "[DEBUG] nonzero footprint=" << cv::countNonZero(footprint)
+                      //<< " mask=" << cv::countNonZero(maskOnly)
+                      //<< " intersection=" << cv::countNonZero(intersect) << '\n';
 
-            ////savedDebug = true;
-        ////}
-    //};
+            //savedDebug = true;
+        //}
+    };
 
     for (;;) {
         if (!haveAnyFrames(liveCameras)) {
@@ -1843,11 +1868,11 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
             continue;
         }
 
-        updateCameraImages(cameras, configs, liveCameras, moduleFaceMasks);
+        updateCameraImages(cameras, configs, liveCameras);
 
-        //saveOneShotDebugImages(cameras[0].image);
+        saveOneShotDebugImages(cameras[0].image);
 
-        SphereStitcher stitcher(cameras, stitchConfig);
+        SphereStitcher stitcher(cameras, stitchConfig, rig);
 
         cv::Mat validMask;
         cv::Mat pano = stitcher.stitchFisheye(&validMask);
@@ -1858,12 +1883,12 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
             continue;
         }
 
-        //if (kSaveDebugImages) {
-            //cv::imwrite("panorama.png", pano);
-            //if (!validMask.empty()) {
-                //cv::imwrite("valid_mask.png", validMask);
-            //}
-        //}
+        if (kSaveDebugImages) {
+            cv::imwrite("panorama.png", pano);
+            if (!validMask.empty()) {
+                cv::imwrite("valid_mask.png", validMask);
+            }
+        }
 
         cv::Mat display = pano.clone();
         DrawPanoramaOverlay(display, frameNumber++, validMask);
@@ -1922,28 +1947,7 @@ cv::Point FindMaskCentroid(const cv::Mat& mask)
                      static_cast<int>(m.m01 / m.m00));
 }
 
-bool IsRayInsideSphericalFace(const Eigen::Vector3d& ray,
-                              const RigFace& face,
-                              const std::vector<Eigen::Vector3d>& vertices)
-{
-    const Eigen::Vector3d r = ray.normalized();
 
-    const Eigen::Vector3d a =
-        vertices[static_cast<size_t>(face.vi[0])].normalized();
-    const Eigen::Vector3d b =
-        vertices[static_cast<size_t>(face.vi[1])].normalized();
-    const Eigen::Vector3d c =
-        vertices[static_cast<size_t>(face.vi[2])].normalized();
-
-    const double d0 = a.cross(b).dot(r);
-    const double d1 = b.cross(c).dot(r);
-    const double d2 = c.cross(a).dot(r);
-
-    const bool allPos = (d0 >= 0.0) && (d1 >= 0.0) && (d2 >= 0.0);
-    const bool allNeg = (d0 <= 0.0) && (d1 <= 0.0) && (d2 <= 0.0);
-
-    return allPos || allNeg;
-}
 
 cv::Mat BuildFaceMaskForCamera(const ICameraModel& model,
                                const Eigen::Matrix3d& Rcw,
@@ -1963,7 +1967,7 @@ cv::Mat BuildFaceMaskForCamera(const ICameraModel& model,
 
             const Eigen::Vector3d rayWorld = (Rcw * rayCam).normalized();
 
-            if (IsRayInsideSphericalFace(rayWorld, face, vertices)) {
+            if (spherical::IsRayInsideSphericalFace(rayWorld, face, vertices)) {
                 mask.at<std::uint8_t>(y, x) = 255;
             }
         }
@@ -1983,140 +1987,118 @@ int main(int argc, char* argv[])
         const ProgramOptions options = ParseArgs(argc, argv);
         PrintProgramOptions(options);
 
-        const auto addressPlan =
+        const NetworkAddressPlan addressPlan =
             BuildNetworkAddressPlan(options.usbBaseIp, options.nApertureComputeModules);
         PrintAddressPlan(addressPlan);
 
         constexpr size_t n = kOverlapStreams;
         auto aperturePeers = CreateAperturePeers<n>(options, addressPlan);
 
-		const FisheyeParams fisheyeParams{
-		    .fx = 600.0,
-		    .fy = 600.0,
-		    .cx = 728.0,
-		    .cy = 544.0,
-		    .maxImageRadiusPx = 580.0
-		};
-        //const FisheyeParams fisheyeParams{600.0, 600.0, 580.0};
-		//const FisheyeParams fisheyeParams{550.0, 650.0, 580.0};
-		//const FisheyeParams fisheyeParams{650.0, 550.0, 580.0};
-		//const FisheyeParams fisheyeParams{575.0, 625.0, 580.0};
-		//const FisheyeParams fisheyeParams{625.0, 575.0, 580.0};
-		//const FisheyeParams fisheyeParams{634.6, 628.7, 580.0};
+        const FisheyeParams fisheyeParams{
+            .fx = 600.0,
+            .fy = 600.0,
+            .cx = 728.0,
+            .cy = 544.0,
+            .maxImageRadiusPx = 544
+        };
 
         const size_t totalCameras =
             TotalCameraCount(options.nApertureComputeModules);
 
+        // Build rig once and keep it alive for the stitcher.
+        const RigData rig = MakeRigData(RigGeometry::Icosahedron);
+        const auto& faces = rig.faces;
+        const auto& vertices = rig.vertices;
+
+        const std::vector<int> moduleFaceIndices =
+            BuildModuleFaceIndices(faces, options.nApertureComputeModules);
+
         const std::vector<CameraConfig> configs =
             makeCameraConfigs(options.nApertureComputeModules);
-            
-		//// 🔥 DEBUG: render pure spherical face (no camera involved)
-		//{
-		    //const auto rig = MakeRigData(RigGeometry::Icosahedron);
-		
-		    //cv::Mat faceMask6 = RenderFaceMaskDebug(rig, 6, 1456, 1088);
-		    //cv::Mat faceMask0 = RenderFaceMaskDebug(rig, 0, 1456, 1088);
-		
-		    //const bool ok6 = cv::imwrite("/tmp/debug_face6_mask.png", faceMask6);
-		    //const bool ok0 = cv::imwrite("/tmp/debug_face0_mask.png", faceMask0);
-		
-		    //std::cout << "[DEBUG] faceMask6 empty=" << faceMask6.empty()
-		              //<< " rows=" << faceMask6.rows
-		              //<< " cols=" << faceMask6.cols << '\n';
-		
-		    //std::cout << "[DEBUG] faceMask0 empty=" << faceMask0.empty()
-		              //<< " rows=" << faceMask0.rows
-		              //<< " cols=" << faceMask0.cols << '\n';
-		
-		    //std::cout << "[DEBUG] imwrite face6=" << ok6
-		              //<< " face0=" << ok0 << '\n';
-		//}
 
         auto cameras = CreateCameraViews(configs, fisheyeParams);
-        
-		 const RigData rig = MakeRigData(RigGeometry::Icosahedron);
-		const auto& faces = rig.faces;
-		const auto& vertices = rig.vertices;
-		
-		const std::vector<int> moduleFaceIndices =
-		    BuildModuleFaceIndices(faces, options.nApertureComputeModules);
-		
-		std::vector<cv::Mat> moduleFaceMasks;
-		moduleFaceMasks.reserve(static_cast<size_t>(options.nApertureComputeModules));
-		
-		for (int module = 0; module < options.nApertureComputeModules; ++module) {
-		    const int faceIndex = moduleFaceIndices[static_cast<size_t>(module)];
-		    const RigFace& face = faces[static_cast<size_t>(faceIndex)];
-		
-		    const size_t logicalIndex = static_cast<size_t>(module) * kCamerasPerModule;
-		    if (logicalIndex >= cameras.size()) {
-		        throw std::runtime_error("logicalIndex out of range while building moduleFaceMasks");
-		    }
-		
-		    const CameraView& cam = cameras[logicalIndex];
-		
-		    if (cam.image.empty()) {
-		        throw std::runtime_error("Camera image is empty while building moduleFaceMasks");
-		    }
-		    if (!cam.model) {
-		        throw std::runtime_error("Camera model is null while building moduleFaceMasks");
-		    }
-		
-		    cv::Mat faceMask = BuildFaceMaskForCamera(
-		        *cam.model,
-		        cam.Rcw,
-		        face,
-		        vertices,
-		        cam.image.cols,
-		        cam.image.rows);
-		
-		    moduleFaceMasks.push_back(faceMask);
-		
-		    cv::imwrite("/tmp/debug_module_face_mask_" + std::to_string(module) + ".png",
-		                faceMask);
-		
-		    std::cout << "[moduleFaceMask] module=" << module
-		              << " faceIndex=" << faceIndex
-		              << " nonzero=" << cv::countNonZero(faceMask)
-		              << " rows=" << faceMask.rows
-		              << " cols=" << faceMask.cols
-		              << '\n';
-		}
-        
-        // 🔥 DEBUG: camera footprint on sphere
-        
-        for (size_t i = 0; i < cameras.size(); ++i) {
-		    DebugCameraPose(cameras[i], "camera[" + std::to_string(i) + "]");
-		}
-        
-        {
-		    if (!cameras.empty() && cameras[0].model) {
-		        DebugCanonicalProjection(*cameras[0].model);
-		        DebugProjectUnprojectConsistency(*cameras[0].model);
-		    }
-		}
-        
-		{
-		    if (!cameras.empty()) {
-		        cv::Mat footprint =
-		            RenderCameraFootprintDebug(cameras[0], 1456, 1088);
-		
-		        //cv::imwrite("/tmp/debug_camera0_footprint.png", footprint);
-		
-		        std::cout << "[DEBUG] Saved camera footprint\n";
-		        
-                cv::Point c = FindMaskCentroid(footprint);
-				std::cout << "[DEBUG] footprint centroid = (" << c.x << ", " << c.y << ")\n";
-		    }
-		}
-        
-		
-		
-        std::vector<LiveCameraState> liveCameras(totalCameras);
 
         if (configs.size() != totalCameras || cameras.size() != totalCameras) {
             throw std::runtime_error("Logical camera count mismatch during initialization");
         }
+
+        // Build one spherical face mask per module, using the first logical stream
+        // of each module as the representative camera geometry.
+        std::vector<cv::Mat> moduleFaceMasks;
+        moduleFaceMasks.reserve(static_cast<size_t>(options.nApertureComputeModules));
+
+        for (int module = 0; module < options.nApertureComputeModules; ++module) {
+            const int faceIndex = moduleFaceIndices[static_cast<size_t>(module)];
+            const RigFace& face = faces[static_cast<size_t>(faceIndex)];
+
+            const size_t logicalIndex =
+                static_cast<size_t>(module) * kCamerasPerModule;
+
+            if (logicalIndex >= cameras.size()) {
+                throw std::runtime_error(
+                    "logicalIndex out of range while building moduleFaceMasks");
+            }
+
+            const CameraView& cam = cameras[logicalIndex];
+
+            if (cam.image.empty()) {
+                throw std::runtime_error(
+                    "Camera image is empty while building moduleFaceMasks");
+            }
+            if (!cam.model) {
+                throw std::runtime_error(
+                    "Camera model is null while building moduleFaceMasks");
+            }
+
+            cv::Mat faceMask = BuildFaceMaskForCamera(
+                *cam.model,
+                cam.Rcw,
+                face,
+                vertices,
+                cam.image.cols,
+                cam.image.rows);
+
+            moduleFaceMasks.push_back(faceMask);
+
+            std::cout << "[moduleFaceMask] module=" << module
+                      << " faceIndex=" << faceIndex
+                      << " nonzero=" << cv::countNonZero(faceMask)
+                      << " rows=" << faceMask.rows
+                      << " cols=" << faceMask.cols
+                      << '\n';
+
+            // Optional:
+            // cv::imwrite("/tmp/debug_module_face_mask_" + std::to_string(module) + ".png",
+            //             faceMask);
+        }
+
+        // Debug: dump camera poses
+        for (size_t i = 0; i < cameras.size(); ++i) {
+            DebugCameraPose(cameras[i], "camera[" + std::to_string(i) + "]");
+        }
+
+        // Debug: inspect the first camera model
+        if (!cameras.empty() && cameras[0].model) {
+            DebugCanonicalProjection(*cameras[0].model);
+            DebugProjectUnprojectConsistency(*cameras[0].model);
+        }
+
+        // Debug: inspect the first camera footprint
+        if (!cameras.empty()) {
+            cv::Mat footprint =
+                RenderCameraFootprintDebug(cameras[0], 1456, 1088);
+
+            std::cout << "[DEBUG] Saved camera footprint\n";
+
+            const cv::Point c = FindMaskCentroid(footprint);
+            std::cout << "[DEBUG] footprint centroid = ("
+                      << c.x << ", " << c.y << ")\n";
+
+            // Optional:
+            // cv::imwrite("/tmp/debug_camera0_footprint.png", footprint);
+        }
+
+        std::vector<LiveCameraState> liveCameras(totalCameras);
 
         InitializeCameraMasks(aperturePeers, liveCameras);
 
@@ -2124,34 +2106,33 @@ int main(int argc, char* argv[])
                   << " cameras.size()=" << cameras.size()
                   << " liveCameras.size()=" << liveCameras.size()
                   << '\n';
-                  
-        {
-		    const RigData rig = MakeRigData(RigGeometry::Icosahedron);
-		    const auto& faces = rig.faces;
-		    const auto& vertices = rig.vertices;
-		
-		    const std::vector<int> moduleFaceIndices =
-		        BuildModuleFaceIndices(faces, options.nApertureComputeModules);
-		
-		    if (moduleFaceIndices.size() >= 2) {
-		        const RigFace& face0 = faces[static_cast<size_t>(moduleFaceIndices[0])];
-		        const RigFace& face1 = faces[static_cast<size_t>(moduleFaceIndices[1])];
-		
-		        cv::Mat seam = RenderSharedFaceSeamDebug(face0, face1, vertices, 1456, 1088);
-		        //cv::imwrite("/tmp/debug_shared_seam.png", seam);
-		
-		        std::cout << "[DEBUG] saved /tmp/debug_shared_seam.png\n";
-		    }
-		}
-		
+
+        // Debug: render the shared seam between the first two module faces.
+        if (moduleFaceIndices.size() >= 2) {
+            const RigFace& face0 =
+                faces[static_cast<size_t>(moduleFaceIndices[0])];
+            const RigFace& face1 =
+                faces[static_cast<size_t>(moduleFaceIndices[1])];
+
+            cv::Mat seam =
+                RenderSharedFaceSeamDebug(face0, face1, vertices, 1456, 1088);
+
+            std::cout << "[DEBUG] saved /tmp/debug_shared_seam.png\n";
+
+            // Optional:
+            // cv::imwrite("/tmp/debug_shared_seam.png", seam);
+        }
+
         std::vector<std::jthread> frameThreads;
         std::vector<std::jthread> controlThreads;
 
         StartPeerThreads<n>(aperturePeers, liveCameras, frameThreads, controlThreads);
-        RunStitchLoop(cameras, configs, liveCameras, moduleFaceMasks);
-        
 
-        
+        RunStitchLoop(cameras,
+                      configs,
+                      liveCameras,
+                      moduleFaceMasks,
+                      rig);
     }
     catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';

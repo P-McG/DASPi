@@ -3,9 +3,7 @@
 
 #include "DASPi-rig-face.h"
 
-namespace {
 struct RigData {
     std::vector<RigFace> faces;
     std::vector<Eigen::Vector3d> vertices;
-};
 };

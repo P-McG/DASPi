@@ -768,7 +768,7 @@ std::string Aperture<n>::CameraName(libcamera::Camera *camera)
 			name = "External camera";
 			const auto &model = props.get(libcamera::properties::Model);
 			if (model)
-				name = " '" + *model + "'";
+				name = " '" + std::string(*model) + "'";
 			break;
 		}
 	}
@@ -858,13 +858,13 @@ void Aperture<n>::RunEventLoop(int timeout){
 
 template<size_t n>
 void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
-                                const libcamera::FrameBuffer *buffer,
-                                const GainMsg& gainMsg)
+                                   const libcamera::FrameBuffer *buffer,
+                                   const GainMsg& gainMsg)
 {
     log_verbose("[Aperture::FrameBufferToUDP]");
 
-	std::cout << "[FrameBufferToUDP] frame=" << frameNumber
-          << " buffer=" << buffer << std::endl;
+    std::cout << "[FrameBufferToUDP] frame=" << frameNumber
+              << " buffer=" << buffer << std::endl;
 
     static int producedFrames = 0;
     producedFrames++;
@@ -873,106 +873,135 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
                   << " frames buffered for UDP" << std::endl;
     }
 
-    const auto &plane = buffer->planes().back();
+    const auto planes = buffer->planes();
+    const auto &plane = planes.back();
     if (!plane.fd.isValid()) {
         std::cerr << "Invalid file descriptor for plane" << std::endl;
         std::exit(1);
     }
 
-    uint16_t *mappedData = static_cast<uint16_t *>(
-        mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0));
-
-
-
-    if (mappedData == MAP_FAILED) {
+    void *mapped = mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
+    if (mapped == MAP_FAILED) {
         perror("Failed to mmap plane data");
         std::exit(1);
     }
 
-    std::span<uint16_t> mappedDataSpan(mappedData, plane.length / sizeof(uint16_t));
+    auto *mappedData = static_cast<const uint16_t *>(mapped);
 
-	std::cout << "[FrameBufferToUDP] plane.length=" << plane.length
-			  << " span.size=" << mappedDataSpan.size()
-			  << std::endl;
+    std::cout << "[FrameBufferToUDP] plane.length=" << plane.length
+              << " bytes" << std::endl;
 
     sfdp_t sfdp(sf_);
 
-    if (mappedDataSpan.size() != sf_.sf_t::GlobalLinearShapeFunction_t::size()) {
-        std::cerr << "mappedDataSpan.size():" << mappedDataSpan.size()
-                  << " sf_::GlobalLinearShapeFunction_t::size():"
-                  << sf_.sf_t::GlobalLinearShapeFunction_t::size()
-                  << " sfdp.size():" << sfdp.size() << std::endl;
-        std::cerr << "mappedDataSpan not the correct size" << std::endl;
-        std::exit(1);
+    constexpr size_t activeWidth  = sensorWidthValue_;
+    constexpr size_t activeHeight = sensorHeightValue_;
+    constexpr size_t expectedElems = activeWidth * activeHeight;
+
+    const size_t mappedElems = plane.length / sizeof(uint16_t);
+    const size_t strideElems = mappedElems / activeHeight;
+
+    std::cout << "[FrameBufferToUDP] mappedElems=" << mappedElems
+              << " expectedElems=" << expectedElems
+              << " strideElems=" << strideElems
+              << std::endl;
+
+    if (expectedElems != sf_.sf_t::GlobalLinearShapeFunction_t::size()) {
+        std::cerr << "Shape function size mismatch: expected activeElems="
+                  << expectedElems
+                  << " sf size=" << sf_.sf_t::GlobalLinearShapeFunction_t::size()
+                  << std::endl;
+        std::exit(EXIT_FAILURE);
     }
 
+    if (mappedElems % activeHeight != 0) {
+        std::cerr << "Mapped buffer does not divide evenly into rows: mappedElems="
+                  << mappedElems
+                  << " activeHeight=" << activeHeight
+                  << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+
+    if (strideElems < activeWidth) {
+        std::cerr << "Stride smaller than active width: strideElems="
+                  << strideElems
+                  << " activeWidth=" << activeWidth
+                  << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+
+    std::vector<uint16_t> activeFrame(expectedElems);
+    for (size_t y = 0; y < activeHeight; ++y) {
+        const uint16_t *srcRow = mappedData + y * strideElems;
+        uint16_t *dstRow = activeFrame.data() + y * activeWidth;
+        std::copy_n(srcRow, activeWidth, dstRow);
+    }
+
+    std::span<uint16_t> mappedDataSpan(activeFrame.data(), activeFrame.size());
+
     // Start from the per-frame metadata captured in ProcessRequestImpl().
-	GainMsg appliedGainMsg = gainMsg;
-	
-	// default apply values
-	appliedGainMsg.r_gain_apply = appliedGainMsg.r_gain;
-	appliedGainMsg.b_gain_apply = appliedGainMsg.b_gain;
-	
-	{
-		std::lock_guard<std::mutex> lock(gainMutex_);
-		if (gainValid_) {
-			appliedGainMsg.r_gain_apply = latestRGainApply_;
-			appliedGainMsg.b_gain_apply = latestBGainApply_;
-		}
-	}
+    GainMsg appliedGainMsg = gainMsg;
+    appliedGainMsg.r_gain_apply = appliedGainMsg.r_gain;
+    appliedGainMsg.b_gain_apply = appliedGainMsg.b_gain;
+
+    {
+        std::lock_guard<std::mutex> lock(gainMutex_);
+        if (gainValid_) {
+            appliedGainMsg.r_gain_apply = latestRGainApply_;
+            appliedGainMsg.b_gain_apply = latestBGainApply_;
+        }
+    }
 
     FrameBufferTransformation(mappedDataSpan, appliedGainMsg, sfdp, chunkThreads_);
 
-	auto data = sfdp.TakeContiguousMemory();
-	
-	std::array<uint32_t, NUM_REGIONS> regionSizes{};
-	
-	for (size_t i = 0; i < NUM_REGIONS; ++i) {
-		regionSizes[i] = static_cast<uint32_t>(sfdp.RegionValidSize(i));
-	}
-	size_t totalElems = 0;
-	
-	for (size_t i = 0; i < NUM_REGIONS; ++i) {
-		const auto valid = sfdp.RegionValidSize(i);
-		std::cout << "[TX] region " << i
-				  << " valid=" << valid
-				  << " capacity=" << sfdp[i].size()
-				  << std::endl;
-		totalElems += valid;
-	}
-		
-	std::cout << "[TX] packed payload elems=" << data.size()
-			  << " bytes=" << data.size() * sizeof(uint16_t)
-			  << std::endl;
-	
-	if (data.size() != totalElems) {
-		std::cerr << "[TX ERROR] packed element count mismatch: "
-				  << "sum(validSizes)=" << totalElems
-				  << " packed=" << data.size()
-				  << std::endl;
-		std::exit(EXIT_FAILURE);
-	}
-	
-	frameSrv_.SubmitFrameOutput(
-		frameNumber,
-		frameSrv_.CreateFramePacket(
-			appliedGainMsg,
-			regionSizes,
-			std::move(data)
-		)
-	);
+    auto data = sfdp.TakeContiguousMemory();
 
-    if (munmap(mappedData, plane.length) != 0) {
+    std::array<uint32_t, NUM_REGIONS> regionSizes{};
+    for (size_t i = 0; i < NUM_REGIONS; ++i) {
+        regionSizes[i] = static_cast<uint32_t>(sfdp.RegionValidSize(i));
+    }
+
+    size_t totalElems = 0;
+    for (size_t i = 0; i < NUM_REGIONS; ++i) {
+        const auto valid = sfdp.RegionValidSize(i);
+        std::cout << "[TX] region " << i
+                  << " valid=" << valid
+                  << " capacity=" << sfdp[i].size()
+                  << std::endl;
+        totalElems += valid;
+    }
+
+    std::cout << "[TX] packed payload elems=" << data.size()
+              << " bytes=" << data.size() * sizeof(uint16_t)
+              << std::endl;
+
+    if (data.size() != totalElems) {
+        std::cerr << "[TX ERROR] packed element count mismatch: "
+                  << "sum(validSizes)=" << totalElems
+                  << " packed=" << data.size()
+                  << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+
+    frameSrv_.SubmitFrameOutput(
+        frameNumber,
+        frameSrv_.CreateFramePacket(
+            appliedGainMsg,
+            regionSizes,
+            std::move(data)
+        )
+    );
+
+    if (munmap(mapped, plane.length) != 0) {
         perror("Failed to unmap plane data");
     }
-	
-	std::cout << "[GainApply] frame=" << frameNumber
-          << " r_gain=" << appliedGainMsg.r_gain
-          << " b_gain=" << appliedGainMsg.b_gain
-          << " r_gain_apply=" << appliedGainMsg.r_gain_apply
-          << " b_gain_apply=" << appliedGainMsg.b_gain_apply
-          << std::endl;
-		  
+
+    std::cout << "[GainApply] frame=" << frameNumber
+              << " r_gain=" << appliedGainMsg.r_gain
+              << " b_gain=" << appliedGainMsg.b_gain
+              << " r_gain_apply=" << appliedGainMsg.r_gain_apply
+              << " b_gain_apply=" << appliedGainMsg.b_gain_apply
+              << std::endl;
+
     fpsSent_.Tick();
 }
 

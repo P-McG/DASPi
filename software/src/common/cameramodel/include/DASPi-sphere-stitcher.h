@@ -9,35 +9,18 @@
 #include "DASPi-i-camera-model.h"
 #include "DASPi-equirectangular-projection.h"
 
-struct CameraView {
-    cv::Mat image;
-    cv::Mat maskNonOverlap;
-    cv::Mat maskOverlap;
-
-    std::shared_ptr<ICameraModel> model;
-    Eigen::Matrix3d Rcw;
-};
-
-struct SphereStitchConfig {
-    int outputWidth = 4096;
-    int outputHeight = 2048;
-    double blendPower = 4.0;
-    cv::Vec3b backgroundColor = {0, 0, 0};
-};
-
-struct Contribution {
-    int cameraIndex = -1;
-    cv::Point2d uv;
-    cv::Vec3d color;
-    double weight = 0.0;
-    bool fromNonOverlap = false;
-};
+#include "DASPi-camera-view.h"
+#include "DASPi-sphere-stitch-config.h"
+#include "DASPi-contribution.h"
+//#include "DASPi-spherical-math.h"
+#include "DASPi-rig-data.h"
 
 class SphereStitcher {
 public:
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     SphereStitcher(std::vector<CameraView> cameras,
-                   SphereStitchConfig config);
+                   SphereStitchConfig config,
+                   const RigData& rig);
 
 	cv::Mat stitch() const;
 	cv::Mat stitch(cv::Mat* validMask) const;
@@ -58,4 +41,5 @@ private:
     SphereStitchConfig config_;
     EquirectangularProjection projection_;
     std::vector<Eigen::Vector3f> worldRays_;
+	RigData rig_;
 };

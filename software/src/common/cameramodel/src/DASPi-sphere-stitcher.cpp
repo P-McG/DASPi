@@ -2,8 +2,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+
 #include "DASPi-sphere-stitcher.h"
-#include "DASPi-spherical-math.h"
+//#include "DASPi-spherical-math.h"
+//#include "DASPi-rig-utils.h"
 
 namespace {
 
@@ -102,10 +104,12 @@ Eigen::Vector2d WorldRayToEquirectPixel(const Eigen::Vector3d& ray,
 } // namespace
 
 SphereStitcher::SphereStitcher(std::vector<CameraView> cameras,
-                               SphereStitchConfig config)
+                               SphereStitchConfig config,
+                               const RigData& rig)
     : cameras_(std::move(cameras)),
       config_(config),
-      projection_(config.outputWidth, config.outputHeight)
+      projection_(config.outputWidth, config.outputHeight),
+      rig_(rig)
 {
     precomputeWorldRays();
 }
@@ -202,81 +206,142 @@ cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const {
     //return out;
 //}
 
-
-
 std::vector<Contribution>
-SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world) const {
+SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
+{
+    const Eigen::Vector3d ray_world = ray_world_f.cast<double>().normalized();
+
     std::vector<Contribution> out;
     out.reserve(cameras_.size());
-
-    static std::atomic<int> printedRay{0};
-    static std::atomic<int> printedSummary{0};
-
-    int rejectedBehind = 0;
-    int rejectedProject = 0;
-    int rejectedMask = 0;
-    int accepted = 0;
 
     for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
         const auto& cam = cameras_[i];
 
-        Eigen::Vector3f ray_cam =
-            cam.Rcw.cast<float>().transpose() * ray_world;
-
-        // Flip camera forward axis to match the pinhole model convention
-        //ray_cam.z() = -ray_cam.z();
-
-        //if (ray_cam.z() <= 0.0f) {
-            //++rejectedBehind;
-            //continue;
-        //}
-
-        const ProjectionResult proj = cam.model->project(ray_cam.cast<double>());
-
-        //if (!proj.valid) {
-            //++rejectedProject;
-            //continue;
-        //}
-        
-        const double u = proj.uv.x;
-        const double v = proj.uv.y;
-        
-        if (u < 0.0 || u >= static_cast<double>(cam.image.cols) ||
-            v < 0.0 || v >= static_cast<double>(cam.image.rows)) {
-            ++rejectedProject;
+        if (cam.faceIndex < 0 ||
+            cam.faceIndex >= static_cast<int>(rig_.faces.size())) {
             continue;
         }
 
-        const bool inNonOverlap = IsInsideMask(cam.maskNonOverlap, proj.uv);
-        const bool inOverlap    = IsInsideMask(cam.maskOverlap, proj.uv);
+        const RigFace& face = rig_.faces[static_cast<size_t>(cam.faceIndex)];
 
-        if (!inNonOverlap && !inOverlap) {
-            ++rejectedMask;
+        // Spherical ownership test first.
+        if (!spherical::IsRayInsideSphericalFace(ray_world, face, rig_.vertices)) {
             continue;
+        }
+
+        const Eigen::Vector3d ray_cam =
+            cam.Rcw.transpose() * ray_world;
+
+        if (ray_cam.z() <= 0.0) {
+            continue;
+        }
+
+        const ProjectionResult proj = cam.model->project(ray_cam);
+        if (!proj.valid) {
+            continue;
+        }
+
+        // Optional true sensor-validity mask only.
+        if (!cam.sensorValidMask.empty()) {
+            const int x = static_cast<int>(std::floor(proj.uv.x));
+            const int y = static_cast<int>(std::floor(proj.uv.y));
+
+            if (x < 0 || x >= cam.sensorValidMask.cols ||
+                y < 0 || y >= cam.sensorValidMask.rows) {
+                continue;
+            }
+
+            if (cam.sensorValidMask.at<std::uint8_t>(y, x) == 0) {
+                continue;
+            }
         }
 
         Contribution c;
         c.cameraIndex = i;
         c.uv = proj.uv;
         c.color = SampleBilinear(cam.image, proj.uv);
-        c.weight = OpticalWeight(ray_cam.cast<double>(), config_.blendPower);
-        c.fromNonOverlap = inNonOverlap;
+        c.weight = OpticalWeight(ray_cam, config_.blendPower);
+        c.fromNonOverlap = true;
 
         out.push_back(c);
-        ++accepted;
-    }
-
-    if (printedSummary.fetch_add(1) < 20) {
-        std::cout
-            << "behind=" << rejectedBehind
-            << " project=" << rejectedProject
-            << " mask=" << rejectedMask
-            << " accepted=" << accepted
-            << '\n';
     }
 
     return out;
 }
+
+//std::vector<Contribution>
+//SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world) const {
+    //std::vector<Contribution> out;
+    //out.reserve(cameras_.size());
+
+    //static std::atomic<int> printedRay{0};
+    //static std::atomic<int> printedSummary{0};
+
+    //int rejectedBehind = 0;
+    //int rejectedProject = 0;
+    //int rejectedMask = 0;
+    //int accepted = 0;
+
+    //for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
+        //const auto& cam = cameras_[i];
+
+        //Eigen::Vector3f ray_cam =
+            //cam.Rcw.cast<float>().transpose() * ray_world;
+
+        //// Flip camera forward axis to match the pinhole model convention
+        ////ray_cam.z() = -ray_cam.z();
+
+        ////if (ray_cam.z() <= 0.0f) {
+            ////++rejectedBehind;
+            ////continue;
+        ////}
+
+        //const ProjectionResult proj = cam.model->project(ray_cam.cast<double>());
+
+        ////if (!proj.valid) {
+            ////++rejectedProject;
+            ////continue;
+        ////}
+        
+        //const double u = proj.uv.x;
+        //const double v = proj.uv.y;
+        
+        //if (u < 0.0 || u >= static_cast<double>(cam.image.cols) ||
+            //v < 0.0 || v >= static_cast<double>(cam.image.rows)) {
+            //++rejectedProject;
+            //continue;
+        //}
+
+        //const bool inNonOverlap = IsInsideMask(cam.maskNonOverlap, proj.uv);
+        //const bool inOverlap    = IsInsideMask(cam.maskOverlap, proj.uv);
+
+        //if (!inNonOverlap && !inOverlap) {
+            //++rejectedMask;
+            //continue;
+        //}
+
+        //Contribution c;
+        //c.cameraIndex = i;
+        //c.uv = proj.uv;
+        //c.color = SampleBilinear(cam.image, proj.uv);
+        //c.weight = OpticalWeight(ray_cam.cast<double>(), config_.blendPower);
+        //c.fromNonOverlap = inNonOverlap;
+
+        //out.push_back(c);
+        //++accepted;
+    //}
+
+    //if (printedSummary.fetch_add(1) < 20) {
+        //std::cout
+            //<< "behind=" << rejectedBehind
+            //<< " project=" << rejectedProject
+            //<< " mask=" << rejectedMask
+            //<< " accepted=" << accepted
+            //<< '\n';
+    //}
+
+    //return out;
+//}
 
 //std::vector<Contribution>
 //SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world) const {
@@ -407,12 +472,12 @@ cv::Mat SphereStitcher::stitchFisheye(cv::Mat* validMask) const
                 const cv::Point2d uv(static_cast<double>(x),
                                      static_cast<double>(y));
 
-                const bool inNonOverlap = IsInsideMask(cam.maskNonOverlap, uv);
-                const bool inOverlap    = IsInsideMask(cam.maskOverlap, uv);
+                //const bool inNonOverlap = IsInsideMask(cam.maskNonOverlap, uv);
+                //const bool inOverlap    = IsInsideMask(cam.maskOverlap, uv);
 
-                if (!inNonOverlap && !inOverlap) {
-                    continue;
-                }
+                //if (!inNonOverlap && !inOverlap) {
+                    //continue;
+                //}
 
 				Eigen::Vector3d ray_cam;
 				if (!cam.model->unproject(uv, ray_cam)) {
@@ -436,12 +501,12 @@ cv::Mat SphereStitcher::stitchFisheye(cv::Mat* validMask) const
                 const cv::Vec3b color = cam.image.at<cv::Vec3b>(y, x);
 
                 double weight = 1.0;
-                if (inOverlap) {
-                    weight = std::pow(std::max(0.0, ray_cam.z()), config_.blendPower);
-                    if (weight <= 0.0) {
-                        weight = 1.0;
-                    }
-                }
+                //if (inOverlap) {
+                    //weight = std::pow(std::max(0.0, ray_cam.z()), config_.blendPower);
+                    //if (weight <= 0.0) {
+                        //weight = 1.0;
+                    //}
+                //}
 
                 cv::Vec3f& dst = accum.at<cv::Vec3f>(py, px);
                 dst[0] += static_cast<float>(weight * color[0]);

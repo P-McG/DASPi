@@ -5,7 +5,16 @@
 
 struct CameraConfig {
     std::string name;
-    std::string path;
+    std::string sourceName;
     ImageRotation imageRotation;
     Eigen::Matrix3d Rcw;
+    int moduleIndex = -1;
+    int faceIndex = -1;
 };
+
+//struct CameraConfig {
+    //std::string name;
+    //std::string path;
+    //ImageRotation imageRotation;
+    //Eigen::Matrix3d Rcw;
+//};

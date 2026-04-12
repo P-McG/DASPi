@@ -12,13 +12,14 @@ aperture_deps = [
   scopedtimer_dep,
   shapefunction_dep,
   udp_dep,
+  camera_model_dep,
   dependency('libcamera', required : true),
   dependency('openmp', required : true),
   dependency('libevent', required : true),
   dependency('libevent_pthreads', required : true),
   dependency('tbb', required : true),
   dependency('threads', required : true),
-  dependency('opencv4', required : true),
+#  dependency('opencv4', required : true),
 ]
 
 executable(

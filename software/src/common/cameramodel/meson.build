@@ -1,49 +1,26 @@
-cpp = meson.get_compiler('cpp')
-
-opencv_dep = dependency('opencv4', required : true, include_type : 'system')
-eigen_dep  = dependency('eigen3', required : true)
-openmp_dep = dependency('openmp', required : true)
-
-blas_dep   = cpp.find_library('blas', required : true)
-lapack_dep = cpp.find_library('lapack', required : true)
-
 camera_model_inc = include_directories('include')
 
-camera_model_src = files(
-  'src/DASPi-bayer-io.cpp',
-  'src/DASPi-fisheye-camera-model.cpp',
-  'src/DASPi-sphere-stitcher.cpp',
-)
-
-camera_model_headers = files(
-  'include/DASPi-bayer-io.h',
-  'include/DASPi-fisheye-camera-model.h',
-  'include/DASPi-sphere-stitcher.h',
-)
+eigen_inc = include_directories('/usr/include/eigen3')
 
 camera_model_deps = [
-  opencv_dep,
-  eigen_dep,
-  openmp_dep,
-  blas_dep,
-  lapack_dep,
+  dependency('opencv4', required : true),
+  dependency('openmp', required : true),
 ]
 
-camera_model_lib = library(
-  'camera_model',
-  camera_model_src,
-  include_directories : camera_model_inc,
-  dependencies : camera_model_deps,
-  install : true,
-)
+camera_model_lib = static_library(
+  'cameramodel',
+  [
+    #'src/DASPi-camera.cpp',
+    'src/DASPi-sphere-stitcher.cpp',
+    'src/DASPi-spherical-math.cpp',
 
-install_headers(
-  camera_model_headers,
-  subdir : 'camera_model',
+  ],
+  include_directories : [camera_model_inc, eigen_inc],
+  dependencies : camera_model_deps,
 )
 
 camera_model_dep = declare_dependency(
-  include_directories : camera_model_inc,
+  include_directories : [camera_model_inc, eigen_inc],
   link_with : camera_model_lib,
   dependencies : camera_model_deps,
 )
