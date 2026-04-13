@@ -1,0 +1,9 @@
+Official Raspberry Pi 2.7mm 12MP Wide-Angle Lens for Raspberry Pi HQ Camera M12
+
+Specifications
+Resolution: 12MP
+Aperture: F2.5
+Mount: M12/S-Mount
+Focal length: 2.7mm
+Image format: 1/2.3"
+FOV(D/H/V): 184.6°/140°/102.6°

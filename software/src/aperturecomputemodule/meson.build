@@ -12,7 +12,7 @@ aperture_deps = [
   scopedtimer_dep,
   shapefunction_dep,
   udp_dep,
-  camera_model_dep,
+#  camera_model_dep,
   dependency('libcamera', required : true),
   dependency('openmp', required : true),
   dependency('libevent', required : true),

@@ -306,6 +306,15 @@ void Aperture<n>::StreamConfigurationValidation(unsigned int index){
 	 * requested.
 	 */
 	config_->validate();
+    
+    libcamera::StreamConfiguration &streamConfig = config_->at(index);
+    std::cout
+        << "[ValidatedConfig] pixelFormat=" << streamConfig.pixelFormat.toString()
+        << " width=" << streamConfig.size.width
+        << " height=" << streamConfig.size.height
+        << " stride=" << streamConfig.stride
+        << " frameSize=" << streamConfig.frameSize
+        << std::endl;
 }
 
 template<size_t n>
@@ -877,47 +886,68 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
     const auto &plane = planes.back();
     if (!plane.fd.isValid()) {
         std::cerr << "Invalid file descriptor for plane" << std::endl;
-        std::exit(1);
+        std::exit(EXIT_FAILURE);
     }
 
     void *mapped = mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
     if (mapped == MAP_FAILED) {
         perror("Failed to mmap plane data");
-        std::exit(1);
+        std::exit(EXIT_FAILURE);
     }
 
-    auto *mappedData = static_cast<const uint16_t *>(mapped);
+    const libcamera::StreamConfiguration &cfg = config_->at(0);
+    const libcamera::PixelFormat pixelFormat = cfg.pixelFormat;
+    const size_t strideBytes = cfg.stride;
 
-    std::cout << "[FrameBufferToUDP] plane.length=" << plane.length
-              << " bytes" << std::endl;
-
-    sfdp_t sfdp(sf_);
-
-    constexpr size_t activeWidth  = sensorWidthValue_;
+    constexpr size_t activeWidth = sensorWidthValue_;
     constexpr size_t activeHeight = sensorHeightValue_;
     constexpr size_t expectedElems = activeWidth * activeHeight;
 
-    const size_t mappedElems = plane.length / sizeof(uint16_t);
-    const size_t strideElems = mappedElems / activeHeight;
-
-    std::cout << "[FrameBufferToUDP] mappedElems=" << mappedElems
-              << " expectedElems=" << expectedElems
-              << " strideElems=" << strideElems
+    std::cout << "[FrameBufferToUDP] pixelFormat=" << pixelFormat.toString()
+              << " plane.length=" << plane.length
+              << " strideBytes=" << strideBytes
+              << " activeWidth=" << activeWidth
+              << " activeHeight=" << activeHeight
               << std::endl;
+
+    sfdp_t sfdp(sf_);
 
     if (expectedElems != sf_.sf_t::GlobalLinearShapeFunction_t::size()) {
         std::cerr << "Shape function size mismatch: expected activeElems="
                   << expectedElems
                   << " sf size=" << sf_.sf_t::GlobalLinearShapeFunction_t::size()
                   << std::endl;
+        munmap(mapped, plane.length);
         std::exit(EXIT_FAILURE);
     }
 
-    if (mappedElems % activeHeight != 0) {
-        std::cerr << "Mapped buffer does not divide evenly into rows: mappedElems="
-                  << mappedElems
-                  << " activeHeight=" << activeHeight
+    const bool supported =
+        pixelFormat == libcamera::formats::SBGGR10 ||
+        pixelFormat == libcamera::formats::SBGGR16;
+    
+    if (!supported) {
+        std::cerr << "Unsupported validated pixel format for current UDP path: "
+                  << pixelFormat.toString() << std::endl;
+        munmap(mapped, plane.length);
+        std::exit(EXIT_FAILURE);
+    }
+
+    if ((strideBytes % sizeof(uint16_t)) != 0) {
+        std::cerr << "Stride is not 16-bit aligned: strideBytes="
+                  << strideBytes << std::endl;
+        munmap(mapped, plane.length);
+        std::exit(EXIT_FAILURE);
+    }
+
+    const size_t strideElems = strideBytes / sizeof(uint16_t);
+    const size_t requiredBytes = strideBytes * activeHeight;
+
+    if (plane.length < requiredBytes) {
+        std::cerr << "Plane too small for configured stride/height: plane.length="
+                  << plane.length
+                  << " requiredBytes=" << requiredBytes
                   << std::endl;
+        munmap(mapped, plane.length);
         std::exit(EXIT_FAILURE);
     }
 
@@ -926,8 +956,16 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
                   << strideElems
                   << " activeWidth=" << activeWidth
                   << std::endl;
+        munmap(mapped, plane.length);
         std::exit(EXIT_FAILURE);
     }
+
+    const auto *mappedData = static_cast<const uint16_t *>(mapped);
+
+    std::cout << "[FrameBufferToUDP] strideElems=" << strideElems
+              << " expectedElems=" << expectedElems
+              << " requiredBytes=" << requiredBytes
+              << std::endl;
 
     std::vector<uint16_t> activeFrame(expectedElems);
     for (size_t y = 0; y < activeHeight; ++y) {
@@ -938,7 +976,6 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
 
     std::span<uint16_t> mappedDataSpan(activeFrame.data(), activeFrame.size());
 
-    // Start from the per-frame metadata captured in ProcessRequestImpl().
     GainMsg appliedGainMsg = gainMsg;
     appliedGainMsg.r_gain_apply = appliedGainMsg.r_gain;
     appliedGainMsg.b_gain_apply = appliedGainMsg.b_gain;
@@ -979,6 +1016,7 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
                   << "sum(validSizes)=" << totalElems
                   << " packed=" << data.size()
                   << std::endl;
+        munmap(mapped, plane.length);
         std::exit(EXIT_FAILURE);
     }
 

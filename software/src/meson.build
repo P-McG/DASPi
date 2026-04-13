@@ -22,7 +22,6 @@ subdir('common/udp')
 
 
 if get_option('build_aperturecomputemodule')
-  subdir('common/cameramodel')
   subdir('aperturecomputemodule')
 endif
 
