@@ -66,7 +66,7 @@ namespace DASPi{
         inline static unsigned int frameNumber_{0};
         //constexpr inline static unsigned int width_{1536};
         //constexpr inline static unsigned int height_{864};
-        libcamera::PixelFormat codec_{libcamera::formats::SBGGR10};
+        libcamera::PixelFormat codec_{libcamera::formats::SBGGR16};
         inline static std::atomic<bool> isStartCaptureThreadDone_{false}; // Atomic flag
         inline static std::atomic<bool> isStartCaptureRunning_{false}; // Atomic flag
         sf_t sf_;
@@ -159,6 +159,7 @@ namespace DASPi{
         void StartPostProcessingThreads();
         void StopPostProcessingThreads();
         inline void ApplyWhiteBalanceToMosaic_BGGR(size_t region, const sf_t &sf, std::span<uint16_t> data, const GainMsg& gainMsg);
+        inline void ApplyWhiteBalanceToMosaic_RGGB(size_t region, const sf_t &sf, std::span<uint16_t> data, const GainMsg& gainMsg);
         std::string GetBoardSerial();
         //uint32_t ParseCameraAddressId(const std::string& libcameraId);
         std::string ExtractCameraBusAddr(const std::string& libcameraId);

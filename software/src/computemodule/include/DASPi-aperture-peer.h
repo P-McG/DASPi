@@ -61,8 +61,9 @@ public:
     bool BufferToFile();
     int GetFramePort();
     int GetControlPort();
-    std::vector<uint16_t> GenerateStripedBayerBGGRImage(int width, int height, int stripeWidth);
-	inline void ApplyWhiteBalanceToMosaic_BGGR(std::span<uint16_t> data, int width, int height, double rGain, double gGain, double bGain);
+    //std::vector<uint16_t> GenerateStripedBayerBGGRImage(int width, int height, int stripeWidth);
+	//inline void ApplyWhiteBalanceToMosaic_BGGR(std::span<uint16_t> data, int width, int height, double rGain, double gGain, double bGain);
+    //inline void ApplyWhiteBalanceToMosaic_RGGB(std::span<uint16_t> data, int width, int height, double rGain, double gGain, double bGain);
 	void BrightenImageInplace(std::span<uint16_t> buf, size_t shift);
     void BrightenImageChunked2(uint16_t* buffer, size_t start, size_t end, size_t shift);
 #if defined(__ARM_NEON) || defined(__aarch64__)

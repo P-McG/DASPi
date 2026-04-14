@@ -383,6 +383,21 @@ cv::Mat decodeBayer16ToBgr8(const std::vector<uint16_t>& data)
     cv::Mat rawCopy = raw16.clone();
 
     cv::Mat bgr16;
+    
+    cv::Mat testGray(kFrameHeight, kFrameWidth, CV_16UC1, const_cast<uint16_t*>(data.data()));
+	cv::Mat test8;
+	testGray.convertTo(test8, CV_8UC1, 1.0 / 256.0);
+	
+	std::cout << "data.size() = " << data.size() << std::endl;
+	std::cout << "expected    = " << (kFrameWidth * kFrameHeight) << std::endl;
+	std::cout << "testGray.empty() = " << testGray.empty() << std::endl;
+	std::cout << "test8.empty()    = " << test8.empty() << std::endl;
+	std::cout << "test8.type()     = " << test8.type() << std::endl;
+	
+	//cv::imshow("RAW", test8);
+	cv::imwrite("/tmp/raw_debug.png", test8);
+	//cv::waitKey(0);
+    
     cv::cvtColor(rawCopy, bgr16, cv::COLOR_BayerRG2BGR);
 
     cv::Mat bgr8;

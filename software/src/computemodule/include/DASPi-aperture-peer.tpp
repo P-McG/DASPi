@@ -290,22 +290,22 @@ namespace DASPi{
 		return controlClnt_.port_;
 	}
 	
-	template<size_t n>
-	std::vector<uint16_t> AperturePeer<n>::GenerateStripedBayerBGGRImage(int width, int height, int stripeWidth) {
-	    std::vector<uint16_t> image(width * height);
+	//template<size_t n>
+	//std::vector<uint16_t> AperturePeer<n>::GenerateStripedBayerBGGRImage(int width, int height, int stripeWidth) {
+	    //std::vector<uint16_t> image(width * height);
 	
-	    for (int y = 0; y < height; ++y) {
-	        for (int x = 0; x < width; ++x) {
-	            int stripe = (x / stripeWidth) % 2;
-	            uint16_t value = stripe == 0 ? 0x0000 : 0xFFFF;
+	    //for (int y = 0; y < height; ++y) {
+	        //for (int x = 0; x < width; ++x) {
+	            //int stripe = (x / stripeWidth) % 2;
+	            //uint16_t value = stripe == 0 ? 0x0000 : 0xFFFF;
 	
-	            int idx = y * width + x;
-	            image[idx] = value;
-	        }
-	    }
+	            //int idx = y * width + x;
+	            //image[idx] = value;
+	        //}
+	    //}
 	
-	    return image;
-	}
+	    //return image;
+	//}
 	
 	//template<size_t n>
 	//inline void AperturePeer<n>::ApplyWhiteBalanceToMosaic_BGGR(
@@ -334,59 +334,124 @@ namespace DASPi{
 	    //}
 	//}
 	
-	template<size_t n>
-	inline void AperturePeer<n>::ApplyWhiteBalanceToMosaic_BGGR(
-	    std::span<uint16_t> data,
-	    int width, int height,
-	    double rGain, double gGain, double bGain)
-	{
-	    // Validate sizes (elements == pixels)
-	    const size_t elems = static_cast<size_t>(width) * static_cast<size_t>(height);
-	    if (width <= 0 || height <= 0 || data.size() != elems * sizeof(uint16_t)) {
-	        std::cerr << "[WB] size mismatch: data=" << data.size()
-	                  << " expected=" << elems << " (w=" << width << " h=" << height << ")\n";
-	        return; // or throw
-	    }
+	//template<size_t n>
+	//inline void AperturePeer<n>::ApplyWhiteBalanceToMosaic_BGGR(
+	    //std::span<uint16_t> data,
+	    //int width, int height,
+	    //double rGain, double gGain, double bGain)
+	//{
+	    //// Validate sizes (elements == pixels)
+	    //const size_t elems = static_cast<size_t>(width) * static_cast<size_t>(height);
+	    //if (width <= 0 || height <= 0 || data.size() != elems * sizeof(uint16_t)) {
+	        //std::cerr << "[WB] size mismatch: data=" << data.size()
+	                  //<< " expected=" << elems << " (w=" << width << " h=" << height << ")\n";
+	        //return; // or throw
+	    //}
 	
-	    // Convert gains to fixed point (Q10: 1.0 == 1024)
-	    auto toQ10 = [](double g) -> uint32_t {
-	        if (g < 0.0) g = 0.0;
-	        return static_cast<uint32_t>(std::lround(g * 1024.0));
-	    };
-	    const uint32_t rQ = toQ10(rGain);
-	    const uint32_t gQ = toQ10(gGain);
-	    const uint32_t bQ = toQ10(bGain);
+	    //// Convert gains to fixed point (Q10: 1.0 == 1024)
+	    //auto toQ10 = [](double g) -> uint32_t {
+	        //if (g < 0.0) g = 0.0;
+	        //return static_cast<uint32_t>(std::lround(g * 1024.0));
+	    //};
+	    //const uint32_t rQ = toQ10(rGain);
+	    //const uint32_t gQ = toQ10(gGain);
+	    //const uint32_t bQ = toQ10(bGain);
 	
-	    // Saturating multiply: (v * gainQ + 512) >> 10, clamped to 65535
-	    auto mulSatQ10 = [](uint32_t v, uint32_t gainQ) -> uint16_t {
-	        uint64_t t = static_cast<uint64_t>(v) * gainQ + 512; // +0.5 for rounding
-	        t >>= 10;
-	        if (t > 65535u) t = 65535u;
-	        return static_cast<uint16_t>(t);
-	    };
+	    //// Saturating multiply: (v * gainQ + 512) >> 10, clamped to 65535
+	    //auto mulSatQ10 = [](uint32_t v, uint32_t gainQ) -> uint16_t {
+	        //uint64_t t = static_cast<uint64_t>(v) * gainQ + 512; // +0.5 for rounding
+	        //t >>= 10;
+	        //if (t > 65535u) t = 65535u;
+	        //return static_cast<uint16_t>(t);
+	    //};
 	
-	    for (int y = 0; y < height; ++y) {
-	        const bool evenRow = (y & 1) == 0;
-	        uint16_t* row = data.data() + static_cast<size_t>(y) * width;
+	    //for (int y = 0; y < height; ++y) {
+	        //const bool evenRow = (y & 1) == 0;
+	        //uint16_t* row = data.data() + static_cast<size_t>(y) * width;
 	
-	        for (int x = 0; x < width; ++x) {
-	            const bool evenCol = (x & 1) == 0;
+	        //for (int x = 0; x < width; ++x) {
+	            //const bool evenCol = (x & 1) == 0;
 	
-	            // BGGR pattern:
-	            // row 0: B G B G ...
-	            // row 1: G R G R ...
-	            const uint32_t v = row[x];
-	            uint16_t out;
-	            if (evenRow) {
-	                out = evenCol ? mulSatQ10(v, bQ) : mulSatQ10(v, gQ);
-	            } else {
-	                out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, rQ);
-	            }
-	            row[x] = out;
-	        }
-	    }
-	}
+	            //// BGGR pattern:
+	            //// row 0: B G B G ...
+	            //// row 1: G R G R ...
+	            //const uint32_t v = row[x];
+	            //uint16_t out;
+	            //if (evenRow) {
+	                //out = evenCol ? mulSatQ10(v, bQ) : mulSatQ10(v, gQ);
+	            //} else {
+	                //out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, rQ);
+	            //}
+	            //row[x] = out;
+	        //}
+	    //}
+	//}
 	
+	//template<size_t n>
+	//inline void Aperture<n>::ApplyWhiteBalanceToMosaic_RGGB(
+		//size_t region,
+		//const sf_t& sf,
+		//std::span<uint16_t> data,
+		//const GainMsg& gainMsg
+	//){
+		//log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_RGGB]");
+	
+		//const size_t elems = (region == 0) ? sf_.sf_t::nonOverlapFacet_t::size()
+										   //: sf.size(region - 1);
+		//if (data.size() != elems) {
+			//std::cerr << "[WB] size mismatch: data=" << data.size()
+					  //<< " expected=" << elems << "\n";
+			//std::exit(EXIT_FAILURE);
+		//}
+	
+		//auto toQ10 = [](double g) -> uint32_t {
+			//if (g < 0.0) g = 0.0;
+			//return static_cast<uint32_t>(std::lround(g * 1024.0));
+		//};
+	
+		//const uint32_t rQ = toQ10(gainMsg.r_gain_apply);
+		//const uint32_t gQ = toQ10(1.0);
+		//const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
+	
+		//auto mulSatQ10 = [](uint32_t v, uint32_t gainQ) -> uint16_t {
+			//uint64_t t = static_cast<uint64_t>(v) * gainQ + 512;
+			//t >>= 10;
+			//if (t > 65535u) t = 65535u;
+			//return static_cast<uint16_t>(t);
+		//};
+	
+		//const size_t maskedSize = (region == 0)
+			//? sf_.sf_t::nonOverlapFacet_t::size()
+			//: sf.indexLinearMaxs_[region - 1]->size();
+	
+		//for (size_t i = 0; i < maskedSize; ++i) {
+			//typename sf_t::GlobalLinearShapeFunction_t::Index globalIndex{
+				//(region == 0)
+					//? (*sf_.sf_t::nonOverlapFacet_t::indexLinearMax_)[i].value()
+					//: (*sf.indexLinearMaxs_[region - 1])[i].value()
+			//};
+	
+			//typename sf_t::GlobalLinearShapeFunction_t::Point globalPt{
+				//sf_t::GlobalLinearShapeFunction_t::Transform(globalIndex)
+			//};
+	
+			//const bool evenRow = (globalPt.y_ & 1) == 0;
+			//const bool evenCol = (globalPt.x_ & 1) == 0;
+	
+			//// RGGB pattern:
+			//// row 0: R G R G ...
+			//// row 1: G B G B ...
+			//const uint32_t v = data[i];
+			//uint16_t out;
+			//if (evenRow) {
+				//out = evenCol ? mulSatQ10(v, rQ) : mulSatQ10(v, gQ);
+			//} else {
+				//out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, bQ);
+			//}
+	
+			//data[i] = out;
+		//}
+	//}
 	
 	//template<size_t n>
 	//auto AperturePeer<n>::BrightenImage(std::vector<uint8_t> &&input){

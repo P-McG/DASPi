@@ -223,9 +223,32 @@ void Aperture<n>::CameraConfiguration() {
     log_verbose("[Aperture::CameraConfiguration]");
 
     config_ = camera_->generateConfiguration({ libcamera::StreamRole::Raw });
-    if (!config_) {
-        throw std::runtime_error("camera_->generateConfiguration returned null");
+    if (!config_ || config_->empty()) {
+        throw std::runtime_error("camera_->generateConfiguration returned null or empty");
     }
+
+    auto &cfg = config_->at(0);
+
+    // Force requested raw format here
+    cfg.pixelFormat = libcamera::formats::SBGGR16;
+    cfg.size = {1456, 1088};
+
+    std::cout << "[RequestedConfig] pixelFormat="
+              << cfg.pixelFormat.toString()
+              << " width=" << cfg.size.width
+              << " height=" << cfg.size.height
+              << std::endl;
+
+    const libcamera::CameraConfiguration::Status status = config_->validate();
+
+    std::cout << "[ValidatedConfig] pixelFormat="
+              << config_->at(0).pixelFormat.toString()
+              << " width=" << config_->at(0).size.width
+              << " height=" << config_->at(0).size.height
+              << " stride=" << config_->at(0).stride
+              << " frameSize=" << config_->at(0).frameSize
+              << " status=" << static_cast<int>(status)
+              << std::endl;
 
     boardSerial_ = GetBoardSerial();
 
@@ -876,22 +899,21 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
               << " buffer=" << buffer << std::endl;
 
     static int producedFrames = 0;
-    producedFrames++;
-    if (producedFrames % 10 == 0) {
+    ++producedFrames;
+    if ((producedFrames % 10) == 0) {
         std::cout << "[Produced] " << producedFrames
                   << " frames buffered for UDP" << std::endl;
     }
 
     const auto planes = buffer->planes();
-    const auto &plane = planes.back();
-    if (!plane.fd.isValid()) {
-        std::cerr << "Invalid file descriptor for plane" << std::endl;
+    if (planes.empty()) {
+        std::cerr << "Frame buffer has no planes" << std::endl;
         std::exit(EXIT_FAILURE);
     }
 
-    void *mapped = mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
-    if (mapped == MAP_FAILED) {
-        perror("Failed to mmap plane data");
+    const auto &plane = planes.back();
+    if (!plane.fd.isValid()) {
+        std::cerr << "Invalid file descriptor for plane" << std::endl;
         std::exit(EXIT_FAILURE);
     }
 
@@ -917,61 +939,153 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
                   << expectedElems
                   << " sf size=" << sf_.sf_t::GlobalLinearShapeFunction_t::size()
                   << std::endl;
-        munmap(mapped, plane.length);
         std::exit(EXIT_FAILURE);
     }
 
-    const bool supported =
-        pixelFormat == libcamera::formats::SBGGR10 ||
-        pixelFormat == libcamera::formats::SBGGR16;
-    
-    if (!supported) {
+    const bool isSBGGR16 =
+        (pixelFormat == libcamera::formats::SBGGR16);
+
+    const bool isSBGGR10Packed =
+        (pixelFormat == libcamera::formats::SBGGR10_CSI2P);
+
+    if (!isSBGGR16 && !isSBGGR10Packed) {
         std::cerr << "Unsupported validated pixel format for current UDP path: "
                   << pixelFormat.toString() << std::endl;
-        munmap(mapped, plane.length);
         std::exit(EXIT_FAILURE);
     }
 
-    if ((strideBytes % sizeof(uint16_t)) != 0) {
-        std::cerr << "Stride is not 16-bit aligned: strideBytes="
-                  << strideBytes << std::endl;
-        munmap(mapped, plane.length);
-        std::exit(EXIT_FAILURE);
-    }
-
-    const size_t strideElems = strideBytes / sizeof(uint16_t);
     const size_t requiredBytes = strideBytes * activeHeight;
-
     if (plane.length < requiredBytes) {
         std::cerr << "Plane too small for configured stride/height: plane.length="
                   << plane.length
                   << " requiredBytes=" << requiredBytes
                   << std::endl;
-        munmap(mapped, plane.length);
         std::exit(EXIT_FAILURE);
     }
 
-    if (strideElems < activeWidth) {
-        std::cerr << "Stride smaller than active width: strideElems="
-                  << strideElems
-                  << " activeWidth=" << activeWidth
-                  << std::endl;
-        munmap(mapped, plane.length);
+    void *mapped = mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
+    if (mapped == MAP_FAILED) {
+        perror("Failed to mmap plane data");
         std::exit(EXIT_FAILURE);
     }
 
-    const auto *mappedData = static_cast<const uint16_t *>(mapped);
-
-    std::cout << "[FrameBufferToUDP] strideElems=" << strideElems
-              << " expectedElems=" << expectedElems
-              << " requiredBytes=" << requiredBytes
-              << std::endl;
+    auto unmapPlane = [&]() {
+        if (mapped != MAP_FAILED && munmap(mapped, plane.length) != 0) {
+            perror("Failed to unmap plane data");
+        }
+    };
 
     std::vector<uint16_t> activeFrame(expectedElems);
-    for (size_t y = 0; y < activeHeight; ++y) {
-        const uint16_t *srcRow = mappedData + y * strideElems;
-        uint16_t *dstRow = activeFrame.data() + y * activeWidth;
-        std::copy_n(srcRow, activeWidth, dstRow);
+
+    if (isSBGGR16) {
+        if ((strideBytes % sizeof(uint16_t)) != 0) {
+            std::cerr << "Stride is not 16-bit aligned for SBGGR16: strideBytes="
+                      << strideBytes << std::endl;
+            unmapPlane();
+            std::exit(EXIT_FAILURE);
+        }
+
+        const size_t strideElems = strideBytes / sizeof(uint16_t);
+        if (strideElems < activeWidth) {
+            std::cerr << "Stride smaller than active width: strideElems="
+                      << strideElems
+                      << " activeWidth=" << activeWidth
+                      << std::endl;
+            unmapPlane();
+            std::exit(EXIT_FAILURE);
+        }
+
+        const auto *mappedData = static_cast<const uint16_t *>(mapped);
+
+        std::cout << "[FrameBufferToUDP] SBGGR16 strideElems=" << strideElems
+                  << " expectedElems=" << expectedElems
+                  << " requiredBytes=" << requiredBytes
+                  << std::endl;
+
+        for (size_t y = 0; y < activeHeight; ++y) {
+            const uint16_t *srcRow = mappedData + y * strideElems;
+            uint16_t *dstRow = activeFrame.data() + y * activeWidth;
+            std::copy_n(srcRow, activeWidth, dstRow);
+        }
+    } else {
+        const auto *mappedData = static_cast<const uint8_t *>(mapped);
+        const size_t packedRowBytes = (activeWidth * 10 + 7) / 8;
+
+        if (strideBytes < packedRowBytes) {
+            std::cerr << "Stride smaller than packed RAW10 row size: strideBytes="
+                      << strideBytes
+                      << " packedRowBytes=" << packedRowBytes
+                      << std::endl;
+            unmapPlane();
+            std::exit(EXIT_FAILURE);
+        }
+
+        std::cout << "[FrameBufferToUDP] SBGGR10_CSI2P packedRowBytes="
+                  << packedRowBytes
+                  << " expectedElems=" << expectedElems
+                  << " requiredBytes=" << requiredBytes
+                  << std::endl;
+
+        for (size_t y = 0; y < activeHeight; ++y) {
+            const uint8_t *srcRow = mappedData + y * strideBytes;
+            uint16_t *dstRow = activeFrame.data() + y * activeWidth;
+
+            size_t x = 0;
+            size_t byteIdx = 0;
+
+            for (; x + 3 < activeWidth; x += 4, byteIdx += 5) {
+                const uint8_t b0 = srcRow[byteIdx + 0];
+                const uint8_t b1 = srcRow[byteIdx + 1];
+                const uint8_t b2 = srcRow[byteIdx + 2];
+                const uint8_t b3 = srcRow[byteIdx + 3];
+                const uint8_t b4 = srcRow[byteIdx + 4];
+
+                dstRow[x + 0] = static_cast<uint16_t>(
+                    (static_cast<uint16_t>(b0) << 2) | ((b4 >> 0) & 0x03));
+                dstRow[x + 1] = static_cast<uint16_t>(
+                    (static_cast<uint16_t>(b1) << 2) | ((b4 >> 2) & 0x03));
+                dstRow[x + 2] = static_cast<uint16_t>(
+                    (static_cast<uint16_t>(b2) << 2) | ((b4 >> 4) & 0x03));
+                dstRow[x + 3] = static_cast<uint16_t>(
+                    (static_cast<uint16_t>(b3) << 2) | ((b4 >> 6) & 0x03));
+            }
+
+            if (x != activeWidth) {
+                std::cerr << "Active width must currently be divisible by 4 for RAW10 unpack: "
+                          << activeWidth << std::endl;
+                unmapPlane();
+                std::exit(EXIT_FAILURE);
+            }
+        }
+    }
+
+    {
+        auto [minIt, maxIt] = std::minmax_element(activeFrame.begin(), activeFrame.end());
+        std::cout << "[activeFrame] min=" << *minIt
+                  << " max=" << *maxIt << std::endl;
+    
+        cv::Mat raw16(static_cast<int>(activeHeight),
+                      static_cast<int>(activeWidth),
+                      CV_16UC1,
+                      activeFrame.data());
+    
+        cv::Mat bgr_bg_16, bgr_gb_16, bgr_rg_16, bgr_gr_16;
+        cv::Mat bgr_bg_8,  bgr_gb_8,  bgr_rg_8,  bgr_gr_8;
+    
+        cv::cvtColor(raw16, bgr_bg_16, cv::COLOR_BayerBG2BGR);
+        cv::cvtColor(raw16, bgr_gb_16, cv::COLOR_BayerGB2BGR);
+        cv::cvtColor(raw16, bgr_rg_16, cv::COLOR_BayerRG2BGR);
+        cv::cvtColor(raw16, bgr_gr_16, cv::COLOR_BayerGR2BGR);
+    
+        bgr_bg_16.convertTo(bgr_bg_8, CV_8UC3, 1.0 / 256.0);
+        bgr_gb_16.convertTo(bgr_gb_8, CV_8UC3, 1.0 / 256.0);
+        bgr_rg_16.convertTo(bgr_rg_8, CV_8UC3, 1.0 / 256.0);
+        bgr_gr_16.convertTo(bgr_gr_8, CV_8UC3, 1.0 / 256.0);
+    
+        cv::imwrite("/tmp/bayer_bg.png", bgr_bg_8);
+        cv::imwrite("/tmp/bayer_gb.png", bgr_gb_8);
+        cv::imwrite("/tmp/bayer_rg.png", bgr_rg_8);
+        cv::imwrite("/tmp/bayer_gr.png", bgr_gr_8);
     }
 
     std::span<uint16_t> mappedDataSpan(activeFrame.data(), activeFrame.size());
@@ -993,12 +1107,10 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
     auto data = sfdp.TakeContiguousMemory();
 
     std::array<uint32_t, NUM_REGIONS> regionSizes{};
-    for (size_t i = 0; i < NUM_REGIONS; ++i) {
-        regionSizes[i] = static_cast<uint32_t>(sfdp.RegionValidSize(i));
-    }
-
     size_t totalElems = 0;
     for (size_t i = 0; i < NUM_REGIONS; ++i) {
+        regionSizes[i] = static_cast<uint32_t>(sfdp.RegionValidSize(i));
+
         const auto valid = sfdp.RegionValidSize(i);
         std::cout << "[TX] region " << i
                   << " valid=" << valid
@@ -1016,7 +1128,7 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
                   << "sum(validSizes)=" << totalElems
                   << " packed=" << data.size()
                   << std::endl;
-        munmap(mapped, plane.length);
+        unmapPlane();
         std::exit(EXIT_FAILURE);
     }
 
@@ -1029,9 +1141,7 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
         )
     );
 
-    if (munmap(mapped, plane.length) != 0) {
-        perror("Failed to unmap plane data");
-    }
+    unmapPlane();
 
     std::cout << "[GainApply] frame=" << frameNumber
               << " r_gain=" << appliedGainMsg.r_gain
@@ -1291,14 +1401,85 @@ inline void Aperture<n>::ApplyWhiteBalanceToMosaic_BGGR(
 		const uint32_t v{ data[i]};
 		//const uint32_t v = row[globalPt.x_];
 		uint16_t out;
-		if (evenRow) {
-			out = evenCol ? mulSatQ10(v, bQ) : mulSatQ10(v, gQ);
-		} else {
-			out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, rQ);
-		}
+		//if (evenRow) {
+			//out = evenCol ? mulSatQ10(v, bQ) : mulSatQ10(v, gQ);
+		//} else {
+			//out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, rQ);
+		//}
+        if (evenRow) {
+            out = evenCol ? mulSatQ10(v, rQ) : mulSatQ10(v, gQ);
+        } else {
+            out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, bQ);
+        }
 		data[i] = out;
 	}
 	//std::cout << "Check-Point 3" << std::endl;
+}
+
+template<size_t n>
+inline void Aperture<n>::ApplyWhiteBalanceToMosaic_RGGB(
+    size_t region,
+    const sf_t& sf,
+    std::span<uint16_t> data,
+    const GainMsg& gainMsg
+){
+    log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_RGGB]");
+
+    const size_t elems = (region == 0) ? sf_.sf_t::nonOverlapFacet_t::size()
+                                       : sf.size(region - 1);
+    if (data.size() != elems) {
+        std::cerr << "[WB] size mismatch: data=" << data.size()
+                  << " expected=" << elems << "\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    auto toQ10 = [](double g) -> uint32_t {
+        if (g < 0.0) g = 0.0;
+        return static_cast<uint32_t>(std::lround(g * 1024.0));
+    };
+
+    const uint32_t rQ = toQ10(gainMsg.r_gain_apply);
+    const uint32_t gQ = toQ10(1.0);
+    const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
+
+    auto mulSatQ10 = [](uint32_t v, uint32_t gainQ) -> uint16_t {
+        uint64_t t = static_cast<uint64_t>(v) * gainQ + 512;
+        t >>= 10;
+        if (t > 65535u) t = 65535u;
+        return static_cast<uint16_t>(t);
+    };
+
+    const size_t maskedSize = (region == 0)
+        ? sf_.sf_t::nonOverlapFacet_t::size()
+        : sf.indexLinearMaxs_[region - 1]->size();
+
+    for (size_t i = 0; i < maskedSize; ++i) {
+        typename sf_t::GlobalLinearShapeFunction_t::Index globalIndex{
+            (region == 0)
+                ? (*sf_.sf_t::nonOverlapFacet_t::indexLinearMax_)[i].value()
+                : (*sf.indexLinearMaxs_[region - 1])[i].value()
+        };
+
+        typename sf_t::GlobalLinearShapeFunction_t::Point globalPt{
+            sf_t::GlobalLinearShapeFunction_t::Transform(globalIndex)
+        };
+
+        const bool evenRow = (globalPt.y_ & 1) == 0;
+        const bool evenCol = (globalPt.x_ & 1) == 0;
+
+        // RGGB pattern:
+        // row 0: R G R G ...
+        // row 1: G B G B ...
+        const uint32_t v = data[i];
+        uint16_t out;
+        if (evenRow) {
+            out = evenCol ? mulSatQ10(v, rQ) : mulSatQ10(v, gQ);
+        } else {
+            out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, bQ);
+        }
+
+        data[i] = out;
+    }
 }
 	
 template<size_t n>
@@ -1480,7 +1661,7 @@ constexpr void Aperture<n>::FrameBufferTransformation(InputT&& input,
 
     {
         auto maskedOutput = sf_.sf_t::nonOverlapFacet_t::FrameBufferMask(input);
-        ApplyWhiteBalanceToMosaic_BGGR(
+        ApplyWhiteBalanceToMosaic_RGGB(
             0, sf_,
             std::span<uint16_t>(maskedOutput.data(), maskedOutput.size()),
             gainMsg
@@ -1490,7 +1671,7 @@ constexpr void Aperture<n>::FrameBufferTransformation(InputT&& input,
 
     for (size_t i = 0; i < n_; ++i) {
         auto maskedOutput = sf_.FrameBufferMask(input, i);
-        ApplyWhiteBalanceToMosaic_BGGR(
+        ApplyWhiteBalanceToMosaic_RGGB(
             i + 1, sf_,
             std::span<uint16_t>(maskedOutput.data(), maskedOutput.size()),
             gainMsg

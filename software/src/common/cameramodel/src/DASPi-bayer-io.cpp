@@ -54,7 +54,7 @@ cv::Mat LoadBayer16AsBgr8(const std::string& path,
 cv::Mat decodeBayer16ToBgr8(const std::uint16_t* data,
                             int width,
                             int height,
-                            int bayerCode = cv::COLOR_BayerRG2BGR)
+                            int bayerCode = cv::COLOR_BayerBG2BGR)
 {
     cv::Mat raw16(height, width, CV_16UC1, const_cast<std::uint16_t*>(data));
     cv::Mat raw16Copy = raw16.clone();
