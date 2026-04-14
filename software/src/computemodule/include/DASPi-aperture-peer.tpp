@@ -184,9 +184,9 @@ namespace DASPi{
 			}
 		}
 	
-		for (size_t i = 0; i < n_ + 1; ++i) {
-			this->BrightenImageInplace(std::span<uint16_t>(newBuffers[i]), 6);
-		}
+		//for (size_t i = 0; i < n_ + 1; ++i) {
+			//this->BrightenImageInplace(std::span<uint16_t>(newBuffers[i]), 6);
+		//}
 	
 		{
 			std::scoped_lock lock(bufferMutex_);
