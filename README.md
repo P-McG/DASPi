@@ -34,8 +34,6 @@ System starts automatically via systemd
 
 ## Quick Debug
 
-## Quick Debug
-
 - No SSH? → [SSH Troubleshooting](docs/troubleshooting.md#ssh)
 - PXE not booting? → [PXE Setup](docs/pxe.md)
 - Build failing? → [Build Guide](docs/build.md)
