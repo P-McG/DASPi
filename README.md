@@ -32,6 +32,13 @@ System starts automatically via systemd
 - [UDP Protocol](docs/udp.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
+## Quick Debug
+
+- No SSH? → docs/troubleshooting.md#ssh
+- PXE not booting? → docs/pxe.md
+- Build failing? → docs/build.md
+- Bad frames? → docs/pipeline.md
+
 ## Repo Structure
 ```
 /software
