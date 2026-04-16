@@ -34,10 +34,12 @@ System starts automatically via systemd
 
 ## Quick Debug
 
-- No SSH? → docs/troubleshooting.md#ssh
-- PXE not booting? → docs/pxe.md
-- Build failing? → docs/build.md
-- Bad frames? → docs/pipeline.md
+## Quick Debug
+
+- No SSH? → [SSH Troubleshooting](docs/troubleshooting.md#ssh)
+- PXE not booting? → [PXE Setup](docs/pxe.md)
+- Build failing? → [Build Guide](docs/build.md)
+- Bad frames? → [Pipeline Debugging](docs/pipeline.md)
 
 ## Repo Structure
 ```
