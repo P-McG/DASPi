@@ -1,0 +1,18 @@
+[Unit]
+Description=DASPi Aperture Compute Module
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/aperturecomputemodule
+WorkingDirectory=/opt/daspi
+ExecStart=/opt/daspi/bin/launch-aperturecomputemodule.sh
+Restart=always
+RestartSec=2
+
+StandardOutput=append:/var/log/aperturecomputemodule/aperturecomputemodule.log
+StandardError=append:/var/log/aperturecomputemodule/aperturecomputemodule.log
+
+[Install]
+WantedBy=multi-user.target

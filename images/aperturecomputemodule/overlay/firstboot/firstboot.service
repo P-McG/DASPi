@@ -1,0 +1,10 @@
+[Unit]
+Description=First boot personalization
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/firstboot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,179 +1,40 @@
-# DASPi
-## What it is
-Distributed Aperture System (DAS) using the Raspberry Pi.
-DASPi consists of n-cameras mounted around the physical object in such a way as to provide unobstructed spherical (4π steradian) coverage.
+#DASPi
 
-Very early work in progress
+Distributed Aperture System for Raspberry Pi Compute Modules
 
-## Current Hardware
-### Compute Module
-Raspberry Pi 5 
-Raspberry Pi AI Kit
-Dedicated All-In-One Aluminum Cooler for Raspberry Pi 5, PWM
-### Aperture Compute Module
-Raspberry Pi Zero 2 W
-Raspberry Pi Global Shutter Camera: imx296
-Dedicated Aluminum Heatsink for Raspberry Pi Zero 2 W
-Raspberry Pi Camera Cable Standard - Mini - 200mm V2
-### USB-hub
-USB 2.0 Hub Type-C Multi Safety 10 Ports Powered, with AC Adapter, Aluminum USB Splitter with Cooling Fan - Type C
-##Software
-### Repo layout
-```.
-├── LICENSE
-├── README.md
-├── software
-│   ├── build
-│   ├── dist
-│   │   ├── aperturecomputemodule
-│   │   │   └── aperturecomputemodule
-│   │   └── computemodule
-│   │       └── computemodule
-│   ├── docs
-│   ├── scripts
-│   │   ├── camera_dashboard.sh
-│   │   ├── common_deploy.sh
-│   │   ├── distribute_and_run_aperturecomputemodule_code.sh
-│   │   ├── distribute_and_run_computemodule_code.sh
-│   │   ├── fetch_files.sh
-│   │   ├── monitor_aperture_nodes.sh
-│   │   └── update_sysroot.sh
-│   └── src
-│       ├── aperturecomputemodule
-│       │   ├── cross-aperturecomputemodule.txt
-│       │   ├── include
-│       │   ├── meson.build
-│       │   ├── pch
-│       │   ├── src
-│       │   └── TODO.md
-│       ├── common
-│       │   ├── include
-│       │   ├── logger
-│       │   ├── meson.build
-│       │   ├── scopedtimer
-│       │   ├── shapefunction
-│       │   └── udp
-│       ├── computemodule
-│       │   ├── cross-computemodule.txt
-│       │   ├── include
-│       │   ├── meson.build
-│       │   ├── src
-│       │   └── TODO.md
-│       ├── meson.build
-│       └── meson_options.txt
-├── structure.txt
-└── TODO.md
+## Overview
+DASPi is a distributed multi-camera system that captures, streams, and stitches frames across multiple Raspberry Pi nodes using UDP.
 
-250 directories, 132 files
-```
+## Architecture
+- PXE Boot Server (central node)
+- aperturecomputemodule (capture + transmit)
+- computemodule (receive + stitch)
 
-### Build prerequisites for Compute-Module
-#### Host file On host
-Place in host file:
+## Quick Start
 
-```
-[ip_address_here] computemodule000
-[ip_address_here] aperturecomputemodule000
-.                      .
-.                      .
-.                      .
-[ip_address_here] aperturecomputemoduleNNN
-```
+### 1. Build
+./software/scripts/build-aperturecomputemodule.sh
 
-sudo apt update
-sudo apt install -y tmux
+### 2. Deploy to PXE Server
+rsync -av build/ user@pxeserver:/srv/nfs/
 
-### Build prerequisites for Aperture-Compute-Module
-#### Native prerequisites
-sudo apt install \
-  build-essential meson ninja-build pkg-config \
-  libopencv-dev libeigen3-dev libtbb-dev \
-  libblas-dev liblapack-dev
-  
-#### Host file On host
-Place in host file:
-```
-[ip_address_here] computemodule000
-[ip_address_here] aperturecomputemodule000
-.                      .
-.                      .
-.                      .
-[ip_address_here] aperturecomputemoduleNNN
-```
+### 3. Boot Nodes
+Power on compute modules (PXE boot)
 
-sudo apt update
-sudo apt install -y tmux
+### 4. Run
+System starts automatically via systemd
 
-#### Cross-Compiling Sources for the Compute-Module and Aperture-Compute-Module
-Set up the cross compiling sources for the aperturecomputemodule000. 
-This needs to be performed every major change, or update, to the aperturecomputemodules. 
-Only one of the aperturecomputemodules is needed to be synced if all of the aperturecomputemodules are the same. 
+## Documentation
+- [Build & Cross Compilation](docs/build.md)
+- [PXE Setup](docs/pxe.md)
+- [Camera Pipeline](docs/pipeline.md)
+- [UDP Protocol](docs/udp.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
-```
-~/DASPi/software/scripts/update_sysroot.sh
-```
+## Repo Structure
+/software
+/images
+/docs
 
-### Cross-Compiling aperturecomputemodule
-```
-rm -rf ~/DASPi/software/build/aperturecomputemodule
-
-meson setup ~/DASPi/software/build/aperturecomputemodule \
-  ~/DASPi/software/src \
-  --cross-file ~/DASPi/software/src/aperturecomputemodule/cross-aperturecomputemodule.txt \
-  -Dbuild_aperturecomputemodule=true \
-  -Dbuild_computemodule=false
-
-meson compile -C ~/DASPi/software/build/aperturecomputemodule
-
-~/DASPi/src/distribute_and_run_aperturecomputemodule_code.sh
-```
-
-### Cross-compiling computemodule 
-```
-rm -rf ~/DASPi/software/build/computemodule
-
-meson setup ~/DASPi/software/build/computemodule \
-  ~/DASPi/software/src \
-  --cross-file ~/DASPi/software/src/computemodule/cross-computemodule.txt \
-  -Dbuild_aperturecomputemodule=false \
-  -Dbuild_computemodule=true
-
-meson compile -C ~/DASPi/software/build/computemodule
-
-~/DASPi/src/distribute_and_run_computemodule_code.sh
-```
-### Deployment
-To copy output from the computemodule
-```
-~/DASPi/software/scripts/fetch_files.sh
-```
-### Native compiling computemodule
-meson setup ~/DASPi/software/build/computemodule-native \
-  ~/DASPi/software/src \
-  -Dbuild_computemodule=true \
-  -Dbuild_aperturecomputemodule=false
-  
-### Viewing captured output
-```
-ffplay -f rawvideo -pixel_format bayer_rggb16le -video_size  \
-1456x1088 ~/bayer_dumps/output-10.0.2.3_0.bayer
-```
-
-### GIT Commits Notes:
-Sync workflow 
-Before working:
-git pull
-After changes:
-git add .
-git commit -m "message"
-git push
-
-## Current status / roadmap
-
-### Roadmap
--[ ] represent each overlap/non-overlap region as an image-space mask per camera
--[ ] create one common world frame
--[ ] use calibrated unprojection for each wide-angle image
--[ ] generate an equirectangular sphere map by inverse mapping
--[ ] use non-overlap masks for hard ownership
--[ ] use overlap masks for feathered blending
+## License
+MIT license

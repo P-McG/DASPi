@@ -1,0 +1,4 @@
+CLIENT_IP=10.0.2.1
+BASE_PORT=5000
+VERBOSE=--verbose
+BINARY=/opt/daspi/aperturecomputemodule

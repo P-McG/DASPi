@@ -1,1 +1,0 @@
-raspberry_pi_zero_2w

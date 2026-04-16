@@ -1,0 +1,4 @@
+SHA256 file integrity hash
+681a775e20b53a9e4c7341d748a5a8cdc822039d8c67c1fd6ca35927abbe6290
+
+https://www.raspberrypi.com/software/operating-systems/

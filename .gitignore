@@ -5,10 +5,15 @@ dist/
 # Sysroots
 *-sysroot/
 sysroots/
+images/**/sysroot/
 
 # Generated data
 *.bayer
 *.log
+
+# Disk images
+*.img
+*.img.xz
 
 # Optional
 *.core
