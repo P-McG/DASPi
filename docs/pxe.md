@@ -111,7 +111,7 @@ On boot, ensure:
 - no missing libraries:
 ```bash
 ldd /opt/daspi/aperturecomputemodule
-``
+```
 
 10. Common First-Time Issues
 - ❌ No ping → NIC not initialized or ARP not primed
