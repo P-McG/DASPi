@@ -8,7 +8,7 @@ Hard-earned fixes here:
 - rsync permission issues
 
 ## sudo: unable to resolve host
-Cause
+### Cause
 
 This occurs when the system’s hostname is not properly mapped in ```/etc/hosts```.
 
@@ -58,4 +58,16 @@ This issue does not usually break functionality, but:
 
 - clutters logs and terminal output
 - can indicate deeper hostname/network misconfiguration
--may affect services relying on proper hostname resolution
+- may affect services relying on proper hostname resolution
+
+## pixel format mismatch (SBGGR10 vs SBGGR16)
+### Cause
+Pi 5 (with libcamera v0.6) with Pi's global-shutter camera no longer supports Bayer image mode SBGGR10 and will switch upon verify to Bayer image mode SRGGB10_CSI2P/BGGR_PISP_COMP1.
+### Fix
+Make sure both libcamera and opencv are using the SBGGR16 uncompressed, or RAW, mode.
+### Verify
+On the ```aperturecomputemodule``` node run 
+```bash rpicam-hello list-cameras```
+and this will show the default mode of the setup. Running 
+```bash /opt/daspi/aperturecomputemodule --verbose --clientIp=10.0.2.1 --port=5000```
+will output ```INFO RPI pisp.cpp:1485 Sensor: /base/axi/pcie@1000120000/rp1/i2c@88000/imx296@1a - Selected sensor format: 1456x1088-SBGGR10_1X10/RAW - Selected CFE format: 1456x1088-BYR2/RAW```
