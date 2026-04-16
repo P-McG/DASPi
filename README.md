@@ -1,6 +1,7 @@
-#DASPi
+# DASPi
+Distributed Aperture System(DAS) for Raspberry Pi Compute Modules
 
-Distributed Aperture System for Raspberry Pi Compute Modules
+**Very-early work-in-progress**
 
 ## Overview
 DASPi is a distributed multi-camera system that captures, streams, and stitches frames across multiple Raspberry Pi nodes using UDP.
@@ -32,9 +33,10 @@ System starts automatically via systemd
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## Repo Structure
+```
 /software
 /images
 /docs
-
+```
 ## License
 MIT license
