@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="DASPi Logo" width="200"/>
+</p>
+
 # DASPi
 Distributed Aperture System(DAS) for Raspberry Pi Compute Modules
 
