@@ -7,6 +7,8 @@ Hard-earned fixes here:
 - pixel format mismatch (SBGGR10 vs SBGGR16)
 - rsync permission issues
 - No response to ```ping <aperturecomputemodule>```
+- `apt update` Fails (No Internet from PXE Nodes)
+- ERROR: Malformed machine file: Source contains parsing errors:[line  7]: ']\n'
 
 ## sudo: unable to resolve host
 ### Cause
@@ -332,6 +334,14 @@ In DASPi, a non-responsive ping during early boot is often not a hard failure, b
 
 We observed that the node may not respond to ICMP (ping) until its network stack and services are fully initialized.
 
+### Key Insight
+
+In DASPi, the PXEServer provides DHCP, TFTP, and NFS services, but does not necessarily act as a network gateway.
+
+The default gateway must be set to the device that provides internet access and routing (e.g., the laptop at 10.0.2.1), not simply the DHCP server.
+
+Assigning the PXEServer as the gateway without enabling NAT/forwarding will result in nodes being unable to reach external networks.
+
 ### Root Causes
 #### 1. NIC Not Initialized (First Boot Requirement) ⭐
 
@@ -448,3 +458,111 @@ If the node:
 - has been booted once via SD card
 - eventually sends UDP data
 then networking is functioning — it just needs to be **initialized and primed**.
+
+## `apt update` Fails (No Internet from PXE Nodes)
+
+### Problem
+
+PXE-booted nodes cannot access the internet:
+
+```bash
+ping 8.8.8.8
+
+# → 100% packet loss
+sudo apt update
+
+# → fails / cannot reach repositories
+```
+### Cause
+
+The node has a valid local network configuration (DHCP, PXE, NFS), but **no valid internet gateway**.
+
+In DASPi, this commonly occurs when:
+- dnsmasq assigns the PXEServer (10.0.2.2) as the default gateway:
+    ```default via 10.0.2.2```
+but the PXEServer does **not** provide internet routing (no NAT / no upstream connection)
+
+Result:
+Traffic reaches the PXEServer and stops — no path to the internet.
+
+### Key Insight
+PXE boot only requires local networking. Internet access is a separate requirement.
+
+Even if:
+- PXE boot works
+- NFS root mounts
+- services run
+
+…the node will still fail to reach external networks unless a valid gateway exists.
+
+### Fix (DASPi Setup)
+
+Use the **laptop (**10.0.2.1**) as the network gateway**, since it already has internet access.
+
+#### 1. Update `dnsmasq` on PXEServer
+Edit:
+```bash
+sudo nano /etc/dnsmasq.conf
+```
+Change:
+```ini
+dhcp-option=3,10.0.2.2
+```
+to:
+```ini
+dhcp-option=3,10.0.2.1
+```
+(Optional but recommended for DNS):
+```ini
+dhcp-option=6,8.8.8.8
+```
+#### 2. Restart `dnsmasq`
+```bash
+sudo systemctl restart dnsmasq
+```
+#### 3. Reboot node
+```bash 
+sudo reboot
+```
+#### 4. Verify
+On the node:
+```bash
+ip route
+```
+Expected:
+```bash
+default via 10.0.2.1 dev eth0
+```
+Then test:
+```bash
+ping -c 3 8.8.8.8
+ping -c 3 deb.debian.org
+sudo apt update
+```
+### Quick Test (Without Reboot)
+
+Temporarily override the gateway:
+```bash
+sudo ip route replace default via 10.0.2.1
+```
+### Requirements
+- Laptop (10.0.2.1) must have:
+    - internet connectivity
+    - IP forwarding enabled
+    - NAT configured (MASQUERADE)
+
+### Summary
+
+In DASPi, PXEServer is responsible for:
+- DHCP
+- TFTP
+- NFS
+…but **not necessarily routing**.
+
+Assigning the correct gateway (laptop) restores internet access for PXE nodes and allows apt to function normally.
+
+## ERROR: Malformed machine file: Source contains parsing errors:[line  7]: ']\n'
+### Problem
+The cross compilation file is malformed and needs fixed.
+### Fix
+Put the `]\n` on the previous line.

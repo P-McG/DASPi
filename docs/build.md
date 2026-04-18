@@ -88,7 +88,8 @@ Without a correct sysroot, common failures include:
 Meson uses a cross file to describe the target platform, compiler tools, and sysroot.
 
 Example:
-```ini
+`cross-aarch64-base.ini`
+```
 [binaries]
 c = 'aarch64-linux-gnu-gcc'
 cpp = 'aarch64-linux-gnu-g++'
@@ -101,29 +102,107 @@ system = 'linux'
 cpu_family = 'aarch64'
 cpu = 'aarch64'
 endian = 'little'
+```
 
+`cross-aperturecomputemodule.ini`
+```ini
 [properties]
 sys_root = getenv('DASPI_SYSROOT')
-
 pkg_config_libdir = [
   getenv('DASPI_SYSROOT') + '/usr/lib/aarch64-linux-gnu/pkgconfig',
   getenv('DASPI_SYSROOT') + '/usr/lib/pkgconfig',
-  getenv('DASPI_SYSROOT') + '/usr/share/pkgconfig'
+  getenv('DASPI_SYSROOT') + '/usr/share/pkgconfig',
 ]
+pkg_config_sysroot_dir = getenv('DASPI_SYSROOT')
 
 [built-in options]
-c_args = ['--sysroot=getenv('DASPI_SYSROOT')/images/aperturecomputemodule/sysroot/rootfs']
-cpp_args = ['--sysroot=getenv('DASPI_SYSROOT')/images/aperturecomputemodule/sysroot/rootfs']
-c_link_args = ['--sysroot=getenv('DASPI_SYSROOT')/images/aperturecomputemodule/sysroot/rootfs']
-cpp_link_args = ['--sysroot=getenv('DASPI_SYSROOT')/images/aperturecomputemodule/sysroot/rootfs']
+c_args = [
+  '--sysroot=' + getenv('DASPI_SYSROOT'),
+]
+cpp_args = [
+  '--sysroot=' + getenv('DASPI_SYSROOT'),
+]
+c_link_args = [
+  '--sysroot=' + getenv('DASPI_SYSROOT'),
+  '-L' + getenv('DASPI_SYSROOT') + '/lib/aarch64-linux-gnu',
+  '-L' + getenv('DASPI_SYSROOT') + '/usr/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,' + getenv('DASPI_SYSROOT') + '/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,' + getenv('DASPI_SYSROOT') + '/usr/lib/aarch64-linux-gnu',
+]
+cpp_link_args = [
+  '--sysroot=' + getenv('DASPI_SYSROOT'),
+  '-L' + getenv('DASPI_SYSROOT') + '/lib/aarch64-linux-gnu',
+  '-L' + getenv('DASPI_SYSROOT') + '/usr/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,' + getenv('DASPI_SYSROOT') + '/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,' + getenv('DASPI_SYSROOT') + '/usr/lib/aarch64-linux-gnu',
+]
+
+[cmake]
+CMAKE_SYSTEM_NAME = 'Linux'
+CMAKE_SYSTEM_PROCESSOR = 'aarch64'
+CMAKE_SYSROOT = getenv('DASPI_SYSROOT')
+CMAKE_FIND_ROOT_PATH = getenv('DASPI_SYSROOT')
+CMAKE_FIND_ROOT_PATH_MODE_PROGRAM = 'NEVER'
+CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = 'ONLY'
+CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = 'ONLY'
+CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = 'ONLY'
+```
+
+`cross-computemodule.ini`
+```
+[properties]
+sys_root = getenv('DASPI_SYSROOT')
+pkg_config_libdir = [
+  getenv('DASPI_SYSROOT') + '/usr/lib/aarch64-linux-gnu/pkgconfig',
+  getenv('DASPI_SYSROOT') + '/usr/lib/pkgconfig',
+  getenv('DASPI_SYSROOT') + '/usr/share/pkgconfig',
+]
+pkg_config_sysroot_dir = getenv('DASPI_SYSROOT')
+
+[built-in options]
+c_args = [
+  '--sysroot=' + getenv('DASPI_SYSROOT'),
+]
+cpp_args = [
+  '--sysroot=' + getenv('DASPI_SYSROOT'),
+]
+c_link_args = [
+  '--sysroot=' + getenv('DASPI_SYSROOT'),
+  '-L' + getenv('DASPI_SYSROOT') + '/lib/aarch64-linux-gnu',
+  '-L' + getenv('DASPI_SYSROOT') + '/usr/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,' + getenv('DASPI_SYSROOT') + '/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,' + getenv('DASPI_SYSROOT') + '/usr/lib/aarch64-linux-gnu',
+]
+cpp_link_args = [
+  '--sysroot=' + getenv('DASPI_SYSROOT'),
+  '-L' + getenv('DASPI_SYSROOT') + '/lib/aarch64-linux-gnu',
+  '-L' + getenv('DASPI_SYSROOT') + '/usr/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,' + getenv('DASPI_SYSROOT') + '/lib/aarch64-linux-gnu',
+  '-Wl,-rpath-link,' + getenv('DASPI_SYSROOT') + '/usr/lib/aarch64-linux-gnu',
+]
+
+[cmake]
+CMAKE_SYSTEM_NAME = 'Linux'
+CMAKE_SYSTEM_PROCESSOR = 'aarch64'
+CMAKE_SYSROOT = getenv('DASPI_SYSROOT')
+CMAKE_FIND_ROOT_PATH = getenv('DASPI_SYSROOT')
+CMAKE_FIND_ROOT_PATH_MODE_PROGRAM = 'NEVER'
+CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = 'ONLY'
+CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = 'ONLY'
+CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = 'ONLY'
 ```
 
 ## Building
 Example Meson setup:
+
+1. Aperture Compute Module
 ```bash
+export DASPI_SYSROOT="$HOME/DASPi/images/aperturecomputemodule/sysroot/rootfs/default"
+
 meson setup ~/DASPi/software/build/aperturecomputemodule \
   ~/DASPi/software/src \
-  --cross-file ~/DASPi/software/src/aperturecomputemodule/cross-aperturecomputemodule.txt \
+  --cross-file ~/DASPi/software/src/common/cross-aarch64-base.ini \
+  --cross-file ~/DASPi/software/src/aperturecomputemodule/cross-aperturecomputemodule.ini \
   -Dbuild_aperturecomputemodule=true \
   -Dbuild_computemodule=false
 ```
@@ -131,11 +210,42 @@ Compile with:
 ```bash
 meson compile -C ~/DASPi/software/build/aperturecomputemodule
 ```
-Or with a project build script:
+2. Compute Module
+```
+export DASPI_SYSROOT="$HOME/DASPi/sysroots/computemodule"
+
+meson setup ~/DASPi/software/build/computemodule \
+  ~/DASPi/software/src \
+  --cross-file ~/DASPi/software/src/common/cross-aarch64-base.ini \
+  --cross-file ~/DASPi/software/src/computemodule/cross-computemodule.ini \
+  -Dbuild_aperturecomputemodule=false \
+  -Dbuild_computemodule=true
+```
+Compile with:
 ```bash
-~/DASPi/software/scripts/build-aperturecomputemodule.sh
+meson compile -C ~/DASPi/software/build/aperturecomputemodule
 ```
 
+Or with a project build script:
+### Build + deploy:
+
+```bash
+./build-aperturecomputemodule.sh
+```
+
+### Build only:
+```bash
+DEPLOY=0 ./build-aperturecomputemodule.sh
+```
+
+### Fast rebuild, no sync, no deploy:
+```bash
+SYNC_SYSROOT=0 DEPLOY=0 ./build-aperturecomputemodule.sh
+```
+### Custom destination:
+```bash
+DEPLOY_PATH=/srv/nfs/default/opt/daspi/bin ./build-aperturecomputemodule.sh
+```
 ## Deployment
 Once built, the resulting binary can be copied into the target root filesystem used by the node.
 
@@ -166,7 +276,7 @@ Check with:
 ```bash
 ldd /opt/daspi/aperturecomputemodule
 ```
-```pkg-config``` finds host libraries instead of target libraries
+`pkg-config` finds host libraries instead of target libraries
 
 Usually means ```PKG_CONFIG_LIBDIR``` or the Meson cross file is not pointing at the sysroot pkg-config directories.
 

@@ -1,4 +1,29 @@
-# DASPi - PXE setup:
+# DASPi – PXE (Preboot Execution Environment)
+
+**DASPi PXE** enables diskless boot and centralized management of Raspberry Pi–based compute nodes within the DASPi system. Using standard **PXE** mechanisms, devices boot over the network instead of relying on local storage such as SD cards.
+
+In a DASPi deployment, a PXE server provides:
+
+- **DHCP services** to assign IP addresses and identify clients
+- **TFTP** boot resources (bootloader, kernel, firmware)
+- **NFS (or similar) root filesystem** for the operating system
+
+When a compute module powers on, it:
+1. Requests network configuration via DHCP
+2. Downloads boot files from the PXE server
+3. Mounts its root filesystem over the network
+4. Launches DASPi services (e.g., aperturecomputemodule) directly from the shared image
+
+This architecture allows:
+
+- **Centralized updates** (modify one image, update all nodes)
+- **Stateless nodes** (no SD card management or corruption issues)
+- **Rapid scaling** (new nodes join by simply connecting to the network)
+- **Consistent environments** across all compute modules
+
+In DASPi, PXE is especially useful for multi-node camera and processing clusters, where synchronized software deployment and reproducibility are critical.
+
+## DASPi - PXE setup:
 
 - dnsmasq config
 - /srv/tftp + /srv/nfs
@@ -6,124 +31,232 @@
 - Static IP + MAC mapping
 - Hostname handling issues
 
-## First-Time Bring-Up Checklist (aperturecomputemodule Node)
+## PXE Configuration (DASPi Network)
 
-This checklist ensures a new Raspberry Pi node is properly initialized for PXE boot and DASPi operation.
+This configuration assumes a fixed DASPi network:
 
----
+| Device                    | IP Address   |
+|--------------------------|-------------|
+| Laptop                   | 10.0.2.1     |
+| PXEServer                | 10.0.2.2     |
+| computemodule            | 10.0.2.3     |
+| aperturecomputemodule000 | 10.0.2.4     |
+| aperturecomputemodule001 | 10.0.2.5     |
 
-### 1. Initial SD Card Boot (Required) ⭐
-
-Before attempting PXE boot, the node must be booted once using an SD card.
-
-Why:
-- Initializes NIC firmware
-- Ensures a valid MAC address is provisioned
-- Enables reliable DHCP/PXE behavior
-
-Steps:
-
-1. Flash Raspberry Pi OS Lite (64-bit) to an SD card
-2. Insert SD card into the node
-3. Power on and allow full boot
-4. (Optional) Log in via SSH or console
-5. Power down the node
-6. Remove the SD card
+All nodes are connected via Ethernet on an isolated network.
 
 ---
 
-### 2. Record MAC Address
+## dnsmasq Configuration
 
-Boot the node (SD card or PXE) and obtain its MAC address:
+Edit:
 
 ```bash
-ip link
+sudo nano /etc/dnsmasq.conf
 ```
-Look for:
-```bash
-eth0: ... link/ether AA:BB:CC:DD:EE:FF
-```
-
-### 3. Configure DHCP (PXE Server)
-Add a static lease in `dnsmasq.conf`:
+Use:
 ```ini
-dhcp-host=AA:BB:CC:DD:EE:FF,10.0.2.10
-```
-This ensures:
-- consistent IP assignment
-- easier debugging and node identification
+# =========================
+# DASPi PXE Server Config
+# =========================
 
-Restart dnsmasq:
+# Bind to DASPi Ethernet interface
+interface=enp0s31f6
+bind-interfaces
+
+# Disable DNS (we only care about DHCP + TFTP)
+port=0
+
+# DHCP range (dynamic pool)
+dhcp-range=10.0.2.10,10.0.2.50,12h
+
+# Default gateway (optional, isolated network doesn't need it)
+dhcp-option=3,10.0.2.2
+
+# DNS server (optional)
+dhcp-option=6,10.0.2.2
+
+# =========================
+# Static IP Assignments
+# =========================
+# Replace MAC addresses!
+
+dhcp-host=AA:BB:CC:DD:EE:03,10.0.2.3   # computemodule
+dhcp-host=AA:BB:CC:DD:EE:04,10.0.2.4   # aperturecomputemodule000
+dhcp-host=AA:BB:CC:DD:EE:05,10.0.2.5   # aperturecomputemodule001
+
+# =========================
+# PXE / TFTP
+# =========================
+enable-tftp
+tftp-root=/srv/tftp
+
+# Required for Raspberry Pi PXE
+dhcp-boot=bootcode.bin
+
+# =========================
+# Logging (VERY useful)
+# =========================
+log-dhcp
+log-queries
+```
+
+Restart:
 ```bash
 sudo systemctl restart dnsmasq
 ```
+## TFTP Boot Files (/srv/tftp)
 
-### 4. Verify PXE Boot Files
-Ensure required files exist on the PXE server:
+Required files:
 ```
 /srv/tftp/
   ├── start4.elf
+  ├── fixup4.dat
+  ├── kernel_2712.img
   ├── config.txt
   ├── cmdline.txt
-  ├── kernel_2712.img
-
-/srv/nfs/
-  └── (root filesystem)
 ```
-### 5. Boot via PXE
-1. Ensure SD card is removed
-2. Connect Ethernet
-3. Power on the node
+## config.txt
+```ini
+# Enable 64-bit kernel
+arm_64bit=1
 
-Monitor PXE server logs:
+# Enable UART for debugging (optional)
+enable_uart=1
+
+# Boot over network
+boot_delay=1
+```
+## cmdline.txt (CRITICAL)
+**Single line only**:
+```ini
+console=serial0,115200 console=tty1 root=/dev/nfs nfsroot=10.0.2.2:/srv/nfs,vers=4.1,proto=tcp rw ip=dhcp rootwait
+```
+
+## Minimal config.txt
+```ini
+arm_64bit=1
+enable_uart=1
+boot_delay=1
+```
+## NFS Root (/srv/nfs)
+Export:
+```bash
+sudo nano /etc/exports
+```
+```ini
+/srv/nfs 10.0.2.0/24(rw,sync,no_subtree_check,no_root_squash)
+```
+Apply:
+```bash
+sudo exportfs -ra
+sudo systemctl restart nfs-kernel-server
+```
+## Host Configuration
+### Laptop (10.0.2.1)
+Set static IP on Ethernet:
+```bash
+sudo ip addr add 10.0.2.1/24 dev <interface>
+sudo ip link set <interface> up
+```
+### PXEServer (10.0.2.2)
+```bash
+sudo ip addr add 10.0.2.2/24 dev enp0s31f6
+```
+Ensure:
+- dnsmasq is bound to this interface
+- no conflicting DHCP servers exist
+## Verification
+### 1. Monitor boot
 ```bash
 journalctl -u dnsmasq -f
 ```
-You should see TFTP activity (e.g., kernel requests).
+Look for:
+- DHCP requests
+- TFTP transfers
 
-### 6. Verify Network Connectivity
-From the PXE server:
+### 2. Confirm leases
 ```bash
-ping 10.0.2.10
+cat /var/lib/misc/dnsmasq.leases
 ```
-If ping fails:
-- wait 10–30 seconds
-- see “No Ping Response” section
-
-### 7. Verify Node Activity
-Even if ping fails, confirm the node is active:
-- check for UDP traffic
-- check logs on PXE server
-- verify service startup (if applicable)
-
-### 8. Deploy DASPi Binary
-
-Copy the latest build:
+### 3. Ping nodes
 ```bash
-scp aperturecomputemodule \
-  user@PXEServer:/srv/nfs/opt/daspi/
+ping 10.0.2.4
+ping 10.0.2.5
 ```
+## DASPi-Specific Notes
 
-### 9. Verify Runtime
+### DASPi Workflow (this is the real value)
+This ties everything together cleanly:
+🔁 Build → Deploy → Run Loop
 
-On boot, ensure:
-- 'aperturecomputemodule' starts
-- no missing libraries:
+#### Step 1: Build (on laptop)
+~/DASPi/software/scripts/build-aperturecomputemodule.sh
+
+#### Step 2: Deploy to PXEServer
+Updating binaries here updates all nodes instantly on reboot
+```bash
+scp ~/DASPi/software/build/aperturecomputemodule/aperturecomputemodule \
+  user@10.0.2.2:/srv/nfs/opt/daspi/
+```
+`/srv/nfs` is the live filesystem for:
+    - computemodule
+    - aperturecomputemodule nodes
+
+#### Step 3: Restart node
+Either:
+```bash
+sudo reboot
+```
+OR power cycle
+
+#### Step 4: Watch boot live
+```bash
+ssh user@10.0.2.2
+journalctl -u dnsmasq -f
+```
+You should see:
+- DHCP request
+- TFTP transfers
+- kernel load
+
+#### Step 5: Verify runtime
+```bash
+ping 10.0.2.4
+```
+If not:
+see “Priming” section (expected sometimes)
+
+#### 6. Debug checklist (fast)
+
+If something breaks:
+##### No DHCP
+- wrong interface in dnsmasq
+- MAC mismatch
+##### TFTP loops / failures
+- missing /srv/tftp files
+- wrong filenames (kernel_2712.img!)
+##### Kernel boots but hangs
+- bad `cmdline.txt`
+- NFS export wrong
+#### App fails to start
 ```bash
 ldd /opt/daspi/aperturecomputemodule
 ```
 
-10. Common First-Time Issues
-- ❌ No ping → NIC not initialized or ARP not primed
-- ❌ No DHCP lease → MAC not configured in dnsmasq
-- ❌ TFTP failures → missing /srv/tftp files
-- ❌ Runtime errors → missing libraries in /srv/nfs
+---
 
-### Summary
-A successful bring-up requires:
-- one-time SD card boot (NIC initialization)
-- correct MAC/DHCP configuration
-- valid PXE server setup
-- synchronized /srv/nfs root filesystem
+## Common Pitfalls
+- ❌ Wrong interface in dnsmasq → no DHCP
+- ❌ MAC mismatch → wrong IP assignment
+- ❌ Missing `cmdline.txt` → kernel boot fails
+- ❌ NFS export incorrect → boot hangs
+- ❌ Node never booted from SD → NIC not initialized
 
-Once completed, nodes should boot reliably via PXE and integrate into the DASPi pipeline.
+## Summary
+This configuration provides:
+- deterministic IPs
+- centralized boot and filesystem
+- consistent DASPi deployment
+
+All nodes should now PXE boot and integrate cleanly into the system.

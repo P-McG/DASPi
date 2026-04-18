@@ -14,7 +14,7 @@ These provide runtime and development dependencies for `aperturecomputemodule`.
 - Raspberry Pi OS Lite (64-bit)
 
 ### Install Dependencies
-
+## Aperture Compute Module
 ```bash
 sudo apt update
 
@@ -26,7 +26,8 @@ sudo apt install -y \
   libcamera-dev \
   libblas3 liblapack3 \
   libevent-dev libevent-pthreads-2.1-7 libtbb-dev \
-  libopencv-core410 libopencv-dev
+  libopencv-core410 libopencv-dev \
+  libarmadillo-dev libarpack2-dev
 ```
 ## Compute Module
 (specific packages)
