@@ -32,6 +32,8 @@
 #include "DASPi-livecamerastate.h"
 #include "DASPi-rig-data.h"
 #include "DASPi-rig-geometry.h"
+#include "DASPi-mesh_topology.h"
+#include "DASPi-isocahedron_topology.h"
 
 using namespace DASPi;
 
@@ -172,8 +174,12 @@ NetworkAddressPlan BuildNetworkAddressPlan(const std::string& usbBaseIp,
     }
 
     NetworkAddressPlan plan;
+
+    // Keep gateway as the same base IP if you still want to track it separately.
     plan.gateway = StringToInAddrT(usbBaseIp);
-    plan.client = StringToInAddrT(IncrementIpv4Host(usbBaseIp, 1));
+
+    // Client should be exactly the base IP.
+    plan.client = StringToInAddrT(usbBaseIp);
 
     if (plan.gateway == INADDR_NONE || plan.client == INADDR_NONE) {
         throw std::runtime_error("Failed to construct gateway/client IP addresses");
@@ -181,7 +187,7 @@ NetworkAddressPlan BuildNetworkAddressPlan(const std::string& usbBaseIp,
 
     plan.servers.reserve(static_cast<size_t>(nApertureComputeModules));
     for (int i = 0; i < nApertureComputeModules; ++i) {
-        const std::string serverIp = IncrementIpv4Host(usbBaseIp, 2 + i);
+        const std::string serverIp = IncrementIpv4Host(usbBaseIp, 3 + i);
         const in_addr_t serverAddr = StringToInAddrT(serverIp);
         if (serverAddr == INADDR_NONE) {
             throw std::runtime_error("Failed to construct server IP address: " + serverIp);
@@ -367,8 +373,8 @@ CameraView makeCameraView(const cv::Mat& image,
 
     // ✅ NO ROTATION
     cam.image = image;
-    //cam.maskNonOverlap = maskNonOverlap;
-    //cam.maskOverlap = maskOverlap;
+    cam.maskNonOverlap = maskNonOverlap;
+    cam.maskOverlap = maskOverlap;
 
     cam.model = model;
     cam.Rcw = Rcw;
@@ -424,99 +430,85 @@ bool tryGetLatestFrame(LiveFrameBuffer& src, cv::Mat& dst)
     return true;
 }
 
-
-
-
-
-
-
-std::vector<Eigen::Vector3d> MakeIcosahedronVertices()
+template <std::size_t N>
+RigData<N> BuildRigDataFromTopology(const MeshTopology<N>& topo)
 {
-    const double phi = (1.0 + std::sqrt(5.0)) * 0.5;
+    static_assert(N >= 3, "Faces must have at least 3 vertices");
 
-    std::vector<Eigen::Vector3d> v = {
-        {-1,  phi, 0}, { 1,  phi, 0}, {-1, -phi, 0}, { 1, -phi, 0},
-        {0, -1,  phi}, {0,  1,  phi}, {0, -1, -phi}, {0,  1, -phi},
-        { phi, 0, -1}, { phi, 0,  1}, {-phi, 0, -1}, {-phi, 0,  1},
-    };
+    RigData<N> rig;
+    rig.vertices = topo.vertices;
+    rig.faces.reserve(topo.faces.size());
 
-	// Rotate icosahedron to avoid alignment with pano axes
-	Eigen::Matrix3d R =
-	    Eigen::AngleAxisd(M_PI / 5.0, Eigen::Vector3d::UnitY()).toRotationMatrix() *
-	    Eigen::AngleAxisd(M_PI / 7.0, Eigen::Vector3d::UnitX()).toRotationMatrix();
-	
-	for (auto& p : v) {
-	    p = R * p;
-	}
-	
-    return v;
-}
+    for (const auto& f : topo.faces) {
 
-std::vector<std::array<int, 3>> MakeIcosahedronFaceIndices()
-{
-    return {
-        {0,11,5},{0,5,1},{0,1,7},{0,7,10},{0,10,11},
-        {1,5,9},{5,11,4},{11,10,2},{10,7,6},{7,1,8},
-        {3,9,4},{3,4,2},{3,2,6},{3,6,8},{3,8,9},
-        {4,9,5},{2,4,11},{6,2,10},{8,6,7},{9,8,1}
-    };
-}
+        // --- 1. Compute center (average of all vertices) ---
+        Eigen::Vector3d center(0.0, 0.0, 0.0);
+        for (std::size_t i = 0; i < N; ++i) {
+            center += rig.vertices[f[i]];
+        }
+        center.normalize();
 
-RigData MakeRigData(RigGeometry geometry)
-{
-    switch (geometry) {
-    case RigGeometry::Icosahedron: {
-        RigData rig;
-        rig.vertices = MakeIcosahedronVertices();
+        // --- 2. Compute normal (fan triangulation) ---
+        Eigen::Vector3d normal(0.0, 0.0, 0.0);
 
-        const auto faceIndices = MakeIcosahedronFaceIndices();
-        rig.faces.reserve(faceIndices.size());
-
-        for (const auto& f : faceIndices) {
-            const Eigen::Vector3d& a = rig.vertices[f[0]];
-            const Eigen::Vector3d& b = rig.vertices[f[1]];
-            const Eigen::Vector3d& c = rig.vertices[f[2]];
-
-            const Eigen::Vector3d center = (a + b + c).normalized();
-
-            Eigen::Vector3d normal = (b - a).cross(c - a).normalized();
-            if (normal.dot(center) < 0.0) {
-                normal = -normal;
-            }
-
-            rig.faces.push_back(RigFace{
-                f,
-                normal,
-                center
-            });
+        const Eigen::Vector3d& a = rig.vertices[f[0]];
+        for (std::size_t i = 1; i + 1 < N; ++i) {
+            const Eigen::Vector3d& b = rig.vertices[f[i]];
+            const Eigen::Vector3d& c = rig.vertices[f[i + 1]];
+            normal += (b - a).cross(c - a);
         }
 
-        return rig;
-    }
+        normal.normalize();
+
+        // Ensure outward orientation
+        if (normal.dot(center) < 0.0) {
+            normal = -normal;
+        }
+
+        // --- 3. Store face ---
+        // NOTE: RigFace currently expects 3 indices → you must update it!
+        rig.faces.push_back(RigFace{
+            f,          // <-- must support std::array<size_t, N>
+            normal,
+            center
+        });
     }
 
-    throw std::runtime_error("Unsupported rig geometry");
+    return rig;
 }
 
-bool FacesAreNeighbors(const RigFace& a, const RigFace& b)
+template <std::size_t N>
+RigData<N> MakeRigData(const MeshTopology<N>& topo)
 {
-    int shared = 0;
-    for (int va : a.vi) {
-        for (int vb : b.vi) {
+    return BuildRigDataFromTopology(topo);
+}
+
+template <std::size_t N>
+bool FacesAreNeighbors(const RigFace<N>& a, const RigFace<N>& b)
+{
+    std::size_t shared = 0;
+
+    for (std::size_t va : a.indices) {
+        for (std::size_t vb : b.indices) {
             if (va == vb) {
                 ++shared;
+                if (shared >= 2) {
+                    return true; // early exit (faster)
+                }
             }
         }
     }
-    return shared == 2;
+
+    return false;
 }
 
-std::vector<std::vector<int>> BuildFaceNeighborGraph(const std::vector<RigFace>& faces)
+template<std::size_t N>
+std::vector<std::vector<int>> BuildFaceNeighborGraph(const std::vector<RigFace<N>>& faces)
 {
     std::vector<std::vector<int>> graph(faces.size());
 
-    for (size_t i = 0; i < faces.size(); ++i) {
-        for (size_t j = i + 1; j < faces.size(); ++j) {
+    for (std::size_t i = 0; i < faces.size(); ++i) {
+        for (std::size_t j = i + 1; j < faces.size(); ++j) {
             if (FacesAreNeighbors(faces[i], faces[j])) {
                 graph[i].push_back(static_cast<int>(j));
                 graph[j].push_back(static_cast<int>(i));
@@ -578,28 +570,36 @@ cv::Point2d WorldRayToEquirectUv(const Eigen::Vector3d& ray,
     return cv::Point2d(u, v);
 }
 
-std::array<int, 2> FindSharedEdgeVertices(const RigFace& a, const RigFace& b)
+template<std::size_t N>
+std::array<std::size_t, 2> FindSharedEdgeVertices(const RigFace<N>& a,
+                                                  const RigFace<N>& b)
 {
-    std::vector<int> shared;
-    shared.reserve(2);
+    static_assert(N >= 2, "Faces must have at least 2 vertices");
 
-    for (int va : a.vi) {
-        for (int vb : b.vi) {
+    std::array<std::size_t, 2> shared{};
+    std::size_t count = 0;
+
+    for (std::size_t va : a.indices) {
+        for (std::size_t vb : b.indices) {
             if (va == vb) {
-                shared.push_back(va);
+                if (count >= 2) {
+                    throw std::runtime_error("Faces share more than one edge");
+                }
+                shared[count++] = va;
             }
         }
     }
 
-    if (shared.size() != 2) {
+    if (count != 2) {
         throw std::runtime_error("Faces do not share exactly one edge");
     }
 
-    return {shared[0], shared[1]};
+    return shared;
 }
 
-cv::Mat RenderSharedFaceSeamDebug(const RigFace& faceA,
-                                  const RigFace& faceB,
+template<std::size_t N>
+cv::Mat RenderSharedFaceSeamDebug(const RigFace<N>& faceA,
+                                  const RigFace<N>& faceB,
                                   const std::vector<Eigen::Vector3d>& vertices,
                                   int width,
                                   int height,
@@ -653,26 +653,25 @@ cv::Mat RenderSharedFaceSeamDebug(const RigFace& faceA,
     return out;
 }
 
-void DebugPrintRigFaces(const std::vector<RigFace>& faces)
+template <std::size_t N>
+void DebugPrintRigFaces(const std::vector<RigFace<N>>& faces)
 {
-    std::cout << "\n[DebugPrintRigFaces]\n";
-
-    for (size_t i = 0; i < faces.size(); ++i) {
+    std::cout << "[rig faces]\n";
+    for (std::size_t i = 0; i < faces.size(); ++i) {
         const auto& f = faces[i];
 
-        std::cout << "codeFace[" << i << "]"
-                  << " verts=("
-                  << f.vi[0] << ", "
-                  << f.vi[1] << ", "
-                  << f.vi[2] << ")"
-                  << " lookDir=("
-                  << f.lookDir.transpose() << ")"
-                  << " center=("
-                  << f.center.transpose() << ")"
+        std::cout << "  face " << i << " indices=(";
+        for (std::size_t j = 0; j < N; ++j) {
+            std::cout << f.indices[j];
+            if (j + 1 < N) {
+                std::cout << ", ";
+            }
+        }
+        std::cout << ")"
+                  << " normal=(" << f.normal.transpose() << ")"
+                  << " lookDir=(" << f.lookDir.transpose() << ")"
                   << '\n';
     }
-
-    std::cout << std::endl;
 }
 
 cv::Mat RenderCameraFootprintDebug(const CameraView& cam,
@@ -734,8 +733,8 @@ cv::Mat RenderCameraFootprintDebug(const CameraView& cam,
 //}
 
 
-
-void DebugPrintRigAdjacency(const std::vector<RigFace>& faces)
+template<std::size_t N>
+void DebugPrintRigAdjacency(const std::vector<RigFace<N>>& faces)
 {
     const auto graph = BuildFaceNeighborGraph(faces);
 
@@ -849,20 +848,20 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
                                                  kFrameWidth,
                                                  kFrameHeight,
                                                  fisheyeParams);
-                                                 
-		//static bool printedOnce = false;
-		//if (!printedOnce) {
-		    ////DebugCanonicalProjection(*model);
-		    ////DebugProjectUnprojectConsistency(*model);
-		    //printedOnce = true;
-		//}                                      
 
-        cameras.push_back(makeCameraView(emptyImage,
-                                         emptyMask,
-                                         emptyMask,
-                                         model,
-                                         cfg.Rcw,
-                                         cfg.imageRotation));
+        CameraView cam = makeCameraView(emptyImage,
+                                        emptyMask,
+                                        emptyMask,
+                                        model,
+                                        cfg.Rcw,
+                                        cfg.imageRotation);
+
+        //cam.faceIndex = cfg.faceIndex;
+        //cam.sensorValidmask = cfg.sensorValidmask;
+        cam.faceIndex = cfg.faceIndex;   // only if you already have this
+		cam.sensorValidMask = cv::Mat(); // disable
+
+        cameras.push_back(std::move(cam));
     }
 
     return cameras;
@@ -1010,7 +1009,8 @@ Eigen::Matrix3d RotationAligningAToB(const Eigen::Vector3d& a,
     //return bestFace;
 //}
 
-std::vector<int> BuildModuleFaceIndices(const std::vector<RigFace>& faces,
+template<std::size_t N>
+std::vector<int> BuildModuleFaceIndices(const std::vector<RigFace<N>>& faces,
                                         int moduleCount)
 {
     if (moduleCount <= 0) {
@@ -1079,7 +1079,8 @@ std::vector<int> BuildModuleFaceIndices(const std::vector<RigFace>& faces,
     //return ImageRotation::None;
 //}
 
-void PrintRigAssignment(const std::vector<RigFace>& faces,
+template<std::size_t N>
+void PrintRigAssignment(const std::vector<RigFace<N>>& faces,
                         const std::vector<int>& moduleFaceIndices)
 {
     std::cout << "[rig] module assignments\n";
@@ -1117,12 +1118,13 @@ Eigen::Matrix3d CameraModelToRigAlignment()
 	// return Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitY()).toRotationMatrix();
 }
 
-Eigen::Matrix3d MakeCameraRcwFromFace(const RigFace& face,
+template<std::size_t N>
+Eigen::Matrix3d MakeCameraRcwFromFace(const RigFace<N>& face,
                                       const std::vector<Eigen::Vector3d>& vertices)
 {
-    const Eigen::Vector3d v0 = vertices[static_cast<size_t>(face.vi[0])].normalized();
-    const Eigen::Vector3d v1 = vertices[static_cast<size_t>(face.vi[1])].normalized();
-    const Eigen::Vector3d v2 = vertices[static_cast<size_t>(face.vi[2])].normalized();
+    const Eigen::Vector3d v0 = vertices[face.indices[0]].normalized();
+    const Eigen::Vector3d v1 = vertices[face.indices[1]].normalized();
+    const Eigen::Vector3d v2 = vertices[face.indices[2]].normalized();
 
     const Eigen::Vector3d forward = face.lookDir.normalized();
 
@@ -1173,25 +1175,30 @@ Eigen::Matrix3d MakeCameraRcwFromFace(const RigFace& face,
     //return {shared[0], shared[1]};
 //}
 
-Eigen::Vector3d MakeFaceSeamTangent(const RigFace& face,
+template<std::size_t N>
+Eigen::Vector3d MakeFaceSeamTangent(const RigFace<N>& face,
                                     const std::vector<Eigen::Vector3d>& vertices,
-                                    int vi0,
-                                    int vi1)
+                                    std::size_t vi0,
+                                    std::size_t vi1)
 {
+    if (vi0 >= vertices.size() || vi1 >= vertices.size()) {
+        throw std::runtime_error("Shared edge vertex index out of range");
+    }
+
     Eigen::Vector3d edgeWorld =
-        (vertices[static_cast<size_t>(vi1)] -
-         vertices[static_cast<size_t>(vi0)]).normalized();
+        (vertices[vi1] - vertices[vi0]).normalized();
 
     const Eigen::Vector3d forward = face.lookDir.normalized();
 
     // Project the shared edge into the face tangent plane.
     edgeWorld -= forward * forward.dot(edgeWorld);
 
-    if (edgeWorld.norm() < 1e-12) {
+    const double norm = edgeWorld.norm();
+    if (norm < 1e-12) {
         throw std::runtime_error("Degenerate seam tangent");
     }
 
-    return edgeWorld.normalized();
+    return edgeWorld / norm;
 }
 
 Eigen::Matrix3d MakeCameraRcwFromForwardAndUpHint(const Eigen::Vector3d& forward,
@@ -1222,6 +1229,7 @@ Eigen::Matrix3d CameraRollDeg(double deg)
     return Eigen::AngleAxisd(rad, Eigen::Vector3d::UnitZ()).toRotationMatrix();
 }
 
+template<std::size_t N>
 std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
 {
     if (nApertureComputeModules <= 0) {
@@ -1230,7 +1238,23 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
 
     constexpr RigGeometry kRigGeometry = RigGeometry::Icosahedron;
 
-    const RigData rig = MakeRigData(kRigGeometry);
+    MeshTopology<N> topo;
+
+    switch (kRigGeometry) {
+    case RigGeometry::Icosahedron: {
+        if constexpr (N != 3) {
+            throw std::runtime_error("Icosahedron topology requires N=3");
+        } else {
+            IcosahedronTopology topologyBuilder;
+            topo = topologyBuilder.Make();
+        }
+        break;
+    }
+    default:
+        throw std::runtime_error("Unsupported rig geometry");
+    }
+
+    const RigData<N> rig = BuildRigDataFromTopology(topo);
     const auto& faces = rig.faces;
     const auto& vertices = rig.vertices;
 
@@ -1256,31 +1280,29 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
 
     PrintRigAssignment(faces, moduleFaceIndices);
 
-    // Align the anchor module face to pano center (+Z).
-    const RigFace& anchorFace =
-        faces[static_cast<size_t>(moduleFaceIndices[0])];
+    const RigFace<N>& anchorFace =
+        faces[static_cast<std::size_t>(moduleFaceIndices[0])];
 
     const Eigen::Matrix3d Rrig =
         RotationAligningAToB(anchorFace.lookDir, Eigen::Vector3d(0.0, 0.0, 1.0));
 
     const Eigen::Matrix3d Ralign = CameraModelToRigAlignment();
 
-    // Build one face orientation per module before expanding to logical cameras.
     std::vector<Eigen::Matrix3d> moduleFaceRotations(
-        static_cast<size_t>(nApertureComputeModules),
+        static_cast<std::size_t>(nApertureComputeModules),
         Eigen::Matrix3d::Identity());
 
     if (nApertureComputeModules == 1) {
         const int faceIndex = moduleFaceIndices[0];
-        const RigFace& face = faces[static_cast<size_t>(faceIndex)];
+        const RigFace<N>& face = faces[static_cast<std::size_t>(faceIndex)];
 
-        moduleFaceRotations[0] = MakeCameraRcwFromFace(face, vertices);
+        moduleFaceRotations[0] = MakeCameraRcwFromFace<N>(face, vertices);
     } else if (nApertureComputeModules == 2) {
         const int faceIndex0 = moduleFaceIndices[0];
         const int faceIndex1 = moduleFaceIndices[1];
 
-        const RigFace& face0 = faces[static_cast<size_t>(faceIndex0)];
-        const RigFace& face1 = faces[static_cast<size_t>(faceIndex1)];
+        const RigFace<N>& face0 = faces[static_cast<std::size_t>(faceIndex0)];
+        const RigFace<N>& face1 = faces[static_cast<std::size_t>(faceIndex1)];
 
         const auto sharedEdge = FindSharedEdgeVertices(face0, face1);
 
@@ -1289,7 +1311,6 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
         Eigen::Vector3d seam1 =
             MakeFaceSeamTangent(face1, vertices, sharedEdge[0], sharedEdge[1]);
 
-        // Keep seam direction consistent between both faces.
         if (seam0.dot(seam1) < 0.0) {
             seam1 = -seam1;
         }
@@ -1299,12 +1320,11 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
         moduleFaceRotations[1] =
             MakeCameraRcwFromForwardAndUpHint(face1.lookDir, seam1);
     } else {
-        // Fallback for >2 modules: keep per-face edge-based orientation.
         for (int module = 0; module < nApertureComputeModules; ++module) {
-            const int faceIndex = moduleFaceIndices[static_cast<size_t>(module)];
-            const RigFace& face = faces[static_cast<size_t>(faceIndex)];
+            const int faceIndex = moduleFaceIndices[static_cast<std::size_t>(module)];
+            const RigFace<N>& face = faces[static_cast<std::size_t>(faceIndex)];
 
-            moduleFaceRotations[static_cast<size_t>(module)] =
+            moduleFaceRotations[static_cast<std::size_t>(module)] =
                 MakeCameraRcwFromFace(face, vertices);
         }
     }
@@ -1313,22 +1333,21 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
     configs.reserve(TotalCameraCount(nApertureComputeModules));
 
     for (int module = 0; module < nApertureComputeModules; ++module) {
-        const int faceIndex = moduleFaceIndices[static_cast<size_t>(module)];
-        const RigFace& face = faces[static_cast<size_t>(faceIndex)];
+        const int faceIndex = moduleFaceIndices[static_cast<std::size_t>(module)];
+        const RigFace<N>& face = faces[static_cast<std::size_t>(faceIndex)];
 
         const Eigen::Matrix3d& Rface =
-            moduleFaceRotations[static_cast<size_t>(module)];
+            moduleFaceRotations[static_cast<std::size_t>(module)];
 
-        // Keep debug path simple: no image-space rotation.
         const ImageRotation imageRotation = ImageRotation::None;
-        /*const */Eigen::Matrix3d Rimg = Eigen::Matrix3d::Identity();
+        Eigen::Matrix3d Rimg = Eigen::Matrix3d::Identity();
 
-		double module0CameraRollDeg{90.0};
-		if (module == 0) {
-		    Rimg = CameraRollDeg(module0CameraRollDeg);
-		} else if (module == 1) {
-		    Rimg = CameraRollDeg(module0CameraRollDeg+180);
-		}
+        double module0CameraRollDeg{90.0};
+        if (module == 0) {
+            Rimg = CameraRollDeg(module0CameraRollDeg);
+        } else if (module == 1) {
+            Rimg = CameraRollDeg(module0CameraRollDeg + 180.0);
+        }
 
         const Eigen::Matrix3d Rfinal = Rrig * Rface * Ralign * Rimg;
 
@@ -1347,9 +1366,9 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
         if (nApertureComputeModules == 2) {
             const int otherModule = (module == 0) ? 1 : 0;
             const int otherFaceIndex =
-                moduleFaceIndices[static_cast<size_t>(otherModule)];
-            const RigFace& otherFace =
-                faces[static_cast<size_t>(otherFaceIndex)];
+                moduleFaceIndices[static_cast<std::size_t>(otherModule)];
+            const RigFace<N>& otherFace =
+                faces[static_cast<std::size_t>(otherFaceIndex)];
 
             const auto sharedEdge = FindSharedEdgeVertices(face, otherFace);
             Eigen::Vector3d seam =
@@ -1358,15 +1377,15 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
             std::cout << "  seam=(" << seam.transpose() << ")\n";
         }
 
-        for (size_t localCam = 0; localCam < kCamerasPerModule; ++localCam) {
-			configs.push_back(CameraConfig{
-			    "module_" + std::to_string(module) + "_cam_" + std::to_string(localCam),
-			    "",
-			    imageRotation,
-			    Rfinal,
-			    module,
-			    faceIndex
-			});
+        for (std::size_t localCam = 0; localCam < kCamerasPerModule; ++localCam) {
+            CameraConfig cfg;
+            cfg.name = "module_" + std::to_string(module) + "_cam_" + std::to_string(localCam);
+            cfg.device = "";
+            cfg.imageRotation = imageRotation;
+            cfg.Rcw = Rfinal;
+            cfg.moduleIndex = module;
+            cfg.faceIndex = faceIndex;
+            configs.push_back(std::move(cfg));
         }
     }
 
@@ -1823,11 +1842,12 @@ void DrawPanoramaOverlay(cv::Mat& img,
              color, 1);
 }
 
+template<std::size_t N>
 void RunStitchLoop(std::vector<CameraView>& cameras,
                    const std::vector<CameraConfig>& configs,
                    std::vector<LiveCameraState>& liveCameras,
                    const std::vector<cv::Mat>& moduleFaceMasks,
-                   const RigData& rig)
+                   const RigData<N>& rig)
 {
     if (cameras.size() != configs.size() || cameras.size() != liveCameras.size()) {
         throw std::runtime_error("RunStitchLoop: camera/config/state size mismatch");
@@ -1841,6 +1861,10 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
     stitchConfig.outputWidth = 1456;
     stitchConfig.outputHeight = 1088;
     stitchConfig.blendPower = 4.0;
+    // Benchmark mode
+	stitchConfig.mode = StitchMode::ProjectionOnly;	
+	// Normal mode
+	// stitchConfig.mode = StitchMode::Blend;
 
     uint64_t frameNumber = 0;
     constexpr bool kSaveDebugImages = true;
@@ -1963,10 +1987,10 @@ cv::Point FindMaskCentroid(const cv::Mat& mask)
 }
 
 
-
+template<std::size_t N>
 cv::Mat BuildFaceMaskForCamera(const ICameraModel& model,
                                const Eigen::Matrix3d& Rcw,
-                               const RigFace& face,
+                               const RigFace<N>& face,
                                const std::vector<Eigen::Vector3d>& vertices,
                                int width,
                                int height)
@@ -2021,7 +2045,7 @@ int main(int argc, char* argv[])
             TotalCameraCount(options.nApertureComputeModules);
 
         // Build rig once and keep it alive for the stitcher.
-        const RigData rig = MakeRigData(RigGeometry::Icosahedron);
+		const RigData<3> rig = MakeRigData<3>(IcosahedronTopology{}.Make());
         const auto& faces = rig.faces;
         const auto& vertices = rig.vertices;
 
@@ -2029,7 +2053,7 @@ int main(int argc, char* argv[])
             BuildModuleFaceIndices(faces, options.nApertureComputeModules);
 
         const std::vector<CameraConfig> configs =
-            makeCameraConfigs(options.nApertureComputeModules);
+            makeCameraConfigs<3>(options.nApertureComputeModules);
 
         auto cameras = CreateCameraViews(configs, fisheyeParams);
 
@@ -2044,7 +2068,7 @@ int main(int argc, char* argv[])
 
         for (int module = 0; module < options.nApertureComputeModules; ++module) {
             const int faceIndex = moduleFaceIndices[static_cast<size_t>(module)];
-            const RigFace& face = faces[static_cast<size_t>(faceIndex)];
+            const RigFace<3>& face = faces[static_cast<size_t>(faceIndex)];
 
             const size_t logicalIndex =
                 static_cast<size_t>(module) * kCamerasPerModule;
@@ -2124,9 +2148,9 @@ int main(int argc, char* argv[])
 
         // Debug: render the shared seam between the first two module faces.
         if (moduleFaceIndices.size() >= 2) {
-            const RigFace& face0 =
+            const RigFace<3>& face0 =
                 faces[static_cast<size_t>(moduleFaceIndices[0])];
-            const RigFace& face1 =
+            const RigFace<3>& face1 =
                 faces[static_cast<size_t>(moduleFaceIndices[1])];
 
             cv::Mat seam =

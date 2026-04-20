@@ -20,7 +20,7 @@ public:
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     SphereStitcher(std::vector<CameraView> cameras,
                    SphereStitchConfig config,
-                   const RigData& rig);
+                   const RigData<3>& rig);
 
 	cv::Mat stitch() const;
 	cv::Mat stitch(cv::Mat* validMask) const;
@@ -41,5 +41,6 @@ private:
     SphereStitchConfig config_;
     EquirectangularProjection projection_;
     std::vector<Eigen::Vector3f> worldRays_;
-	RigData rig_;
+	RigData<3> rig_;
+	std::vector<int> faceToCameraIndex_;
 };

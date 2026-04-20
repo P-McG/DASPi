@@ -12,9 +12,9 @@
  * about a list of look directions and how they map to modules.
  */
 
-struct RigFace
-{
-    std::array<int, 3> vi;
+template <std::size_t N>
+struct RigFace {
+    std::array<std::size_t, N> indices;
+    Eigen::Vector3d normal;
     Eigen::Vector3d lookDir;
-    Eigen::Vector3d center;
 };

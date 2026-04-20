@@ -105,13 +105,26 @@ Eigen::Vector2d WorldRayToEquirectPixel(const Eigen::Vector3d& ray,
 
 SphereStitcher::SphereStitcher(std::vector<CameraView> cameras,
                                SphereStitchConfig config,
-                               const RigData& rig)
+                               const RigData<3>& rig)
     : cameras_(std::move(cameras)),
       config_(config),
       projection_(config.outputWidth, config.outputHeight),
       rig_(rig)
 {
     precomputeWorldRays();
+    
+    // Assume rig_.faces.size() is known here
+    faceToCameraIndex_.assign(rig_.faces.size(), -1);
+
+    for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
+        const int face = cameras_[i].faceIndex;
+
+        if (face < 0 || face >= static_cast<int>(faceToCameraIndex_.size())) {
+            continue;
+        }
+
+        faceToCameraIndex_[face] = i;
+    }
 }
 
 bool SphereStitcher::IsInsideMask(const cv::Mat& mask, const cv::Point2d& uv)
@@ -214,6 +227,67 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
     std::vector<Contribution> out;
     out.reserve(cameras_.size());
 
+    // Fast path: projection-only mode uses direct face -> camera lookup
+    if (config_.mode == StitchMode::ProjectionOnly) {
+        int owningFace = -1;
+
+        for (int f = 0; f < static_cast<int>(rig_.faces.size()); ++f) {
+            const RigFace<3>& face = rig_.faces[static_cast<size_t>(f)];
+            if (spherical::IsRayInsideSphericalFace(ray_world, face, rig_.vertices)) {
+                owningFace = f;
+                break;
+            }
+        }
+
+        if (owningFace < 0 ||
+            owningFace >= static_cast<int>(faceToCameraIndex_.size())) {
+            return out;
+        }
+
+        const int camIndex = faceToCameraIndex_[owningFace];
+        if (camIndex < 0 ||
+            camIndex >= static_cast<int>(cameras_.size())) {
+            return out;
+        }
+
+        const auto& cam = cameras_[camIndex];
+
+        const Eigen::Vector3d ray_cam = cam.Rcw.transpose() * ray_world;
+        if (ray_cam.z() <= 0.0) {
+            return out;
+        }
+
+        const ProjectionResult proj = cam.model->project(ray_cam);
+        if (!proj.valid) {
+            return out;
+        }
+
+        if (!cam.sensorValidMask.empty()) {
+            const int x = static_cast<int>(std::floor(proj.uv.x));
+            const int y = static_cast<int>(std::floor(proj.uv.y));
+
+            if (x < 0 || x >= cam.sensorValidMask.cols ||
+                y < 0 || y >= cam.sensorValidMask.rows) {
+                return out;
+            }
+
+            if (cam.sensorValidMask.at<std::uint8_t>(y, x) == 0) {
+                return out;
+            }
+        }
+
+        Contribution c;
+        c.cameraIndex = camIndex;
+        c.uv = proj.uv;
+        c.color = SampleBilinear(cam.image, proj.uv);
+        c.weight = OpticalWeight(ray_cam, config_.blendPower);
+        c.fromNonOverlap = true;
+
+        out.push_back(c);
+        return out;
+    }
+
+    // Blend mode: scan candidates, then classify with XOR masks
     for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
         const auto& cam = cameras_[i];
 
@@ -222,16 +296,13 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
             continue;
         }
 
-        const RigFace& face = rig_.faces[static_cast<size_t>(cam.faceIndex)];
+        const RigFace<3>& face = rig_.faces[static_cast<size_t>(cam.faceIndex)];
 
-        // Spherical ownership test first.
         if (!spherical::IsRayInsideSphericalFace(ray_world, face, rig_.vertices)) {
             continue;
         }
 
-        const Eigen::Vector3d ray_cam =
-            cam.Rcw.transpose() * ray_world;
-
+        const Eigen::Vector3d ray_cam = cam.Rcw.transpose() * ray_world;
         if (ray_cam.z() <= 0.0) {
             continue;
         }
@@ -241,7 +312,6 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
             continue;
         }
 
-        // Optional true sensor-validity mask only.
         if (!cam.sensorValidMask.empty()) {
             const int x = static_cast<int>(std::floor(proj.uv.x));
             const int y = static_cast<int>(std::floor(proj.uv.y));
@@ -256,12 +326,24 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
             }
         }
 
+        const bool inNonOverlap =
+            !cam.maskNonOverlap.empty() &&
+            IsInsideMask(cam.maskNonOverlap, proj.uv);
+
+        const bool inOverlap =
+            !cam.maskOverlap.empty() &&
+            IsInsideMask(cam.maskOverlap, proj.uv);
+
+        if (!inNonOverlap && !inOverlap) {
+            continue;
+        }
+
         Contribution c;
         c.cameraIndex = i;
         c.uv = proj.uv;
         c.color = SampleBilinear(cam.image, proj.uv);
         c.weight = OpticalWeight(ray_cam, config_.blendPower);
-        c.fromNonOverlap = true;
+        c.fromNonOverlap = inNonOverlap;
 
         out.push_back(c);
     }
@@ -397,6 +479,16 @@ cv::Vec3b SphereStitcher::resolvePixel(
         return config_.backgroundColor;
     }
 
+    if (config_.mode == StitchMode::ProjectionOnly) {
+        const cv::Vec3d& color = contributions.front().color;
+
+        return cv::Vec3b(
+            static_cast<std::uint8_t>(std::clamp(color[0], 0.0, 255.0)),
+            static_cast<std::uint8_t>(std::clamp(color[1], 0.0, 255.0)),
+            static_cast<std::uint8_t>(std::clamp(color[2], 0.0, 255.0))
+        );
+    }
+
     bool hasNonOverlap = false;
     for (const auto& c : contributions) {
         if (c.fromNonOverlap) {
@@ -429,6 +521,46 @@ cv::Vec3b SphereStitcher::resolvePixel(
         static_cast<std::uint8_t>(std::clamp(color[2], 0.0, 255.0))
     );
 }
+
+//cv::Vec3b SphereStitcher::resolvePixel(
+    //const std::vector<Contribution>& contributions) const
+//{
+    //if (contributions.empty()) {
+        //return config_.backgroundColor;
+    //}
+
+    //bool hasNonOverlap = false;
+    //for (const auto& c : contributions) {
+        //if (c.fromNonOverlap) {
+            //hasNonOverlap = true;
+            //break;
+        //}
+    //}
+
+    //cv::Vec3d accum(0.0, 0.0, 0.0);
+    //double weightSum = 0.0;
+
+    //for (const auto& c : contributions) {
+        //if (hasNonOverlap && !c.fromNonOverlap) {
+            //continue;
+        //}
+
+        //accum += c.weight * c.color;
+        //weightSum += c.weight;
+    //}
+
+    //if (weightSum <= 0.0) {
+        //return config_.backgroundColor;
+    //}
+
+    //const cv::Vec3d color = accum / weightSum;
+
+    //return cv::Vec3b(
+        //static_cast<std::uint8_t>(std::clamp(color[0], 0.0, 255.0)),
+        //static_cast<std::uint8_t>(std::clamp(color[1], 0.0, 255.0)),
+        //static_cast<std::uint8_t>(std::clamp(color[2], 0.0, 255.0))
+    //);
+//}
 
 cv::Vec3b SphereStitcher::renderPixel(int x, int y, std::uint8_t* valid) const {
     const Eigen::Vector3f& ray_world = worldRays_[rayIndex(x, y)];
@@ -570,3 +702,5 @@ cv::Mat SphereStitcher::makePolygonMask(int width,
     cv::fillPoly(mask, polygons, cv::Scalar(255));
     return mask;
 }
+
+

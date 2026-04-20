@@ -39,8 +39,10 @@ Eigen::Vector3d CameraToWorldRay(
     const Eigen::Vector3d& ray_cam,
     const Eigen::Matrix3d& Rcw);
     
+template<size_t N>
 bool IsRayInsideSphericalFace(const Eigen::Vector3d& ray,
-                              const RigFace& face,
+                              const RigFace<N>& face,
                               const std::vector<Eigen::Vector3d>& vertices);
 
 } // namespace spherical
+#include "DASPi-spherical-math.tpp"
