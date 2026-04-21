@@ -45,27 +45,30 @@ sync_sysroot() {
   log "Syncing sysroot from ${PXE_USER}@${PXE_HOST}:${PXE_PATH}"
   mkdir -p "$DASPI_SYSROOT"
 
-  rsync -aHAX --delete --numeric-ids \
+ rsync -aHAX --delete --numeric-ids \
     --info=progress2 \
-    "${PXE_USER}@${PXE_HOST}:${PXE_PATH}" \
-    "$DASPI_SYSROOT" \
-    --exclude='/dev' \
-    --exclude='/proc' \
-    --exclude='/sys' \
-    --exclude='/tmp' \
-    --exclude='/run' \
-    --exclude='/mnt' \
-    --exclude='/media' \
+    --exclude='/dev/***' \
+    --exclude='/proc/***' \
+    --exclude='/sys/***' \
+    --exclude='/tmp/***' \
+    --exclude='/run/***' \
+    --exclude='/mnt/***' \
+    --exclude='/media/***' \
     --exclude='/lost+found' \
-    --exclude='/home' \
-    --exclude='/root' \
-    --exclude='/var/run' \
-    --exclude='/var/tmp' \
-    --exclude='/var/log' \
-    --exclude='/var/cache' \
-    --exclude='/var/lib/apt/lists/partial' \
-    --exclude='/var/lib/bluetooth' \
-    --exclude='/var/lib/logrotate'
+    --exclude='/home/***' \
+    --exclude='/root/***' \
+    --exclude='/var/run/***' \
+    --exclude='/var/tmp/***' \
+    --exclude='/var/log/***' \
+    --exclude='/var/cache/***' \
+    --exclude='/var/lib/apt/lists/***' \
+    --exclude='/var/lib/bluetooth/***' \
+    --exclude='/var/lib/logrotate/***' \
+    --exclude='/var/lib/cloud/***' \
+    --exclude='/var/lib/systemd/random-seed' \
+    --exclude='/etc/netplan/*.yaml' \
+    "${PXE_USER}@${PXE_HOST}:${PXE_PATH}" \
+    "$DASPI_SYSROOT"
 }
 
 repair_sysroot_symlinks() {
@@ -96,31 +99,26 @@ sys_root = '$DASPI_SYSROOT'
 pkg_config_libdir = [
   '$DASPI_SYSROOT/usr/lib/aarch64-linux-gnu/pkgconfig',
   '$DASPI_SYSROOT/usr/lib/pkgconfig',
-  '$DASPI_SYSROOT/usr/share/pkgconfig',
-]
+  '$DASPI_SYSROOT/usr/share/pkgconfig',]
 pkg_config_sysroot_dir = '$DASPI_SYSROOT'
 
 [built-in options]
 c_args = [
-  '--sysroot=$DASPI_SYSROOT',
-]
+  '--sysroot=$DASPI_SYSROOT',]
 cpp_args = [
-  '--sysroot=$DASPI_SYSROOT',
-]
+  '--sysroot=$DASPI_SYSROOT',]
 c_link_args = [
   '--sysroot=$DASPI_SYSROOT',
   '-L$DASPI_SYSROOT/lib/aarch64-linux-gnu',
   '-L$DASPI_SYSROOT/usr/lib/aarch64-linux-gnu',
   '-Wl,-rpath-link,$DASPI_SYSROOT/lib/aarch64-linux-gnu',
-  '-Wl,-rpath-link,$DASPI_SYSROOT/usr/lib/aarch64-linux-gnu',
-]
+  '-Wl,-rpath-link,$DASPI_SYSROOT/usr/lib/aarch64-linux-gnu',]
 cpp_link_args = [
   '--sysroot=$DASPI_SYSROOT',
   '-L$DASPI_SYSROOT/lib/aarch64-linux-gnu',
   '-L$DASPI_SYSROOT/usr/lib/aarch64-linux-gnu',
   '-Wl,-rpath-link,$DASPI_SYSROOT/lib/aarch64-linux-gnu',
-  '-Wl,-rpath-link,$DASPI_SYSROOT/usr/lib/aarch64-linux-gnu',
-]
+  '-Wl,-rpath-link,$DASPI_SYSROOT/usr/lib/aarch64-linux-gnu',]
 
 [cmake]
 CMAKE_SYSTEM_NAME = 'Linux'
