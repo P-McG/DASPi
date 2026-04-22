@@ -26,6 +26,8 @@ public:
 	cv::Mat stitch(cv::Mat* validMask) const;
 	cv::Mat stitchFisheye(cv::Mat* validMask = nullptr) const;
 	static bool IsInsideMask(const cv::Mat& mask, const cv::Point2d& uv);
+	
+	int FindOwningFace(const Eigen::Vector3f& ray_world_f) const;
 
 private:
     void precomputeWorldRays();

@@ -9,30 +9,30 @@
 
 namespace {
 
-void LogCenterDebugIfNeeded(int x,
-                            int y,
-                            int centerX,
-                            int centerY,
-                            const Eigen::Vector3f& ray_world,
-                            const std::vector<Contribution>& contributions)
-{
-    if (x != centerX || y != centerY) {
-        return;
-    }
+//void LogCenterDebugIfNeeded(int x,
+                            //int y,
+                            //int centerX,
+                            //int centerY,
+                            //const Eigen::Vector3f& ray_world,
+                            //const std::vector<Contribution>& contributions)
+//{
+    //if (x != centerX || y != centerY) {
+        //return;
+    //}
 
-    std::cout << "stitch center ray_world=("
-              << ray_world.x() << ", "
-              << ray_world.y() << ", "
-              << ray_world.z() << ")\n";
+    //std::cout << "stitch center ray_world=("
+              //<< ray_world.x() << ", "
+              //<< ray_world.y() << ", "
+              //<< ray_world.z() << ")\n";
 
-    std::cout << "center contributions=" << contributions.size() << '\n';
+    //std::cout << "center contributions=" << contributions.size() << '\n';
 
-    if (!contributions.empty()) {
-        std::cout << "center uv=("
-                  << contributions[0].uv.x << ", "
-                  << contributions[0].uv.y << ")\n";
-    }
-}
+    //if (!contributions.empty()) {
+        //std::cout << "center uv=("
+                  //<< contributions[0].uv.x << ", "
+                  //<< contributions[0].uv.y << ")\n";
+    //}
+//}
 
 
 
@@ -112,18 +112,31 @@ SphereStitcher::SphereStitcher(std::vector<CameraView> cameras,
       rig_(rig)
 {
     precomputeWorldRays();
-    
-    // Assume rig_.faces.size() is known here
+
     faceToCameraIndex_.assign(rig_.faces.size(), -1);
 
     for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
-        const int face = cameras_[i].faceIndex;
+        const auto& cam = cameras_[static_cast<std::size_t>(i)];
+        const int face = cam.faceIndex;
 
         if (face < 0 || face >= static_cast<int>(faceToCameraIndex_.size())) {
             continue;
         }
 
-        faceToCameraIndex_[face] = i;
+        // Only the non-overlap stream is the owning stream for a face.
+        if (cam.localStreamIndex != 0) {
+            continue;
+        }
+
+        if (faceToCameraIndex_[static_cast<std::size_t>(face)] != -1) {
+            std::cerr << "[SphereStitcher] warning: duplicate non-overlap stream for face "
+                      << face
+                      << " existing=" << faceToCameraIndex_[static_cast<std::size_t>(face)]
+                      << " new=" << i
+                      << '\n';
+        }
+
+        faceToCameraIndex_[static_cast<std::size_t>(face)] = i;
     }
 }
 
@@ -163,11 +176,25 @@ cv::Mat SphereStitcher::stitch() const {
     return stitch(nullptr);
 }
 
-cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const {
+int SphereStitcher::FindOwningFace(const Eigen::Vector3f& ray_world_f) const
+{
+    const Eigen::Vector3d ray_world = ray_world_f.cast<double>().normalized();
+
+    for (int f = 0; f < static_cast<int>(rig_.faces.size()); ++f) {
+        const RigFace<3>& face = rig_.faces[static_cast<std::size_t>(f)];
+        if (spherical::IsRayInsideSphericalFace(ray_world, face, rig_.vertices)) {
+            return f;
+        }
+    }
+
+    return -1;
+}
+cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
+{
     cv::Mat out(config_.outputHeight,
                 config_.outputWidth,
                 CV_8UC3,
-                config_.backgroundColor);
+                cv::Scalar(0, 0, 0));
 
     cv::Mat localValidMask;
     if (validMask != nullptr) {
@@ -177,21 +204,27 @@ cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const {
                                  cv::Scalar(0));
     }
 
-    const int centerX = config_.outputWidth / 2;
-    const int centerY = config_.outputHeight / 2;
-
     for (int y = 0; y < config_.outputHeight; ++y) {
         for (int x = 0; x < config_.outputWidth; ++x) {
             const Eigen::Vector3f& ray_world = worldRays_[rayIndex(x, y)];
-            const std::vector<Contribution> contributions = gatherContributions(ray_world);
+            const int owningFace = FindOwningFace(ray_world);
 
-            if (!contributions.empty() && validMask != nullptr) {
+            if (owningFace < 0) {
+                out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 0);
+                continue;
+            }
+
+            if (validMask != nullptr) {
                 localValidMask.at<std::uint8_t>(y, x) = 255;
             }
 
-			LogCenterDebugIfNeeded(x, y, centerX, centerY, ray_world, contributions);
-
-            out.at<cv::Vec3b>(y, x) = resolvePixel(contributions);
+            if (owningFace == 0) {
+                out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 255);   // red
+            } else if (owningFace == 1) {
+                out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 255, 0);   // green
+            } else {
+                out.at<cv::Vec3b>(y, x) = cv::Vec3b(255, 0, 0);   // blue
+            }
         }
     }
 
@@ -201,6 +234,78 @@ cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const {
 
     return out;
 }
+//cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
+//{
+    //cv::Mat out(config_.outputHeight,
+                //config_.outputWidth,
+                //CV_8UC3,
+                //cv::Scalar(0, 0, 0));
+
+    //cv::Mat localValidMask;
+    //if (validMask != nullptr) {
+        //localValidMask = cv::Mat(config_.outputHeight,
+                                 //config_.outputWidth,
+                                 //CV_8UC1,
+                                 //cv::Scalar(0));
+    //}
+
+    //const int centerX = config_.outputWidth / 2;
+    //const int centerY = config_.outputHeight / 2;
+
+    //for (int y = 0; y < config_.outputHeight; ++y) {
+        //for (int x = 0; x < config_.outputWidth; ++x) {
+            //const Eigen::Vector3f& ray_world = worldRays_[rayIndex(x, y)];
+            //const std::vector<Contribution> contributions = gatherContributions(ray_world);
+
+            //if (!contributions.empty() && validMask != nullptr) {
+                //localValidMask.at<std::uint8_t>(y, x) = 255;
+            //}
+
+            //if (x == centerX && y == centerY) {
+                //std::cout << "stitch center ray_world=("
+                          //<< ray_world.x() << ", "
+                          //<< ray_world.y() << ", "
+                          //<< ray_world.z() << ")\n";
+
+                //std::cout << "center contributions=" << contributions.size() << '\n';
+
+                //if (!contributions.empty()) {
+                    //const auto& c = contributions[0];
+                    //const auto& cam = cameras_[static_cast<std::size_t>(c.cameraIndex)];
+
+                    //std::cout << "center cameraIndex=" << c.cameraIndex
+                              //<< " faceIndex=" << cam.faceIndex
+                              //<< " localStreamIndex=" << cam.localStreamIndex
+                              //<< " neighborFaceIndex=" << cam.neighborFaceIndex
+                              //<< " edgeIndex=" << cam.edgeIndex
+                              //<< " uv=(" << c.uv.x << ", " << c.uv.y << ")\n";
+                //}
+            //}
+
+            //if (contributions.empty()) {
+                //out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 0);
+                //continue;
+            //}
+
+            //const auto& c = contributions[0];
+            //const auto& cam = cameras_[static_cast<std::size_t>(c.cameraIndex)];
+
+            //if (cam.moduleIndex == 0) {
+                //out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 255);   // red
+            //} else if (cam.moduleIndex == 1) {
+                //out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 255, 0);   // green
+            //} else {
+                //out.at<cv::Vec3b>(y, x) = cv::Vec3b(255, 0, 0);   // blue
+            //}
+        //}
+    //}
+
+    //if (validMask != nullptr) {
+        //*validMask = std::move(localValidMask);
+    //}
+
+    //return out;
+//}
 //cv::Mat SphereStitcher::stitch() const {
     //cv::Mat out(config_.outputHeight,
                 //config_.outputWidth,
@@ -288,45 +393,49 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
     };
 
     // Projection-only:
-    // use only the non-overlap stream for the owning face.
+    // Use the owning face's mapped non-overlap stream directly.
     if (config_.mode == StitchMode::ProjectionOnly) {
-        for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
-            const auto& cam = cameras_[static_cast<std::size_t>(i)];
-
-            if (cam.faceIndex != owningFace) {
-                continue;
-            }
-
-            if (cam.localEdgeIndex >= 0) {
-                continue; // skip seam streams in projection-only mode
-            }
-
-            cv::Point2d uv;
-            Eigen::Vector3d ray_cam;
-            if (!projectIfValid(cam, uv, ray_cam)) {
-                continue;
-            }
-
-            const bool inNonOverlap =
-                !cam.maskNonOverlap.empty() &&
-                IsInsideMask(cam.maskNonOverlap, uv);
-
-            if (!inNonOverlap) {
-                continue;
-            }
-
-            appendContribution(i, uv, ray_cam, true);
-            break; // there should be only one non-overlap stream for this face
+        if (owningFace < 0 ||
+            owningFace >= static_cast<int>(faceToCameraIndex_.size())) {
+            return out;
         }
 
+        const int camIndex =
+            faceToCameraIndex_[static_cast<std::size_t>(owningFace)];
+
+        if (camIndex < 0 ||
+            camIndex >= static_cast<int>(cameras_.size())) {
+            return out;
+        }
+
+        const auto& cam = cameras_[static_cast<std::size_t>(camIndex)];
+
+        if (cam.localStreamIndex != 0) {
+            return out;
+        }
+
+        cv::Point2d uv;
+        Eigen::Vector3d ray_cam;
+        if (!projectIfValid(cam, uv, ray_cam)) {
+            return out;
+        }
+
+        const bool inSensorValid =
+            cam.sensorValidMask.empty() ||
+            IsInsideMask(cam.sensorValidMask, uv);
+        
+        if (!inSensorValid) {
+            return out;
+        }
+
+        appendContribution(camIndex, uv, ray_cam, true);
         return out;
     }
 
     // Blend mode:
     // 1) prefer non-overlap stream for owning face
-    // 2) otherwise allow seam streams for rays that land in overlap masks
-    //    on the owning face
-    // 3) and allow the matching seam stream from the adjacent face
+    // 2) otherwise allow seam streams for the owning face
+    // 3) and allow matching seam streams from neighboring faces
     bool foundNonOverlap = false;
 
     for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
@@ -336,8 +445,8 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
             continue;
         }
 
-        if (cam.localEdgeIndex >= 0) {
-            continue; // only non-overlap stream here
+        if (cam.localStreamIndex != 0) {
+            continue;
         }
 
         cv::Point2d uv;
@@ -363,21 +472,15 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
         return out;
     }
 
-    // No interior ownership: collect seam-specific overlap streams.
     for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
         const auto& cam = cameras_[static_cast<std::size_t>(i)];
 
-        // Candidate A:
-        // owning face seam streams
-        //
-        // Candidate B:
-        // neighboring face seam streams whose neighbor points back to owningFace
         const bool isOwningFaceSeamStream =
-            (cam.faceIndex == owningFace && cam.localEdgeIndex >= 0);
+            (cam.faceIndex == owningFace && cam.localStreamIndex > 0);
 
         const bool isNeighborMatchingSeamStream =
             (cam.faceIndex != owningFace &&
-             cam.localEdgeIndex >= 0 &&
+             cam.localStreamIndex > 0 &&
              cam.neighborFaceIndex == owningFace);
 
         if (!isOwningFaceSeamStream && !isNeighborMatchingSeamStream) {

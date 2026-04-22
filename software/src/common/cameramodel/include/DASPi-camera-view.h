@@ -23,6 +23,7 @@ struct CameraView {
     int localEdgeIndex = -1;
     int neighborFaceIndex = -1;
     int edgeIndex = -1;
+    int moduleIndex = -1;
     
     cv::Mat sensorValidMask;         // keep if you're using it
 };

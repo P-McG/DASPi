@@ -436,42 +436,53 @@ RigData<N> BuildRigDataFromTopology(const MeshTopology<N>& topo)
     static_assert(N >= 3, "Faces must have at least 3 vertices");
 
     RigData<N> rig;
-    rig.vertices = topo.vertices;
+
+    rig.vertices.reserve(topo.vertices.size());
+    for (const auto& v : topo.vertices) {
+        rig.vertices.push_back(v.normalized());
+    }
+
     rig.faces.reserve(topo.faces.size());
 
     for (const auto& f : topo.faces) {
-
-        // --- 1. Compute center (average of all vertices) ---
-        Eigen::Vector3d center(0.0, 0.0, 0.0);
-        for (std::size_t i = 0; i < N; ++i) {
-            center += rig.vertices[f[i]];
-        }
-        center.normalize();
-
-        // --- 2. Compute normal (fan triangulation) ---
-        Eigen::Vector3d normal(0.0, 0.0, 0.0);
-
         const Eigen::Vector3d& a = rig.vertices[f[0]];
+
+        Eigen::Vector3d normal(0.0, 0.0, 0.0);
         for (std::size_t i = 1; i + 1 < N; ++i) {
             const Eigen::Vector3d& b = rig.vertices[f[i]];
             const Eigen::Vector3d& c = rig.vertices[f[i + 1]];
             normal += (b - a).cross(c - a);
         }
 
-        normal.normalize();
+        const double normalNorm = normal.norm();
+        if (normalNorm < 1e-12) {
+            throw std::runtime_error("Degenerate face encountered in BuildRigDataFromTopology");
+        }
+        normal /= normalNorm;
 
-        // Ensure outward orientation
+        // Use the average vertex direction only to determine outwardness.
+        Eigen::Vector3d center(0.0, 0.0, 0.0);
+        for (std::size_t i = 0; i < N; ++i) {
+            center += rig.vertices[f[i]];
+        }
+
+        const double centerNorm = center.norm();
+        if (centerNorm < 1e-12) {
+            throw std::runtime_error("Degenerate face center encountered in BuildRigDataFromTopology");
+        }
+        center /= centerNorm;
+
+        // Ensure outward-facing normal.
         if (normal.dot(center) < 0.0) {
             normal = -normal;
         }
 
-        // --- 3. Store face ---
-        // NOTE: RigFace currently expects 3 indices → you must update it!
-        rig.faces.push_back(RigFace{
-            f,          // <-- must support std::array<size_t, N>
-            normal,
-            center
-        });
+        RigFace<N> face;
+        face.indices = f;
+        face.normal = normal;
+        face.lookDir = normal;   // important: use geometric normal for ownership/orientation
+
+        rig.faces.push_back(std::move(face));
     }
 
     return rig;
@@ -863,6 +874,7 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
         cam.localEdgeIndex    = cfg.localEdgeIndex;
         cam.neighborFaceIndex = cfg.neighborFaceIndex;
         cam.edgeIndex         = cfg.edgeIndex;
+        cam.moduleIndex = cfg.moduleIndex;
 
         cameras.push_back(std::move(cam));
     }
@@ -1638,7 +1650,8 @@ void updateCameraImages(std::vector<CameraView>& cameras,
                         const std::vector<CameraConfig>& configs,
                         std::vector<LiveCameraState>& liveCameras)
 {
-    if (cameras.size() != configs.size() || cameras.size() != liveCameras.size()) {
+    if (cameras.size() != configs.size() ||
+        cameras.size() != liveCameras.size()) {
         throw std::runtime_error("Camera/config/state size mismatch");
     }
 
@@ -1648,20 +1661,35 @@ void updateCameraImages(std::vector<CameraView>& cameras,
             continue;
         }
 
-        cameras[i].image = latest;
-        cameras[i].sensorValidMask = liveCameras[i].validMask.clone();
+        CameraView& cam = cameras[i];
+        const CameraConfig& cfg = configs[i];
+        const LiveCameraState& live = liveCameras[i];
 
-        const cv::Mat zeroMask =
-            cv::Mat::zeros(liveCameras[i].validMask.rows,
-                           liveCameras[i].validMask.cols,
-                           CV_8UC1);
+        // Image + sensor mask
+        cam.image = latest;
+        cam.sensorValidMask = live.validMask.clone();
 
-        if (cameras[i].localStreamIndex == 0) {
-            cameras[i].maskNonOverlap = liveCameras[i].validMask.clone();
-            cameras[i].maskOverlap = zeroMask;
+        // Allocate empty masks
+        cv::Mat zeroMask = cv::Mat::zeros(latest.rows, latest.cols, CV_8UC1);
+
+        if (cfg.localStreamIndex == 0) {
+            // Non-overlap stream
+            cam.maskNonOverlap = live.validMask.clone();
+            cam.maskOverlap = zeroMask;
         } else {
-            cameras[i].maskNonOverlap = zeroMask;
-            cameras[i].maskOverlap = liveCameras[i].validMask.clone();
+            // Overlap stream
+            cam.maskNonOverlap = zeroMask;
+            cam.maskOverlap = live.validMask.clone();
+        }
+
+        // Optional: debug sanity
+        if (i < 4) {
+            std::cout << "[updateCameraImages] cam=" << i
+                      << " module=" << cam.moduleIndex
+                      << " stream=" << cfg.localStreamIndex
+                      << " nonOverlapNZ=" << cv::countNonZero(cam.maskNonOverlap)
+                      << " overlapNZ=" << cv::countNonZero(cam.maskOverlap)
+                      << '\n';
         }
     }
 }
@@ -2122,14 +2150,29 @@ int main(int argc, char* argv[])
         const size_t totalCameras =
             TotalCameraCount(options.nApertureComputeModules);
 
-        // Build rig once and keep it alive for the stitcher.
-		const RigData<3> rig = MakeRigData<3>(IcosahedronTopology{}.Make());
+        // Build topology once and use it as the single source of truth
+        // for both rig geometry and module face assignment.
+        IcosahedronTopology topologyBuilder;
+        const MeshTopology<3> topo = topologyBuilder.Make();
+
+        const RigData<3> rig = MakeRigData<3>(topo);
         const auto& faces = rig.faces;
         const auto& vertices = rig.vertices;
 
-		IcosahedronTopology topologyBuilder;
-		const std::vector<int> moduleFaceIndices =
-		    topologyBuilder.DefaultModuleOwningFaces(options.nApertureComputeModules);
+        const std::vector<int> moduleFaceIndices =
+            topologyBuilder.DefaultModuleOwningFaces(options.nApertureComputeModules);
+
+        if (moduleFaceIndices.empty()) {
+            throw std::runtime_error("moduleFaceIndices is empty");
+        }
+
+        for (int faceIndex : moduleFaceIndices) {
+            if (faceIndex < 0 || faceIndex >= static_cast<int>(faces.size())) {
+                throw std::runtime_error("moduleFaceIndices contains out-of-range face");
+            }
+        }
+
+        PrintRigAssignment(faces, moduleFaceIndices);
 
         const std::vector<CameraConfig> configs =
             makeCameraConfigs<3>(options.nApertureComputeModules);
@@ -2140,8 +2183,6 @@ int main(int argc, char* argv[])
             throw std::runtime_error("Logical camera count mismatch during initialization");
         }
 
-        // Build one spherical face mask per module, using the first logical stream
-        // of each module as the representative camera geometry.
         std::vector<cv::Mat> moduleFaceMasks;
         moduleFaceMasks.reserve(static_cast<size_t>(options.nApertureComputeModules));
 
@@ -2184,24 +2225,17 @@ int main(int argc, char* argv[])
                       << " rows=" << faceMask.rows
                       << " cols=" << faceMask.cols
                       << '\n';
-
-            // Optional:
-            // cv::imwrite("/tmp/debug_module_face_mask_" + std::to_string(module) + ".png",
-            //             faceMask);
         }
 
-        // Debug: dump camera poses
         for (size_t i = 0; i < cameras.size(); ++i) {
             DebugCameraPose(cameras[i], "camera[" + std::to_string(i) + "]");
         }
 
-        // Debug: inspect the first camera model
         if (!cameras.empty() && cameras[0].model) {
             DebugCanonicalProjection(*cameras[0].model);
             DebugProjectUnprojectConsistency(*cameras[0].model);
         }
 
-        // Debug: inspect the first camera footprint
         if (!cameras.empty()) {
             cv::Mat footprint =
                 RenderCameraFootprintDebug(cameras[0], 1456, 1088);
@@ -2211,9 +2245,6 @@ int main(int argc, char* argv[])
             const cv::Point c = FindMaskCentroid(footprint);
             std::cout << "[DEBUG] footprint centroid = ("
                       << c.x << ", " << c.y << ")\n";
-
-            // Optional:
-            // cv::imwrite("/tmp/debug_camera0_footprint.png", footprint);
         }
 
         std::vector<LiveCameraState> liveCameras(totalCameras);
@@ -2225,7 +2256,6 @@ int main(int argc, char* argv[])
                   << " liveCameras.size()=" << liveCameras.size()
                   << '\n';
 
-        // Debug: render the shared seam between the first two module faces.
         if (moduleFaceIndices.size() >= 2) {
             const RigFace<3>& face0 =
                 faces[static_cast<size_t>(moduleFaceIndices[0])];
@@ -2236,9 +2266,6 @@ int main(int argc, char* argv[])
                 RenderSharedFaceSeamDebug(face0, face1, vertices, 1456, 1088);
 
             std::cout << "[DEBUG] saved /tmp/debug_shared_seam.png\n";
-
-            // Optional:
-            // cv::imwrite("/tmp/debug_shared_seam.png", seam);
         }
 
         std::vector<std::jthread> frameThreads;
