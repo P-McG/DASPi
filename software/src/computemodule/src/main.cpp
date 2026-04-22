@@ -856,10 +856,13 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
                                         cfg.Rcw,
                                         cfg.imageRotation);
 
-        //cam.faceIndex = cfg.faceIndex;
-        //cam.sensorValidmask = cfg.sensorValidmask;
-        cam.faceIndex = cfg.faceIndex;   // only if you already have this
-		cam.sensorValidMask = cv::Mat(); // disable
+        cam.faceIndex = cfg.faceIndex;
+        cam.sensorValidMask = cfg.sensorValidMask.clone();
+
+        cam.localStreamIndex  = cfg.localStreamIndex;
+        cam.localEdgeIndex    = cfg.localEdgeIndex;
+        cam.neighborFaceIndex = cfg.neighborFaceIndex;
+        cam.edgeIndex         = cfg.edgeIndex;
 
         cameras.push_back(std::move(cam));
     }
@@ -1239,6 +1242,7 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
     constexpr RigGeometry kRigGeometry = RigGeometry::Icosahedron;
 
     MeshTopology<N> topo;
+    std::vector<int> moduleFaceIndices;
 
     switch (kRigGeometry) {
     case RigGeometry::Icosahedron: {
@@ -1247,6 +1251,8 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
         } else {
             IcosahedronTopology topologyBuilder;
             topo = topologyBuilder.Make();
+            moduleFaceIndices =
+                topologyBuilder.DefaultModuleOwningFaces(nApertureComputeModules);
         }
         break;
     }
@@ -1265,11 +1271,12 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
         printedFaces = true;
     }
 
-    const std::vector<int> moduleFaceIndices =
-        BuildModuleFaceIndices(faces, nApertureComputeModules);
-
     if (moduleFaceIndices.empty()) {
         throw std::runtime_error("No module face indices were generated");
+    }
+
+    if (static_cast<int>(moduleFaceIndices.size()) != nApertureComputeModules) {
+        throw std::runtime_error("moduleFaceIndices size mismatch");
     }
 
     for (int faceIndex : moduleFaceIndices) {
@@ -1332,6 +1339,10 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
     std::vector<CameraConfig> configs;
     configs.reserve(TotalCameraCount(nApertureComputeModules));
 
+    constexpr std::size_t kFaceEdgeCount = N;
+    static_assert(kCamerasPerModule == kFaceEdgeCount + 1,
+                  "Expected one non-overlap stream plus one overlap stream per face edge");
+
     for (int module = 0; module < nApertureComputeModules; ++module) {
         const int faceIndex = moduleFaceIndices[static_cast<std::size_t>(module)];
         const RigFace<N>& face = faces[static_cast<std::size_t>(faceIndex)];
@@ -1342,7 +1353,7 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
         const ImageRotation imageRotation = ImageRotation::None;
         Eigen::Matrix3d Rimg = Eigen::Matrix3d::Identity();
 
-        double module0CameraRollDeg{90.0};
+        const double module0CameraRollDeg{90.0};
         if (module == 0) {
             Rimg = CameraRollDeg(module0CameraRollDeg);
         } else if (module == 1) {
@@ -1377,14 +1388,70 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
             std::cout << "  seam=(" << seam.transpose() << ")\n";
         }
 
-        for (std::size_t localCam = 0; localCam < kCamerasPerModule; ++localCam) {
+        // Stream 0 = non-overlap interior of owning face
+        {
             CameraConfig cfg;
-            cfg.name = "module_" + std::to_string(module) + "_cam_" + std::to_string(localCam);
+            cfg.name = "module_" + std::to_string(module) + "_cam_0";
             cfg.device = "";
+            cfg.sourceName = "";
             cfg.imageRotation = imageRotation;
             cfg.Rcw = Rfinal;
             cfg.moduleIndex = module;
+            cfg.sensorValidMask = cv::Mat();
             cfg.faceIndex = faceIndex;
+
+            cfg.localStreamIndex = 0;
+            cfg.localEdgeIndex = -1;
+            cfg.neighborFaceIndex = -1;
+            cfg.edgeIndex = -1;
+
+            configs.push_back(std::move(cfg));
+        }
+
+        // Streams 1..N = overlap regions, one per local face edge
+        for (std::size_t localEdge = 0; localEdge < kFaceEdgeCount; ++localEdge) {
+            const int neighborFaceIndex =
+                topo.faceNeighborIndices[static_cast<std::size_t>(faceIndex)][localEdge];
+
+            const int edgeIndex =
+                topo.faceEdgeIndices[static_cast<std::size_t>(faceIndex)][localEdge];
+
+            if (neighborFaceIndex < 0) {
+                throw std::runtime_error(
+                    "Missing neighborFaceIndex for face " + std::to_string(faceIndex) +
+                    " localEdge " + std::to_string(localEdge));
+            }
+
+            if (edgeIndex < 0) {
+                throw std::runtime_error(
+                    "Missing edgeIndex for face " + std::to_string(faceIndex) +
+                    " localEdge " + std::to_string(localEdge));
+            }
+
+            CameraConfig cfg;
+            cfg.name = "module_" + std::to_string(module) + "_cam_" +
+                       std::to_string(static_cast<int>(localEdge) + 1);
+            cfg.device = "";
+            cfg.sourceName = "";
+            cfg.imageRotation = imageRotation;
+            cfg.Rcw = Rfinal;          // same physical pose
+            cfg.moduleIndex = module;
+            cfg.sensorValidMask = cv::Mat();
+            cfg.faceIndex = faceIndex; // owning face remains the module face
+
+            cfg.localStreamIndex = static_cast<int>(localEdge) + 1;
+            cfg.localEdgeIndex = static_cast<int>(localEdge);
+            cfg.neighborFaceIndex = neighborFaceIndex;
+            cfg.edgeIndex = edgeIndex;
+
+            std::cout << "  [overlap stream] module=" << module
+                      << " localStream=" << cfg.localStreamIndex
+                      << " owningFace=" << faceIndex
+                      << " localEdge=" << cfg.localEdgeIndex
+                      << " neighborFace=" << neighborFaceIndex
+                      << " edgeIndex=" << edgeIndex
+                      << '\n';
+
             configs.push_back(std::move(cfg));
         }
     }

@@ -1,7 +1,14 @@
 // DASPi-isocahedron_topology.h
 #pragma once
+
+#include <cmath>
+#include <stdexcept>
+#include <vector>
+
 #include "DASPi-mesh_topology.h"
-namespace DASPi{
+
+namespace DASPi {
+
 class IcosahedronTopology {
 public:
     MeshTopology<3> Make() const
@@ -31,8 +38,32 @@ public:
             {4,9,5},{2,4,11},{6,2,10},{8,6,7},{9,8,1}
         };
 
+        BuildTopologyAdjacency(topo);
         return topo;
     }
+
+    std::vector<int> DefaultModuleOwningFaces(int moduleCount) const
+    {
+        if (moduleCount <= 0) {
+            throw std::runtime_error("moduleCount must be > 0");
+        }
+
+        // Hardcoded physical camera placement on the icosahedron.
+        // module 0 -> face 0
+        // module 1 -> face 1
+        static const std::vector<int> kOwningFaces = {
+            0,
+            1
+        };
+
+        if (moduleCount > static_cast<int>(kOwningFaces.size())) {
+            throw std::runtime_error(
+                "Requested more modules than hardcoded icosahedron face assignments");
+        }
+
+        return std::vector<int>(kOwningFaces.begin(),
+                                kOwningFaces.begin() + moduleCount);
+    }
 };
-};//DASPi
-#include "DASPi-isocahedron_topology.h"
+
+} // namespace DASPi

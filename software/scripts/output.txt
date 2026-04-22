@@ -1,0 +1,189 @@
+Program - started
+[ARGS] nApertureComputeModules=2 usbBaseIp='10.0.2.1' baseFramePort=5000
+[main] Address plan
+  gateway=10.0.2.1
+  client=10.0.2.1
+  server[0]=10.0.2.4
+  server[1]=10.0.2.5
+[main] Setting up AperturePeers
+[main] Creating AperturePeer 0, framePort=5000, controlPort=5001, clntAddr=10.0.2.1, srvAddr=10.0.2.4
+[UDPClnt::FillingClientInformation]
+[UDPClnt]
+[RX sizeof]
+sizeof(MessageHeader)=4
+sizeof(GainMsg)=44
+sizeof(FrameHeader)=72
+sizeof(UdpChunkHeader)=88
+[UDPClnt::FillingServerInformation]
+[UDPClnt::CreatingSocketFileDescriptor]
+[UDPClnt::BindSocketWithClientAddress]
+[UDPClnt] - finished
+[UDPClnt::FillingClientInformation]
+[UDPClnt]
+[RX sizeof]
+sizeof(MessageHeader)=4
+sizeof(GainMsg)=44
+sizeof(FrameHeader)=72
+sizeof(UdpChunkHeader)=88
+[UDPClnt::FillingServerInformation]
+[UDPClnt::CreatingSocketFileDescriptor]
+[UDPClnt::BindSocketWithClientAddress]
+[UDPClnt] - finished
+[main] Creating AperturePeer 1, framePort=5002, controlPort=5003, clntAddr=10.0.2.1, srvAddr=10.0.2.5
+[UDPClnt::FillingClientInformation]
+[UDPClnt]
+[RX sizeof]
+sizeof(MessageHeader)=4
+sizeof(GainMsg)=44
+sizeof(FrameHeader)=72
+sizeof(UdpChunkHeader)=88
+[UDPClnt::FillingServerInformation]
+[UDPClnt::CreatingSocketFileDescriptor]
+[UDPClnt::BindSocketWithClientAddress]
+[UDPClnt] - finished
+[UDPClnt::FillingClientInformation]
+[UDPClnt]
+[RX sizeof]
+sizeof(MessageHeader)=4
+sizeof(GainMsg)=44
+sizeof(FrameHeader)=72
+sizeof(UdpChunkHeader)=88
+[UDPClnt::FillingServerInformation]
+[UDPClnt::CreatingSocketFileDescriptor]
+[UDPClnt::BindSocketWithClientAddress]
+[UDPClnt] - finished
+[face mapping] module0=0 module1=1
+[rig faces]
+  face 0 indices=(0, 11, 5) normal=(-0.0140933   0.269672   0.962849) lookDir=(-0.0140933   0.269672   0.962849)
+  face 1 indices=(0, 5, 1) normal=(0.427207 0.686841    0.588) lookDir=(0.427207 0.686841    0.588)
+  face 2 indices=(0, 1, 7) normal=(0.0492779   0.99648 0.0678252) lookDir=(0.0492779   0.99648 0.0678252)
+  face 3 indices=(0, 7, 10) normal=(-0.625595  0.770678  0.121189) lookDir=(-0.625595  0.770678  0.121189)
+  face 4 indices=(0, 10, 11) normal=(-0.664761  0.321486  0.674344) lookDir=(-0.664761  0.321486  0.674344)
+  face 5 indices=(1, 5, 9) normal=(0.920079 0.269672 0.284133) lookDir=(0.920079 0.269672 0.284133)
+  face 6 indices=(5, 11, 4) normal=(  0.20604 -0.405322  0.890652) lookDir=(  0.20604 -0.405322  0.890652)
+  face 7 indices=(11, 10, 2) normal=(-0.846762 -0.321486  0.423841) lookDir=(-0.846762 -0.321486  0.423841)
+  face 8 indices=(10, 7, 6) normal=(-0.783391  0.405322 -0.471183) lookDir=(-0.783391  0.405322 -0.471183)
+  face 9 indices=(7, 1, 8) normal=( 0.308577  0.770678 -0.557527) lookDir=( 0.308577  0.770678 -0.557527)
+  face 10 indices=(3, 9, 4) normal=( 0.625595 -0.770678 -0.121189) lookDir=( 0.625595 -0.770678 -0.121189)
+  face 11 indices=(3, 4, 2) normal=(-0.0492779   -0.99648 -0.0678252) lookDir=(-0.0492779   -0.99648 -0.0678252)
+  face 12 indices=(3, 2, 6) normal=(-0.427207 -0.686841    -0.588) lookDir=(-0.427207 -0.686841    -0.588)
+  face 13 indices=(3, 6, 8) normal=(0.0140933 -0.269672 -0.962849) lookDir=(0.0140933 -0.269672 -0.962849)
+  face 14 indices=(3, 8, 9) normal=( 0.664761 -0.321486 -0.674344) lookDir=( 0.664761 -0.321486 -0.674344)
+  face 15 indices=(4, 9, 5) normal=( 0.783391 -0.405322  0.471183) lookDir=( 0.783391 -0.405322  0.471183)
+  face 16 indices=(2, 4, 11) normal=(-0.308577 -0.770678  0.557527) lookDir=(-0.308577 -0.770678  0.557527)
+  face 17 indices=(6, 2, 10) normal=(-0.920079 -0.269672 -0.284133) lookDir=(-0.920079 -0.269672 -0.284133)
+  face 18 indices=(8, 6, 7) normal=( -0.20604  0.405322 -0.890652) lookDir=( -0.20604  0.405322 -0.890652)
+  face 19 indices=(9, 8, 1) normal=( 0.846762  0.321486 -0.423841) lookDir=( 0.846762  0.321486 -0.423841)
+
+[DebugPrintRigAdjacency]
+codeFace[0] neighbors = 1 4 6 
+codeFace[1] neighbors = 0 2 5 
+codeFace[2] neighbors = 1 3 9 
+codeFace[3] neighbors = 2 4 8 
+codeFace[4] neighbors = 0 3 7 
+codeFace[5] neighbors = 1 15 19 
+codeFace[6] neighbors = 0 15 16 
+codeFace[7] neighbors = 4 16 17 
+codeFace[8] neighbors = 3 17 18 
+codeFace[9] neighbors = 2 18 19 
+codeFace[10] neighbors = 11 14 15 
+codeFace[11] neighbors = 10 12 16 
+codeFace[12] neighbors = 11 13 17 
+codeFace[13] neighbors = 12 14 18 
+codeFace[14] neighbors = 10 13 19 
+codeFace[15] neighbors = 5 6 10 
+codeFace[16] neighbors = 6 7 11 
+codeFace[17] neighbors = 7 8 12 
+codeFace[18] neighbors = 8 9 13 
+codeFace[19] neighbors = 5 9 14 
+
+[face mapping] module0=0 module1=1
+[rig] module assignments
+  module[0] -> face[0] dir=(-0.0140933   0.269672   0.962849)
+  module[1] -> face[1] dir=(0.427207 0.686841    0.588)
+  angle(module[0], module[1]) = 41.8103 deg
+[camera config] module=0 faceIndex=0 lookDir=(-0.0140933   0.269672   0.962849) camRightWorld=(   0.755481   -0.655171 3.98986e-17) camUpWorld=(    0.655171     0.755481 -2.60209e-17) camForwardWorld=(0 0 1)
+  seam=( 0.754136 -0.629434  0.187328)
+[camera config] module=1 faceIndex=1 lookDir=(0.427207 0.686841    0.588) camRightWorld=(   -0.755481     0.655171 -1.60629e-16) camUpWorld=(-0.488335 -0.563102  0.666667) camForwardWorld=( 0.43678 0.503654 0.745356)
+  seam=( 0.754136 -0.629434  0.187328)
+[moduleFaceMask] module=0 faceIndex=0 nonzero=226196 rows=1088 cols=1456
+[moduleFaceMask] module=1 faceIndex=1 nonzero=226204 rows=1088 cols=1456
+
+[DebugCameraPose] camera[0]
+  right   = (   0.755481   -0.655171 3.98986e-17)
+  up      = (    0.655171     0.755481 -2.60209e-17)
+  forward = (0 0 1)
+
+[DebugCameraPose] camera[1]
+  right   = (   0.755481   -0.655171 3.98986e-17)
+  up      = (    0.655171     0.755481 -2.60209e-17)
+  forward = (0 0 1)
+
+[DebugCameraPose] camera[2]
+  right   = (   0.755481   -0.655171 3.98986e-17)
+  up      = (    0.655171     0.755481 -2.60209e-17)
+  forward = (0 0 1)
+
+[DebugCameraPose] camera[3]
+  right   = (   0.755481   -0.655171 3.98986e-17)
+  up      = (    0.655171     0.755481 -2.60209e-17)
+  forward = (0 0 1)
+
+[DebugCameraPose] camera[4]
+  right   = (   -0.755481     0.655171 -1.60629e-16)
+  up      = (-0.488335 -0.563102  0.666667)
+  forward = ( 0.43678 0.503654 0.745356)
+
+[DebugCameraPose] camera[5]
+  right   = (   -0.755481     0.655171 -1.60629e-16)
+  up      = (-0.488335 -0.563102  0.666667)
+  forward = ( 0.43678 0.503654 0.745356)
+
+[DebugCameraPose] camera[6]
+  right   = (   -0.755481     0.655171 -1.60629e-16)
+  up      = (-0.488335 -0.563102  0.666667)
+  forward = ( 0.43678 0.503654 0.745356)
+
+[DebugCameraPose] camera[7]
+  right   = (   -0.755481     0.655171 -1.60629e-16)
+  up      = (-0.488335 -0.563102  0.666667)
+  forward = ( 0.43678 0.503654 0.745356)
+forward valid=1 uv=(728, 544)
+right valid=1 uv=(1576.53, 544)
+left valid=1 uv=(-120.528, 544)
+up valid=1 uv=(728, 1392.53)
+down valid=1 uv=(728, -304.528)
+fr valid=1 uv=(977.11, 544)
+fl valid=1 uv=(478.89, 544)
+fu valid=1 uv=(728, 793.11)
+fd valid=1 uv=(728, 294.89)
+
+[DebugProjectUnprojectConsistency]
+ray[0]=0 0 1 -> uv=(728, 544) ray1=(0 0 1) dot=1 angleDeg=0
+ray[1]= 0.19996        0 0.979804 -> uv=(848.586, 544) ray1=( 0.19996        0 0.979804) dot=1 angleDeg=0
+ray[2]=-0.19996        0 0.979804 -> uv=(607.414, 544) ray1=(-0.19996        0 0.979804) dot=1 angleDeg=0
+ray[3]=       0  0.19996 0.979804 -> uv=(728, 664.586) ray1=(       0  0.19996 0.979804) dot=1 angleDeg=0
+ray[4]=       0 -0.19996 0.979804 -> uv=(728, 423.414) ray1=(       0 -0.19996 0.979804) dot=1 angleDeg=0
+ray[5]=0.300768 0.200512 0.932381 -> uv=(911.591, 666.394) ray1=(0.300768 0.200512 0.932381) dot=1 angleDeg=0
+ray[6]=-0.300768  0.200512  0.932381 -> uv=(544.409, 666.394) ray1=(-0.300768  0.200512  0.932381) dot=1 angleDeg=0
+ray[7]= 0.300768 -0.200512  0.932381 -> uv=(911.591, 421.606) ray1=( 0.300768 -0.200512  0.932381) dot=1 angleDeg=0
+ray[8]=-0.300768 -0.200512  0.932381 -> uv=(544.409, 421.606) ray1=(-0.300768 -0.200512  0.932381) dot=1 angleDeg=0
+
+[DEBUG] Saved camera footprint
+[DEBUG] footprint centroid = (727, 543)
+[main] configs.size()=8 cameras.size()=8 liveCameras.size()=8
+[DEBUG] saved /tmp/debug_shared_seam.png
+[main] Starting per-peer frame/control threads
+[main] Threads running
+[UDPClnt::InitEpollForSrvUDPPackets]
+[UDPClnt::InitEpollForSrvUDPPackets]
+[UDPClnt::PrintSocksaddr_in]
+IP: 10.0.2.4, Port: 5000
+[RF] after InitEpollForSrvUDPPackets
+[RF] before ReceiveAndReassembleFramePacket
+[RXF] enter ReceiveAndReassembleFramePacket
+[UDPClnt::PrintSocksaddr_in]
+IP: 10.0.2.5, Port: 5002
+[RF] after InitEpollForSrvUDPPackets
+[RF] before ReceiveAndReassembleFramePacket
+[RXF] enter ReceiveAndReassembleFramePacket

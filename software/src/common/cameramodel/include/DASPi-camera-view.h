@@ -18,5 +18,11 @@ struct CameraView {
     Eigen::Matrix3d Rcw;
 
     int faceIndex = -1;              // keep if you're using it
+    
+    int localStreamIndex = -1;
+    int localEdgeIndex = -1;
+    int neighborFaceIndex = -1;
+    int edgeIndex = -1;
+    
     cv::Mat sensorValidMask;         // keep if you're using it
 };
