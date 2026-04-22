@@ -1681,6 +1681,14 @@ void updateCameraImages(std::vector<CameraView>& cameras,
             cam.maskNonOverlap = zeroMask;
             cam.maskOverlap = live.validMask.clone();
         }
+        
+        std::cout << "[stream] module=" << cam.moduleIndex
+          << " localStream=" << cfg.localStreamIndex
+          << " localEdge=" << cfg.localEdgeIndex
+          << " neighborFace=" << cfg.neighborFaceIndex
+          << " role=" << static_cast<int>(live.role)
+          << " validNZ=" << cv::countNonZero(live.validMask)
+          << '\n';
 
         // Optional: debug sanity
         if (i < 4) {
