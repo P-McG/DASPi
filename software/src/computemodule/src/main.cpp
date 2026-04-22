@@ -1649,9 +1649,20 @@ void updateCameraImages(std::vector<CameraView>& cameras,
         }
 
         cameras[i].image = latest;
-
-        // Optional: keep only true sensor/image validity here.
         cameras[i].sensorValidMask = liveCameras[i].validMask.clone();
+
+        const cv::Mat zeroMask =
+            cv::Mat::zeros(liveCameras[i].validMask.rows,
+                           liveCameras[i].validMask.cols,
+                           CV_8UC1);
+
+        if (cameras[i].localStreamIndex == 0) {
+            cameras[i].maskNonOverlap = liveCameras[i].validMask.clone();
+            cameras[i].maskOverlap = zeroMask;
+        } else {
+            cameras[i].maskNonOverlap = zeroMask;
+            cameras[i].maskOverlap = liveCameras[i].validMask.clone();
+        }
     }
 }
 
@@ -1981,7 +1992,7 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         SphereStitcher stitcher(cameras, stitchConfig, rig);
 
         cv::Mat validMask;
-        cv::Mat pano = stitcher.stitchFisheye(&validMask);
+        cv::Mat pano = stitcher.stitch(&validMask);
 
         if (pano.empty()) {
             std::cerr << "[RunStitchLoop] stitchFisheye returned empty pano\n";
@@ -2116,8 +2127,9 @@ int main(int argc, char* argv[])
         const auto& faces = rig.faces;
         const auto& vertices = rig.vertices;
 
-        const std::vector<int> moduleFaceIndices =
-            BuildModuleFaceIndices(faces, options.nApertureComputeModules);
+		IcosahedronTopology topologyBuilder;
+		const std::vector<int> moduleFaceIndices =
+		    topologyBuilder.DefaultModuleOwningFaces(options.nApertureComputeModules);
 
         const std::vector<CameraConfig> configs =
             makeCameraConfigs<3>(options.nApertureComputeModules);
