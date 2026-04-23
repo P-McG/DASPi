@@ -1656,56 +1656,78 @@ void updateCameraImages(std::vector<CameraView>& cameras,
     }
 
     for (size_t i = 0; i < cameras.size(); ++i) {
-        cv::Mat latest;
-        if (!tryGetLatestFrame(liveCameras[i].frame, latest)) {
-            continue;
-        }
-
         CameraView& cam = cameras[i];
         const CameraConfig& cfg = configs[i];
         const LiveCameraState& live = liveCameras[i];
 
-        // Image + sensor mask
-        cam.image = latest;
-        cam.sensorValidMask = live.validMask.clone();
+        std::cout << "[pre-frame] cam=" << i
+                  << " module=" << cam.moduleIndex
+                  << " stream=" << cfg.localStreamIndex
+                  << " liveValidNZ=" << cv::countNonZero(live.validMask)
+                  << '\n';
 
-        // Allocate empty masks
-        cv::Mat zeroMask = cv::Mat::zeros(latest.rows, latest.cols, CV_8UC1);
+        // Always update masks from live state, even if no frame arrived yet.
+        cv::Mat zeroMask;
+        if (!live.validMask.empty()) {
+            zeroMask = cv::Mat::zeros(live.validMask.rows, live.validMask.cols, CV_8UC1);
+            cam.sensorValidMask = live.validMask.clone();
 
-        if (cfg.localStreamIndex == 0) {
-            // Non-overlap stream
-            cam.maskNonOverlap = live.validMask.clone();
-            cam.maskOverlap = zeroMask;
-        } else {
-            // Overlap stream
-            cam.maskNonOverlap = zeroMask;
-            cam.maskOverlap = live.validMask.clone();
+            if (cfg.localStreamIndex == 0) {
+                cam.maskNonOverlap = live.validMask.clone();
+                cam.maskOverlap = zeroMask;
+            } else {
+                cam.maskNonOverlap = zeroMask;
+                cam.maskOverlap = live.validMask.clone();
+            }
         }
-        
-        std::cout << "[stream] module=" << cam.moduleIndex
-          << " localStream=" << cfg.localStreamIndex
-          << " localEdge=" << cfg.localEdgeIndex
-          << " neighborFace=" << cfg.neighborFaceIndex
-          << " role=" << static_cast<int>(live.role)
-          << " validNZ=" << cv::countNonZero(live.validMask)
-          << '\n';
 
-        // Optional: debug sanity
-		std::cout << "[updateCameraImages] cam=" << i
-		          << " module=" << cam.moduleIndex
-		          << " face=" << cam.faceIndex
-		          << " stream=" << cfg.localStreamIndex
-		          << " localEdge=" << cfg.localEdgeIndex
-		          << " neighborFace=" << cfg.neighborFaceIndex
-		          << " nonOverlapNZ=" << cv::countNonZero(cam.maskNonOverlap)
-		          << " overlapNZ=" << cv::countNonZero(cam.maskOverlap)
-		          << '\n';
-		if(i==0){
-			cv::imwrite("/tmp/cam_" + std::to_string(i) + "_image.png", cam.image);
-			cv::imwrite("/tmp/cam_" + std::to_string(i) + "_sensor.png", cam.sensorValidMask);
-			cv::imwrite("/tmp/cam_" + std::to_string(i) + "_nonoverlap.png", cam.maskNonOverlap);
-			cv::imwrite("/tmp/cam_" + std::to_string(i) + "_overlap.png", cam.maskOverlap);
-		}
+        cv::Mat latest;
+        const bool haveFrame = tryGetLatestFrame(liveCameras[i].frame, latest);
+
+        std::cout << "[frame] cam=" << i
+                  << " module=" << cam.moduleIndex
+                  << " stream=" << cfg.localStreamIndex
+                  << " haveFrame=" << haveFrame
+                  << '\n';
+
+        if (haveFrame) {
+            cam.image = latest;
+        }
+
+        std::cout << "[updateCameraImages] cam=" << i
+                  << " module=" << cam.moduleIndex
+                  << " face=" << cam.faceIndex
+                  << " stream=" << cfg.localStreamIndex
+                  << " localEdge=" << cfg.localEdgeIndex
+                  << " neighborFace=" << cfg.neighborFaceIndex
+                  << " nonOverlapNZ=" << cv::countNonZero(cam.maskNonOverlap)
+                  << " overlapNZ=" << cv::countNonZero(cam.maskOverlap)
+                  << '\n';
+    }
+
+    static bool savedOnce = false;
+    if (!savedOnce && cameras.size() >= 8) {
+        cv::imwrite("/tmp/cam_0_nonoverlap.png", cameras[0].maskNonOverlap);
+        cv::imwrite("/tmp/cam_1_overlap.png",    cameras[1].maskOverlap);
+        cv::imwrite("/tmp/cam_2_overlap.png",    cameras[2].maskOverlap);
+        cv::imwrite("/tmp/cam_3_overlap.png",    cameras[3].maskOverlap);
+
+        cv::imwrite("/tmp/cam_4_nonoverlap.png", cameras[4].maskNonOverlap);
+        cv::imwrite("/tmp/cam_5_overlap.png",    cameras[5].maskOverlap);
+        cv::imwrite("/tmp/cam_6_overlap.png",    cameras[6].maskOverlap);
+        cv::imwrite("/tmp/cam_7_overlap.png",    cameras[7].maskOverlap);
+
+        std::cout << "cam_0_nonoverlap NZ=" << cv::countNonZero(cameras[0].maskNonOverlap) << '\n';
+        std::cout << "cam_1_overlap   NZ=" << cv::countNonZero(cameras[1].maskOverlap) << '\n';
+        std::cout << "cam_2_overlap   NZ=" << cv::countNonZero(cameras[2].maskOverlap) << '\n';
+        std::cout << "cam_3_overlap   NZ=" << cv::countNonZero(cameras[3].maskOverlap) << '\n';
+
+        std::cout << "cam_4_nonoverlap NZ=" << cv::countNonZero(cameras[4].maskNonOverlap) << '\n';
+        std::cout << "cam_5_overlap   NZ=" << cv::countNonZero(cameras[5].maskOverlap) << '\n';
+        std::cout << "cam_6_overlap   NZ=" << cv::countNonZero(cameras[6].maskOverlap) << '\n';
+        std::cout << "cam_7_overlap   NZ=" << cv::countNonZero(cameras[7].maskOverlap) << '\n';
+
+        savedOnce = true;
     }
 }
 
@@ -2070,13 +2092,16 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
 
     cv::destroyWindow("Stitched Panorama");
 }
+
 template <size_t N>
 void InitializeCameraMasks(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePeers,
                            std::vector<LiveCameraState>& liveCameras)
 {
+
+	
     for (size_t moduleIndex = 0; moduleIndex < aperturePeers.size(); ++moduleIndex) {
         AperturePeer<N>* peer = aperturePeers[moduleIndex].get();
-
+          
         for (size_t localCameraIndex = 0; localCameraIndex < N + 1; ++localCameraIndex) {
             const size_t globalIndex = GlobalCameraIndex(moduleIndex, localCameraIndex);
 
@@ -2087,6 +2112,13 @@ void InitializeCameraMasks(std::vector<std::unique_ptr<AperturePeer<N>>>& apertu
                                          ", localCameraIndex=" +
                                          std::to_string(localCameraIndex));
             }
+            
+            std::cout << "[InitializeCameraMasks] module=" << moduleIndex
+	          << " local=" << localCameraIndex
+	          << " global=" << globalIndex
+	          << " copyOk=" << (peer->CopyValidMask(localCameraIndex, validMask) ? 1 : 0)
+	          << " nz=" << (validMask.empty() ? -1 : cv::countNonZero(validMask))
+	          << '\n';
 
             liveCameras[globalIndex].validMask = std::move(validMask);
             liveCameras[globalIndex].role =

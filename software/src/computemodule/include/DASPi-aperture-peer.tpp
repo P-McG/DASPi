@@ -768,50 +768,59 @@ namespace DASPi{
 		return true;
 	}
 	
-	template<size_t n>
-	cv::Mat AperturePeer<n>::BuildValidMask(size_t regionIndex)
-	{
-		if (regionIndex >= n + 1) {
-			throw std::out_of_range("BuildValidMask regionIndex out of range");
-		}
-	
-		std::vector<uint16_t> unmasked;
-	
-		if (regionIndex == 0) {
-			std::vector<uint16_t> compact(this->sfdp_[0].size(), static_cast<uint16_t>(1));
-			unmasked = this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(compact);
-		} else {
-			const size_t overlapIdx = regionIndex - 1;
-			std::vector<uint16_t> compact(this->sfdp_[regionIndex].size(), static_cast<uint16_t>(1));
-			unmasked = this->sf_.FrameBufferUnmask(compact, overlapIdx);
-		}
-	
-		if (unmasked.size() != sensorWidthValue_ * sensorHeightValue_) {
-			throw std::runtime_error("BuildValidMask: unexpected unmasked buffer size");
-		}
-	
-		cv::Mat mask(static_cast<int>(sensorHeightValue_),
-					 static_cast<int>(sensorWidthValue_),
-					 CV_8UC1);
-	
-		for (size_t i = 0; i < unmasked.size(); ++i) {
-			mask.data[i] = (unmasked[i] != 0) ? static_cast<uint8_t>(255)
-											  : static_cast<uint8_t>(0);
-		}
-	
-		return mask;
-	}
-	
-	template<size_t n>
-	bool AperturePeer<n>::CopyValidMask(size_t regionIndex, cv::Mat& out)
-	{
-		if (regionIndex >= n + 1) {
-			return false;
-		}
-	
-		out = BuildValidMask(regionIndex);
-		return !out.empty();
-	}
+template<size_t n>
+cv::Mat AperturePeer<n>::BuildValidMask(size_t regionIndex)
+{
+    if (regionIndex >= n + 1) {
+        throw std::out_of_range("BuildValidMask regionIndex out of range");
+    }
+
+    std::vector<uint16_t> unmasked;
+
+    if (regionIndex == 0) {
+        std::vector<uint16_t> compact(
+            this->sf_.sf_t::nonOverlapFacet_t::size(),
+            static_cast<uint16_t>(1));
+
+        unmasked = this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(compact);
+    } else {
+        const size_t overlapIdx = regionIndex - 1;
+
+        std::vector<uint16_t> compact(
+            this->sf_.size(overlapIdx),
+            static_cast<uint16_t>(1));
+
+        unmasked = this->sf_.FrameBufferUnmask(compact, overlapIdx);
+    }
+
+    if (unmasked.size() != sensorWidthValue_ * sensorHeightValue_) {
+        throw std::runtime_error("BuildValidMask: unexpected unmasked buffer size");
+    }
+
+    cv::Mat mask(static_cast<int>(sensorHeightValue_),
+                 static_cast<int>(sensorWidthValue_),
+                 CV_8UC1,
+                 cv::Scalar(0));
+
+    for (size_t i = 0; i < unmasked.size(); ++i) {
+        mask.data[i] = (unmasked[i] != 0)
+                         ? static_cast<uint8_t>(255)
+                         : static_cast<uint8_t>(0);
+    }
+
+    return mask;
+}
+
+template<size_t n>
+bool AperturePeer<n>::CopyValidMask(size_t regionIndex, cv::Mat& out)
+{
+    if (regionIndex >= n + 1) {
+        return false;
+    }
+
+    out = BuildValidMask(regionIndex);
+    return !out.empty();
+}
 					  
 };//ending namespace DASPi
 
