@@ -218,31 +218,24 @@ cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
 
     for (int y = 0; y < config_.outputHeight; ++y) {
         for (int x = 0; x < config_.outputWidth; ++x) {
-            const Eigen::Vector3f& ray_world =
-                worldRays_[rayIndex(x, y)];
-
-            const std::vector<Contribution> contributions =
-                gatherContributions(ray_world);
-
-            if (!contributions.empty() && validMask != nullptr) {
-                localValidMask.at<std::uint8_t>(y, x) = 255;
-            }
+            const Eigen::Vector3f& ray_world = worldRays_[rayIndex(x, y)];
+            const std::vector<Contribution> contributions = gatherContributions(ray_world);
 
             if (contributions.empty()) {
-                out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 0);
+                out.at<cv::Vec3b>(y, x) = config_.backgroundColor;
                 continue;
             }
 
-            const auto& c = contributions[0];
-            const auto& cam = cameras_[static_cast<std::size_t>(c.cameraIndex)];
-
-            if (cam.moduleIndex == 0) {
-                out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 255);   // red
-            } else if (cam.moduleIndex == 1) {
-                out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 255, 0);   // green
-            } else {
-                out.at<cv::Vec3b>(y, x) = cv::Vec3b(255, 0, 0);   // blue
+            if (validMask != nullptr) {
+                localValidMask.at<std::uint8_t>(y, x) = 255;
             }
+
+            const cv::Vec3d& color = contributions.front().color;
+            out.at<cv::Vec3b>(y, x) = cv::Vec3b(
+                static_cast<std::uint8_t>(std::clamp(color[0], 0.0, 255.0)),
+                static_cast<std::uint8_t>(std::clamp(color[1], 0.0, 255.0)),
+                static_cast<std::uint8_t>(std::clamp(color[2], 0.0, 255.0))
+            );
         }
     }
 
