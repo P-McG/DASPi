@@ -137,6 +137,17 @@ SphereStitcher::SphereStitcher(std::vector<CameraView> cameras,
         }
 
         faceToCameraIndex_[static_cast<std::size_t>(face)] = i;
+        
+        for (size_t f = 0; f < faceToCameraIndex_.size(); ++f) {
+            if (faceToCameraIndex_[f] >= 0) {
+                const auto& cam = cameras_[static_cast<size_t>(faceToCameraIndex_[f])];
+                std::cout << "[faceToCameraIndex] face=" << f
+                          << " -> cam=" << faceToCameraIndex_[f]
+                          << " module=" << cam.moduleIndex
+                          << " stream=" << cam.localStreamIndex
+                          << '\n';
+            }
+        }
     }
 }
 
@@ -189,12 +200,13 @@ int SphereStitcher::FindOwningFace(const Eigen::Vector3f& ray_world_f) const
 
     return -1;
 }
+
 cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
 {
     cv::Mat out(config_.outputHeight,
                 config_.outputWidth,
                 CV_8UC3,
-                config_.backgroundColor);
+                cv::Scalar(0, 0, 0));
 
     cv::Mat localValidMask;
     if (validMask != nullptr) {
@@ -216,8 +228,21 @@ cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
                 localValidMask.at<std::uint8_t>(y, x) = 255;
             }
 
-            out.at<cv::Vec3b>(y, x) =
-                resolvePixel(contributions);
+            if (contributions.empty()) {
+                out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 0);
+                continue;
+            }
+
+            const auto& c = contributions[0];
+            const auto& cam = cameras_[static_cast<std::size_t>(c.cameraIndex)];
+
+            if (cam.moduleIndex == 0) {
+                out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 255);   // red
+            } else if (cam.moduleIndex == 1) {
+                out.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 255, 0);   // green
+            } else {
+                out.at<cv::Vec3b>(y, x) = cv::Vec3b(255, 0, 0);   // blue
+            }
         }
     }
 
@@ -227,6 +252,7 @@ cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
 
     return out;
 }
+
 //cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
 //{
     //cv::Mat out(config_.outputHeight,

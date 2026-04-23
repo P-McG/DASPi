@@ -1691,14 +1691,21 @@ void updateCameraImages(std::vector<CameraView>& cameras,
           << '\n';
 
         // Optional: debug sanity
-        if (i < 4) {
-            std::cout << "[updateCameraImages] cam=" << i
-                      << " module=" << cam.moduleIndex
-                      << " stream=" << cfg.localStreamIndex
-                      << " nonOverlapNZ=" << cv::countNonZero(cam.maskNonOverlap)
-                      << " overlapNZ=" << cv::countNonZero(cam.maskOverlap)
-                      << '\n';
-        }
+		std::cout << "[updateCameraImages] cam=" << i
+		          << " module=" << cam.moduleIndex
+		          << " face=" << cam.faceIndex
+		          << " stream=" << cfg.localStreamIndex
+		          << " localEdge=" << cfg.localEdgeIndex
+		          << " neighborFace=" << cfg.neighborFaceIndex
+		          << " nonOverlapNZ=" << cv::countNonZero(cam.maskNonOverlap)
+		          << " overlapNZ=" << cv::countNonZero(cam.maskOverlap)
+		          << '\n';
+		if(i==0){
+			cv::imwrite("/tmp/cam_" + std::to_string(i) + "_image.png", cam.image);
+			cv::imwrite("/tmp/cam_" + std::to_string(i) + "_sensor.png", cam.sensorValidMask);
+			cv::imwrite("/tmp/cam_" + std::to_string(i) + "_nonoverlap.png", cam.maskNonOverlap);
+			cv::imwrite("/tmp/cam_" + std::to_string(i) + "_overlap.png", cam.maskOverlap);
+		}
     }
 }
 
