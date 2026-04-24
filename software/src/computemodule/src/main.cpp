@@ -1711,6 +1711,11 @@ void updateCameraImages(std::vector<CameraView>& cameras,
         if (haveFrame) {
             cam.image = latest;
         }
+        else {
+		    std::cout << "[WARN] Missing frame for cam=" << i
+		              << " module=" << cam.moduleIndex
+		              << " stream=" << cfg.localStreamIndex << '\n';
+		}
 
         std::cout << "[updateCameraImages] cam=" << i
                   << " module=" << cam.moduleIndex
