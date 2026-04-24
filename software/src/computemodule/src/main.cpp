@@ -63,7 +63,6 @@ struct ProgramOptions {
 };
 
 struct NetworkAddressPlan {
-    in_addr_t gateway{};
     in_addr_t client{};
     std::vector<in_addr_t> servers;
 };
@@ -184,25 +183,36 @@ NetworkAddressPlan BuildNetworkAddressPlan(const std::string& usbBaseIp,
         throw std::runtime_error("nApertureComputeModules must be > 0");
     }
 
-    NetworkAddressPlan plan;
-
-    // Keep gateway as the same base IP if you still want to track it separately.
-    plan.gateway = StringToInAddrT(usbBaseIp);
-
-    // Client should be exactly the base IP.
-    plan.client = StringToInAddrT(usbBaseIp);
-
-    if (plan.gateway == INADDR_NONE || plan.client == INADDR_NONE) {
-        throw std::runtime_error("Failed to construct gateway/client IP addresses");
+    std::array<int, 4> octets{};
+    if (!ParseIpv4(usbBaseIp, octets)) {
+        throw std::runtime_error("Invalid --usbBaseIp: " + usbBaseIp);
     }
 
+    const int clientHost = octets[3];
+    if (clientHost < 1 || clientHost > 252) {
+        throw std::runtime_error("--usbBaseIp host octet must be in [1,252]");
+    }
+
+    NetworkAddressPlan plan;
+    plan.client = StringToInAddrT(usbBaseIp);
+    if (plan.client == INADDR_NONE) {
+        throw std::runtime_error("Failed to construct client IP address: " + usbBaseIp);
+    }
     plan.servers.reserve(static_cast<size_t>(nApertureComputeModules));
+
     for (int i = 0; i < nApertureComputeModules; ++i) {
-        const std::string serverIp = IncrementIpv4Host(usbBaseIp, 3 + i);
+        const int subnet = octets[2] + i;
+        if (subnet > 255) {
+            throw std::runtime_error("Subnet overflow while building server addresses");
+        }
+
+        const std::string serverIp =
+            MakeIpv4String(octets[0], octets[1], subnet, clientHost + 2);
         const in_addr_t serverAddr = StringToInAddrT(serverIp);
         if (serverAddr == INADDR_NONE) {
             throw std::runtime_error("Failed to construct server IP address: " + serverIp);
         }
+
         plan.servers.push_back(serverAddr);
     }
 
@@ -212,9 +222,7 @@ NetworkAddressPlan BuildNetworkAddressPlan(const std::string& usbBaseIp,
 void PrintAddressPlan(const NetworkAddressPlan& plan)
 {
     std::cout << "[main] Address plan\n";
-    std::cout << "  gateway=" << InAddrTToString(plan.gateway) << '\n';
     std::cout << "  client=" << InAddrTToString(plan.client) << '\n';
-
     for (size_t i = 0; i < plan.servers.size(); ++i) {
         std::cout << "  server[" << i << "]="
                   << InAddrTToString(plan.servers[i]) << '\n';
@@ -227,7 +235,7 @@ void PrintUsage(const char* programName)
         << "Usage: " << programName
         << " [--verbose]"
         << " --nApertureComputeModules=<N>"
-        << " --usbBaseIp=<base_ip>"
+        << " --usbBaseIp=<client_ip>"
         << " --port=<frame_port>"
         << " [--reverseModuleOrder]\n"
         << "Example: " << programName
@@ -1919,6 +1927,7 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
         frameThreads.emplace_back([peer, peerIndex, moduleIndex, &liveCameras]() {
             std::vector<uint16_t> raw;
             raw.reserve(kExpectedPixels);
+            std::uint64_t frameCounter = 0;
 
             for (;;) {
                 if (!peer->RunFrameLoop()) {
@@ -1957,6 +1966,17 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
 
                     cv::Mat bgr = decodeBayer16ToBgr8(raw);
                     updateLatestFrame(liveCameras[globalIndex].frame, bgr);
+
+                    if (localCameraIndex == 0 && ((++frameCounter % 120) == 0)) {
+                        const cv::Scalar meanBgr = cv::mean(bgr);
+                        std::cout << "[frame signature] peer=" << peerIndex
+                                  << " module=" << moduleIndex
+                                  << " global=" << globalIndex
+                                  << " meanBGR=("
+                                  << meanBgr[0] << ","
+                                  << meanBgr[1] << ","
+                                  << meanBgr[2] << ")\n";
+                    }
                 }
             }
         });
