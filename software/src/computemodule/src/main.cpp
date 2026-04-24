@@ -60,6 +60,7 @@ struct ProgramOptions {
     std::string usbBaseIp;
     int framePort{0};
     bool reverseModuleOrder{false};
+    std::vector<std::string> serverIps;
 };
 
 struct NetworkAddressPlan {
@@ -176,9 +177,11 @@ std::string IncrementIpv4Host(const std::string& ipStr, int delta)
     return MakeIpv4String(octets[0], octets[1], octets[2], host);
 }
 
-NetworkAddressPlan BuildNetworkAddressPlan(const std::string& usbBaseIp,
-                                           int nApertureComputeModules)
+NetworkAddressPlan BuildNetworkAddressPlan(const ProgramOptions& options)
 {
+    const std::string& usbBaseIp = options.usbBaseIp;
+    const int nApertureComputeModules = options.nApertureComputeModules;
+
     if (nApertureComputeModules <= 0) {
         throw std::runtime_error("nApertureComputeModules must be > 0");
     }
@@ -193,6 +196,15 @@ NetworkAddressPlan BuildNetworkAddressPlan(const std::string& usbBaseIp,
         throw std::runtime_error("--usbBaseIp host octet must be in [1,252]");
     }
 
+    if (options.serverIps.empty()) {
+        const int highestServerHost = clientHost + 3 + (nApertureComputeModules - 1);
+        if (highestServerHost > 254) {
+            throw std::runtime_error(
+                "Default server host allocation exceeds IPv4 host range; "
+                "use --serverIps for explicit addressing");
+        }
+    }
+
     NetworkAddressPlan plan;
     plan.client = StringToInAddrT(usbBaseIp);
     if (plan.client == INADDR_NONE) {
@@ -201,7 +213,13 @@ NetworkAddressPlan BuildNetworkAddressPlan(const std::string& usbBaseIp,
     plan.servers.reserve(static_cast<size_t>(nApertureComputeModules));
 
     for (int i = 0; i < nApertureComputeModules; ++i) {
-        const std::string serverIp = IncrementIpv4Host(usbBaseIp, 2 + i);
+        std::string serverIp;
+        if (!options.serverIps.empty()) {
+            serverIp = options.serverIps[static_cast<size_t>(i)];
+        } else {
+            serverIp = IncrementIpv4Host(usbBaseIp, 3 + i);
+        }
+
         const in_addr_t serverAddr = StringToInAddrT(serverIp);
         if (serverAddr == INADDR_NONE) {
             throw std::runtime_error("Failed to construct server IP address: " + serverIp);
@@ -231,6 +249,7 @@ void PrintUsage(const char* programName)
         << " --nApertureComputeModules=<N>"
         << " --usbBaseIp=<client_ip>"
         << " --port=<frame_port>"
+        << " [--serverIps=<ip0,ip1,...>]"
         << " [--reverseModuleOrder]\n"
         << "Example: " << programName
         << " --nApertureComputeModules=2 --usbBaseIp=10.0.2.1 --port=5000\n";
@@ -276,6 +295,24 @@ ProgramOptions ParseArgs(int argc, char* argv[])
             continue;
         }
 
+        const std::string prefix3 = "--serverIps=";
+        if (arg.rfind(prefix3, 0) == 0) {
+            const std::string csv = arg.substr(prefix3.size());
+            std::size_t start = 0;
+            while (start < csv.size()) {
+                const std::size_t comma = csv.find(',', start);
+                const std::string ip = csv.substr(start, comma - start);
+                if (!ip.empty()) {
+                    options.serverIps.push_back(ip);
+                }
+                if (comma == std::string::npos) {
+                    break;
+                }
+                start = comma + 1;
+            }
+            continue;
+        }
+
         PrintUsage(argv[0]);
         throw std::runtime_error("Unknown argument: " + arg);
     }
@@ -289,6 +326,10 @@ ProgramOptions ParseArgs(int argc, char* argv[])
     if (options.framePort <= 0) {
         throw std::runtime_error("No valid --port argument provided.");
     }
+    if (!options.serverIps.empty() &&
+        static_cast<int>(options.serverIps.size()) != options.nApertureComputeModules) {
+        throw std::runtime_error("--serverIps count must match --nApertureComputeModules");
+    }
 
     return options;
 }
@@ -300,6 +341,15 @@ void PrintProgramOptions(const ProgramOptions& options)
               << "' baseFramePort=" << options.framePort
               << " reverseModuleOrder=" << (options.reverseModuleOrder ? "true" : "false")
               << '\n';
+
+    if (!options.serverIps.empty()) {
+        std::cout << "[ARGS] serverIps=";
+        for (size_t i = 0; i < options.serverIps.size(); ++i) {
+            if (i != 0) std::cout << ",";
+            std::cout << options.serverIps[i];
+        }
+        std::cout << '\n';
+    }
 }
 
 template <size_t N>
@@ -1922,6 +1972,7 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
             std::vector<uint16_t> raw;
             raw.reserve(kExpectedPixels);
             std::uint64_t frameCounter = 0;
+            std::uint64_t noFrameLoopCount = 0;
 
             for (;;) {
                 if (!peer->RunFrameLoop()) {
@@ -1931,11 +1982,18 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                     continue;
                 }
 
+                bool gotAnyFrameThisLoop = false;
+                bool gotNonOverlapThisLoop = false;
+
                 for (size_t localCameraIndex = 0; localCameraIndex < (N + 1); ++localCameraIndex) {
                     raw.clear();
 
                     if (!tryCopyLatestFrameFromPeer(*peer, localCameraIndex, raw)) {
                         continue;
+                    }
+                    gotAnyFrameThisLoop = true;
+                    if (localCameraIndex == 0) {
+                        gotNonOverlapThisLoop = true;
                     }
 
                     if (static_cast<int>(raw.size()) != kExpectedPixels) {
@@ -1971,6 +2029,28 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                                   << meanBgr[1] << ","
                                   << meanBgr[2] << ")\n";
                     }
+                }
+
+                if (!gotAnyFrameThisLoop) {
+                    ++noFrameLoopCount;
+                    if ((noFrameLoopCount % 120) == 0) {
+                        std::cout << "[frame warning] peer=" << peerIndex
+                                  << " module=" << moduleIndex
+                                  << " has not published any frames for "
+                                  << noFrameLoopCount
+                                  << " RunFrameLoop cycles\n";
+                    }
+                } else if (!gotNonOverlapThisLoop) {
+                    ++noFrameLoopCount;
+                    if ((noFrameLoopCount % 120) == 0) {
+                        std::cout << "[frame warning] peer=" << peerIndex
+                                  << " module=" << moduleIndex
+                                  << " is missing localCameraIndex=0 for "
+                                  << noFrameLoopCount
+                                  << " RunFrameLoop cycles\n";
+                    }
+                } else {
+                    noFrameLoopCount = 0;
                 }
             }
         });
@@ -2225,8 +2305,7 @@ int main(int argc, char* argv[])
         const ProgramOptions options = ParseArgs(argc, argv);
         PrintProgramOptions(options);
 
-        const NetworkAddressPlan addressPlan =
-            BuildNetworkAddressPlan(options.usbBaseIp, options.nApertureComputeModules);
+        const NetworkAddressPlan addressPlan = BuildNetworkAddressPlan(options);
         PrintAddressPlan(addressPlan);
 
         constexpr size_t n = kOverlapStreams;
