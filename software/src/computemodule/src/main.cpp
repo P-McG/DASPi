@@ -1921,6 +1921,7 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
         frameThreads.emplace_back([peer, peerIndex, moduleIndex, &liveCameras]() {
             std::vector<uint16_t> raw;
             raw.reserve(kExpectedPixels);
+            std::uint64_t frameCounter = 0;
 
             for (;;) {
                 if (!peer->RunFrameLoop()) {
@@ -1959,6 +1960,17 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
 
                     cv::Mat bgr = decodeBayer16ToBgr8(raw);
                     updateLatestFrame(liveCameras[globalIndex].frame, bgr);
+
+                    if (localCameraIndex == 0 && ((++frameCounter % 120) == 0)) {
+                        const cv::Scalar meanBgr = cv::mean(bgr);
+                        std::cout << "[frame signature] peer=" << peerIndex
+                                  << " module=" << moduleIndex
+                                  << " global=" << globalIndex
+                                  << " meanBGR=("
+                                  << meanBgr[0] << ","
+                                  << meanBgr[1] << ","
+                                  << meanBgr[2] << ")\n";
+                    }
                 }
             }
         });
