@@ -201,13 +201,7 @@ NetworkAddressPlan BuildNetworkAddressPlan(const std::string& usbBaseIp,
     plan.servers.reserve(static_cast<size_t>(nApertureComputeModules));
 
     for (int i = 0; i < nApertureComputeModules; ++i) {
-        const int subnet = octets[2] + i;
-        if (subnet > 255) {
-            throw std::runtime_error("Subnet overflow while building server addresses");
-        }
-
-        const std::string serverIp =
-            MakeIpv4String(octets[0], octets[1], subnet, clientHost + 2);
+        const std::string serverIp = IncrementIpv4Host(usbBaseIp, 2 + i);
         const in_addr_t serverAddr = StringToInAddrT(serverIp);
         if (serverAddr == INADDR_NONE) {
             throw std::runtime_error("Failed to construct server IP address: " + serverIp);
