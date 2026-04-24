@@ -128,12 +128,15 @@ SphereStitcher::SphereStitcher(std::vector<CameraView> cameras,
             continue;
         }
 
-        if (faceToCameraIndex_[static_cast<std::size_t>(face)] != -1) {
+        const int existingIndex = faceToCameraIndex_[static_cast<std::size_t>(face)];
+        if (existingIndex != -1) {
             std::cerr << "[SphereStitcher] warning: duplicate non-overlap stream for face "
                       << face
-                      << " existing=" << faceToCameraIndex_[static_cast<std::size_t>(face)]
+                      << " existing=" << existingIndex
                       << " new=" << i
+                      << " (keeping existing mapping)"
                       << '\n';
+            continue;
         }
 
         faceToCameraIndex_[static_cast<std::size_t>(face)] = i;
@@ -230,7 +233,20 @@ cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
                 localValidMask.at<std::uint8_t>(y, x) = 255;
             }
 
-            const cv::Vec3d& color = contributions.front().color;
+            const int owningFace = FindOwningFace(ray_world);
+            const Contribution* selected = &contributions.front();
+
+            if (owningFace >= 0) {
+                for (const auto& c : contributions) {
+                    const auto& cam = cameras_[static_cast<std::size_t>(c.cameraIndex)];
+                    if (cam.faceIndex == owningFace) {
+                        selected = &c;
+                        break;
+                    }
+                }
+            }
+
+            const cv::Vec3d& color = selected->color;
             out.at<cv::Vec3b>(y, x) = cv::Vec3b(
                 static_cast<std::uint8_t>(std::clamp(color[0], 0.0, 255.0)),
                 static_cast<std::uint8_t>(std::clamp(color[1], 0.0, 255.0)),
@@ -931,4 +947,3 @@ int SphereStitcher::FindSeamLocalEdgeForRay(const Eigen::Vector3d& ray_world,
 
     return bestLocalEdge;
 }
-

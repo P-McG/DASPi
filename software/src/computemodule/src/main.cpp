@@ -59,6 +59,7 @@ struct ProgramOptions {
     int nApertureComputeModules{0};
     std::string usbBaseIp;
     int framePort{0};
+    bool reverseModuleOrder{false};
 };
 
 struct NetworkAddressPlan {
@@ -89,6 +90,16 @@ struct NetworkAddressPlan {
 size_t GlobalCameraIndex(size_t moduleIndex, size_t localCameraIndex)
 {
     return moduleIndex * kCamerasPerModule + localCameraIndex;
+}
+
+size_t PeerToModuleIndex(size_t peerIndex,
+                         size_t moduleCount,
+                         bool reverseModuleOrder)
+{
+    if (!reverseModuleOrder) {
+        return peerIndex;
+    }
+    return (moduleCount - 1) - peerIndex;
 }
 
 size_t TotalCameraCount(int nApertureComputeModules)
@@ -217,7 +228,8 @@ void PrintUsage(const char* programName)
         << " [--verbose]"
         << " --nApertureComputeModules=<N>"
         << " --usbBaseIp=<base_ip>"
-        << " --port=<frame_port>\n"
+        << " --port=<frame_port>"
+        << " [--reverseModuleOrder]\n"
         << "Example: " << programName
         << " --nApertureComputeModules=2 --usbBaseIp=10.0.2.1 --port=5000\n";
 }
@@ -257,6 +269,11 @@ ProgramOptions ParseArgs(int argc, char* argv[])
             continue;
         }
 
+        if (arg == "--reverseModuleOrder") {
+            options.reverseModuleOrder = true;
+            continue;
+        }
+
         PrintUsage(argv[0]);
         throw std::runtime_error("Unknown argument: " + arg);
     }
@@ -279,6 +296,7 @@ void PrintProgramOptions(const ProgramOptions& options)
     std::cout << "[ARGS] nApertureComputeModules=" << options.nApertureComputeModules
               << " usbBaseIp='" << options.usbBaseIp
               << "' baseFramePort=" << options.framePort
+              << " reverseModuleOrder=" << (options.reverseModuleOrder ? "true" : "false")
               << '\n';
 }
 
@@ -1884,24 +1902,28 @@ template <size_t N>
 void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePeers,
                       std::vector<LiveCameraState>& liveCameras,
                       std::vector<std::jthread>& frameThreads,
-                      std::vector<std::jthread>& controlThreads)
+                      std::vector<std::jthread>& controlThreads,
+                      bool reverseModuleOrder)
 {
     std::cout << "[main] Starting per-peer frame/control threads\n";
 
     frameThreads.reserve(aperturePeers.size());
     controlThreads.reserve(aperturePeers.size());
 
-    for (size_t moduleIndex = 0; moduleIndex < aperturePeers.size(); ++moduleIndex) {
-        AperturePeer<N>* peer = aperturePeers[moduleIndex].get();
+    for (size_t peerIndex = 0; peerIndex < aperturePeers.size(); ++peerIndex) {
+        const size_t moduleIndex =
+            PeerToModuleIndex(peerIndex, aperturePeers.size(), reverseModuleOrder);
 
-        frameThreads.emplace_back([peer, moduleIndex, &liveCameras]() {
+        AperturePeer<N>* peer = aperturePeers[peerIndex].get();
+
+        frameThreads.emplace_back([peer, peerIndex, moduleIndex, &liveCameras]() {
             std::vector<uint16_t> raw;
             raw.reserve(kExpectedPixels);
 
             for (;;) {
                 if (!peer->RunFrameLoop()) {
-                    std::cerr << "[frame thread] RunFrameLoop failed for module "
-                              << moduleIndex << '\n';
+                    std::cerr << "[frame thread] RunFrameLoop failed for peer "
+                              << peerIndex << " (module " << moduleIndex << ")\n";
                     std::this_thread::sleep_for(kRetryDelay);
                     continue;
                 }
@@ -1914,8 +1936,8 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                     }
 
                     if (static_cast<int>(raw.size()) != kExpectedPixels) {
-                        std::cerr << "[frame thread] unexpected Bayer size for module "
-                                  << moduleIndex
+                        std::cerr << "[frame thread] unexpected Bayer size for peer "
+                                  << peerIndex << " (module " << moduleIndex << ")"
                                   << " localCameraIndex=" << localCameraIndex
                                   << " size=" << raw.size()
                                   << " expected=" << kExpectedPixels << '\n';
@@ -1926,7 +1948,8 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                         GlobalCameraIndex(moduleIndex, localCameraIndex);
 
                     if (globalIndex >= liveCameras.size()) {
-                        std::cerr << "[frame thread] globalIndex out of range: "
+                        std::cerr << "[frame thread] globalIndex out of range (peer "
+                                  << peerIndex << ", module " << moduleIndex << "): "
                                   << globalIndex
                                   << " liveCameras.size()=" << liveCameras.size() << '\n';
                         continue;
@@ -1938,11 +1961,11 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
             }
         });
 
-        controlThreads.emplace_back([peer, moduleIndex]() {
+        controlThreads.emplace_back([peer, peerIndex, moduleIndex]() {
             for (;;) {
                 if (!peer->RunControlLoop()) {
-                    std::cerr << "[control thread] RunControlLoop failed for module "
-                              << moduleIndex << '\n';
+                    std::cerr << "[control thread] RunControlLoop failed for peer "
+                              << peerIndex << " (module " << moduleIndex << ")\n";
                     break;
                 }
             }
@@ -2100,12 +2123,15 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
 
 template <size_t N>
 void InitializeCameraMasks(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePeers,
-                           std::vector<LiveCameraState>& liveCameras)
+                           std::vector<LiveCameraState>& liveCameras,
+                           bool reverseModuleOrder)
 {
 
 	
-    for (size_t moduleIndex = 0; moduleIndex < aperturePeers.size(); ++moduleIndex) {
-        AperturePeer<N>* peer = aperturePeers[moduleIndex].get();
+    for (size_t peerIndex = 0; peerIndex < aperturePeers.size(); ++peerIndex) {
+        const size_t moduleIndex =
+            PeerToModuleIndex(peerIndex, aperturePeers.size(), reverseModuleOrder);
+        AperturePeer<N>* peer = aperturePeers[peerIndex].get();
           
         for (size_t localCameraIndex = 0; localCameraIndex < N + 1; ++localCameraIndex) {
             const size_t globalIndex = GlobalCameraIndex(moduleIndex, localCameraIndex);
@@ -2118,7 +2144,8 @@ void InitializeCameraMasks(std::vector<std::unique_ptr<AperturePeer<N>>>& apertu
                                          std::to_string(localCameraIndex));
             }
             
-            std::cout << "[InitializeCameraMasks] module=" << moduleIndex
+            std::cout << "[InitializeCameraMasks] peer=" << peerIndex
+              << " module=" << moduleIndex
 	          << " local=" << localCameraIndex
 	          << " global=" << globalIndex
 	          << " copyOk=" << (peer->CopyValidMask(localCameraIndex, validMask) ? 1 : 0)
@@ -2301,7 +2328,7 @@ int main(int argc, char* argv[])
 
         std::vector<LiveCameraState> liveCameras(totalCameras);
 
-        InitializeCameraMasks(aperturePeers, liveCameras);
+        InitializeCameraMasks(aperturePeers, liveCameras, options.reverseModuleOrder);
 
         std::cout << "[main] configs.size()=" << configs.size()
                   << " cameras.size()=" << cameras.size()
@@ -2323,7 +2350,11 @@ int main(int argc, char* argv[])
         std::vector<std::jthread> frameThreads;
         std::vector<std::jthread> controlThreads;
 
-        StartPeerThreads<n>(aperturePeers, liveCameras, frameThreads, controlThreads);
+        StartPeerThreads<n>(aperturePeers,
+                            liveCameras,
+                            frameThreads,
+                            controlThreads,
+                            options.reverseModuleOrder);
 
         RunStitchLoop(cameras,
                       configs,
