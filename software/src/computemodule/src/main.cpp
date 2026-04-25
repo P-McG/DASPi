@@ -1974,14 +1974,28 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
             raw.reserve(kExpectedPixels);
             std::uint64_t frameCounter = 0;
             std::uint64_t noFrameLoopCount = 0;
+            std::uint64_t runFrameLoopFailCount = 0;
 
             for (;;) {
                 if (!peer->RunFrameLoop()) {
+                    ++runFrameLoopFailCount;
                     std::cerr << "[frame thread] RunFrameLoop failed for peer "
                               << peerIndex << " (module " << moduleIndex << ")\n";
+                    if ((runFrameLoopFailCount % kSignatureLogEvery) == 0) {
+                        std::cout << "[frame warning] peer=" << peerIndex
+                                  << " module=" << moduleIndex
+                                  << " RunFrameLoop failed for "
+                                  << runFrameLoopFailCount
+                                  << " consecutive attempts\n";
+                    }
                     std::this_thread::sleep_for(kRetryDelay);
                     continue;
                 }
+                runFrameLoopFailCount = 0;
+
+                bool gotAnyFrameThisLoop = false;
+                bool gotStream0ThisLoop = false;
+                bool gotStream1ThisLoop = false;
 
                 bool gotAnyFrameThisLoop = false;
                 bool gotStream0ThisLoop = false;
@@ -2023,6 +2037,13 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
 
                     cv::Mat bgr = decodeBayer16ToBgr8(raw);
                     updateLatestFrame(liveCameras[globalIndex].frame, bgr);
+                    gotAnyFrameThisLoop = true;
+                    if (localCameraIndex == 0) {
+                        gotStream0ThisLoop = true;
+                    }
+                    if (localCameraIndex == 1) {
+                        gotStream1ThisLoop = true;
+                    }
 
                     const bool shouldLogSignature =
                         ((++frameCounter % kSignatureLogEvery) == 0) &&
@@ -2043,7 +2064,7 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
 
                 if (!gotAnyFrameThisLoop) {
                     ++noFrameLoopCount;
-                    if ((noFrameLoopCount % 120) == 0) {
+                    if ((noFrameLoopCount % kSignatureLogEvery) == 0) {
                         std::cout << "[frame warning] peer=" << peerIndex
                                   << " module=" << moduleIndex
                                   << " has not published any frames for "
