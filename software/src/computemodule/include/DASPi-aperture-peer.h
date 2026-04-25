@@ -47,6 +47,7 @@ class AperturePeer {
     FPSCounter fpsReceived_{"computemodule received"};
     FPSCounter fpsPublished_{"computemodule published"};
     FPSCounter fpsRunFrameLoop_{"computemodule total"};
+    std::string peerLabel_;
     
 public:
     AperturePeer(in_addr_t clntAddr,

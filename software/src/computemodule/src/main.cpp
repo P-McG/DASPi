@@ -1997,10 +1997,6 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                 bool gotStream0ThisLoop = false;
                 bool gotStream1ThisLoop = false;
 
-                bool gotAnyFrameThisLoop = false;
-                bool gotStream0ThisLoop = false;
-                bool gotStream1ThisLoop = false;
-
                 for (size_t localCameraIndex = 0; localCameraIndex < (N + 1); ++localCameraIndex) {
                     raw.clear();
 
