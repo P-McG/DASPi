@@ -183,6 +183,15 @@ namespace DASPi{
 							unmasked.size() * sizeof(uint16_t));
 			}
 		}
+
+		if (!newBuffers[0].empty() && newBuffers[1].empty()) {
+			std::cout << "[RunFrameLoop trace] stream1 empty while stream0 has data"
+			          << " regionSize[0]=" << frameHeader.regionSizes_[0]
+			          << " regionSize[1]=" << frameHeader.regionSizes_[1]
+			          << " buffer0=" << newBuffers[0].size()
+			          << " buffer1=" << newBuffers[1].size()
+			          << std::endl;
+		}
 	
 		//for (size_t i = 0; i < n_ + 1; ++i) {
 			//this->BrightenImageInplace(std::span<uint16_t>(newBuffers[i]), 6);
@@ -239,12 +248,16 @@ namespace DASPi{
 			}
 	
 			const size_t bytesToWrite = this->buffer_[i].size() * sizeof(uint16_t);
-			
 			if (bytesToWrite == 0) {
+				if (i == 1 && !this->buffer_[0].empty()) {
+					std::cout << "[BufferToFile trace] output *_1.bayer empty because buffer_[1] is empty"
+					          << " while buffer_[0] has " << this->buffer_[0].size() << " pixels"
+					          << std::endl;
+				}
 				std::cerr << "[BufferToFile] buffer_[" << i << "] is empty, skipping\n";
 				continue;
 			}
-			
+
 			if (!this->files_[i]->write(
 					reinterpret_cast<const char*>(this->buffer_[i].data()),
 					static_cast<std::streamsize>(bytesToWrite))) {
@@ -823,4 +836,3 @@ bool AperturePeer<n>::CopyValidMask(size_t regionIndex, cv::Mat& out)
 }
 					  
 };//ending namespace DASPi
-
