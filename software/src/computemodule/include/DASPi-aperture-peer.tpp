@@ -19,6 +19,9 @@ namespace DASPi{
 		  frameClnt_(clntAddr, framePort, srvAddr),
 		  controlClnt_(clntAddr, controlPort, srvAddr)
 	{
+		peerLabel_ = "srv=" + inAddrTToString(srvAddr) +
+		             " framePort=" + std::to_string(framePort);
+
 		for (size_t i = 0; i < n + 1; ++i) {
 			std::string name = "output-" +  inAddrTToString(srvAddr) + "_" + std::to_string(i) + ".bayer";
 			files_[i] = std::make_unique<std::ofstream>(name, std::ios::binary);
@@ -183,6 +186,16 @@ namespace DASPi{
 							unmasked.size() * sizeof(uint16_t));
 			}
 		}
+
+		if (!newBuffers[0].empty() && newBuffers[1].empty()) {
+			std::cout << "[RunFrameLoop trace] " << peerLabel_
+			          << " stream1 empty while stream0 has data"
+			          << " regionSize[0]=" << frameHeader.regionSizes_[0]
+			          << " regionSize[1]=" << frameHeader.regionSizes_[1]
+			          << " buffer0=" << newBuffers[0].size()
+			          << " buffer1=" << newBuffers[1].size()
+			          << std::endl;
+		}
 	
 		//for (size_t i = 0; i < n_ + 1; ++i) {
 			//this->BrightenImageInplace(std::span<uint16_t>(newBuffers[i]), 6);
@@ -223,7 +236,8 @@ namespace DASPi{
 		for (size_t i = 0; i < n_ + 1; ++i) {
 			log_verbose("Writing file:" + std::to_string(i));
 	
-			std::cout << "[BufferToFile] i=" << i
+			std::cout << "[BufferToFile] " << peerLabel_
+			          << " i=" << i
 					  << " files_[i]=" << files_[i].get()
 					  << " buffer_[i].size()=" << buffer_[i].size()
 					  << std::endl;
@@ -239,12 +253,17 @@ namespace DASPi{
 			}
 	
 			const size_t bytesToWrite = this->buffer_[i].size() * sizeof(uint16_t);
-			
 			if (bytesToWrite == 0) {
+				if (i == 1 && !this->buffer_[0].empty()) {
+					std::cout << "[BufferToFile trace] " << peerLabel_
+					          << " output *_1.bayer empty because buffer_[1] is empty"
+					          << " while buffer_[0] has " << this->buffer_[0].size() << " pixels"
+					          << std::endl;
+				}
 				std::cerr << "[BufferToFile] buffer_[" << i << "] is empty, skipping\n";
 				continue;
 			}
-			
+
 			if (!this->files_[i]->write(
 					reinterpret_cast<const char*>(this->buffer_[i].data()),
 					static_cast<std::streamsize>(bytesToWrite))) {
@@ -823,4 +842,3 @@ bool AperturePeer<n>::CopyValidMask(size_t regionIndex, cv::Mat& out)
 }
 					  
 };//ending namespace DASPi
-
