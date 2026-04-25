@@ -4,6 +4,7 @@
 #include <span>
 #include <string>
 #include <algorithm>
+#include <utility>
 #include "DASPi-logger.h"
 #include "DASPi-udp-clnt.h"
 #include "DASPi-aperture-peer.h"
@@ -186,6 +187,24 @@ namespace DASPi{
 							unmasked.data(),
 							unmasked.size() * sizeof(uint16_t));
 			}
+		}
+
+		auto looksBlank = [](const std::vector<uint16_t>& buf) {
+			if (buf.empty()) return true;
+			const size_t sampleCount = std::min<size_t>(buf.size(), 1024);
+			for (size_t i = 0; i < sampleCount; ++i) {
+				if (buf[i] != 0) return false;
+			}
+			return true;
+		};
+
+		const bool stream0Blank = looksBlank(newBuffers[0]);
+		const bool stream1Blank = looksBlank(newBuffers[1]);
+		if (stream0Blank && !stream1Blank) {
+			std::cout << "[RunFrameLoop warning] " << peerLabel_
+			          << " stream0 appears blank while stream1 has signal;"
+			          << " keeping original stream mapping (no swap)"
+			          << std::endl;
 		}
 
 		if (!newBuffers[0].empty() && newBuffers[1].empty()) {
