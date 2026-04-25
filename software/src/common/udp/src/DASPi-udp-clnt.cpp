@@ -26,9 +26,13 @@
 using namespace DASPi;
 
 // Constructor
-UDPClnt::UDPClnt(const in_addr_t clntAddr, const int port, const in_addr_t srvAddr)
-    :clntAddr_(FillingClientInformation(clntAddr, port)),
-    port_(port)
+UDPClnt::UDPClnt(const in_addr_t clntAddr,
+                 const int clntPort,
+                 const in_addr_t srvAddr,
+                 const int srvPort)
+    :clntAddr_(FillingClientInformation(clntAddr, clntPort)),
+    clntPort_(clntPort),
+    srvPort_(srvPort)
 {
 #ifdef VERBATIUM_COUT
    std::cout << "[UDPClnt]" << std::endl;
@@ -144,7 +148,7 @@ void UDPClnt::FillingServerInformation(const in_addr_t &addr) {
     memset(&srvAddr_, 0, sizeof(srvAddr_));
 
     srvAddr_.sin_family = AF_INET;
-    srvAddr_.sin_port = htons(port_);
+    srvAddr_.sin_port = htons(srvPort_);
     srvAddr_.sin_addr.s_addr = addr;
 }
 
@@ -178,6 +182,11 @@ bool UDPClnt::WaitForValidHeader(FrameHeader &headerOut, sockaddr_in &senderOut)
     while (true) {
         ssize_t bytes = recvfrom(sockfd_, &headerBuffer, sizeof(headerBuffer), 0,
                                  reinterpret_cast<sockaddr*>(&sender), &senderLen);
+
+        if (sender.sin_addr.s_addr != srvAddr_.sin_addr.s_addr ||
+            sender.sin_port != srvAddr_.sin_port) {
+            continue;
+        }
 
         if (bytes != sizeof(headerBuffer)) {
             // Ignore incomplete packets
@@ -246,6 +255,18 @@ int UDPClnt::BindSocketWithClientAddress(){
 
     if (bind(sockfd_, (const struct sockaddr *)&clntAddr_, sizeof(clntAddr_)) < 0) {
         perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    timeval receiveTimeout{};
+    receiveTimeout.tv_sec = 0;
+    receiveTimeout.tv_usec = 200000;
+    if (setsockopt(sockfd_,
+                   SOL_SOCKET,
+                   SO_RCVTIMEO,
+                   &receiveTimeout,
+                   sizeof(receiveTimeout)) < 0) {
+        perror("setsockopt(SO_RCVTIMEO) failed");
         exit(EXIT_FAILURE);
     }
     return 0;
@@ -373,6 +394,7 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
     };
 
     logLine(rxLogMutex, "[RXF] enter ReceiveAndReassembleFramePacket");
+    std::uint64_t unexpectedSenderCount = 0;
 
     while (true) {
         sockaddr_in sender{};
@@ -389,12 +411,29 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
 
         if (received < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                //logLine(rxLogMutex, "[RXF] recvfrom EAGAIN");
-                continue;
+                return false;
             }
 
             perror("recvfrom failed");
             return false;
+        }
+
+        if (sender.sin_addr.s_addr != srvAddr_.sin_addr.s_addr ||
+            sender.sin_port != srvAddr_.sin_port) {
+            ++unexpectedSenderCount;
+            if ((unexpectedSenderCount % 100) == 0) {
+                char gotIp[INET_ADDRSTRLEN] = {};
+                char expectedIp[INET_ADDRSTRLEN] = {};
+                inet_ntop(AF_INET, &sender.sin_addr, gotIp, sizeof(gotIp));
+                inet_ntop(AF_INET, &srvAddr_.sin_addr, expectedIp, sizeof(expectedIp));
+                std::lock_guard<std::mutex> lock(rxLogMutex);
+                std::cout << "[RXF] ignoring unexpected sender " << gotIp
+                          << ":" << ntohs(sender.sin_port)
+                          << " expected " << expectedIp
+                          << ":" << ntohs(srvAddr_.sin_port)
+                          << std::endl;
+            }
+            continue;
         }
 
         //{
