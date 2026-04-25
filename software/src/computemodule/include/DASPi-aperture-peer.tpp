@@ -560,84 +560,84 @@ namespace DASPi{
 		//return std::move(input);
 	//}
 	
-	template<size_t n>
-	void AperturePeer<n>::BrightenImageInplace(std::span<uint16_t> buf, size_t shift)
-	{
-	    log_verbose("[AperturePeer::BrightenImageInplace]");
-	    if (buf.empty()) return;
+	//template<size_t n>
+	//void AperturePeer<n>::BrightenImageInplace(std::span<uint16_t> buf, size_t shift)
+	//{
+	    //log_verbose("[AperturePeer::BrightenImageInplace]");
+	    //if (buf.empty()) return;
 	
-	    const size_t threads = std::max<size_t>(1, static_cast<size_t>(this->processingThreads_));
-	    const size_t total   = buf.size();
-	    const size_t chunk   = (total + threads - 1) / threads; // ceil
+	    //const size_t threads = std::max<size_t>(1, static_cast<size_t>(this->processingThreads_));
+	    //const size_t total   = buf.size();
+	    //const size_t chunk   = (total + threads - 1) / threads; // ceil
 		
-	    std::vector<std::thread> workers;
-	    workers.reserve(threads);
+	    //std::vector<std::thread> workers;
+	    //workers.reserve(threads);
 	
-	    for (size_t i = 0; i < threads; ++i) {
-	        const size_t start = i * chunk;
-	        if (start >= total) break;
-	        const size_t end   = std::min(total, start + chunk);
+	    //for (size_t i = 0; i < threads; ++i) {
+	        //const size_t start = i * chunk;
+	        //if (start >= total) break;
+	        //const size_t end   = std::min(total, start + chunk);
 	
-	        workers.emplace_back([this, buf, start, end, shift, i]() {
-	            pthread_setname_np(pthread_self(), "Brighten");
-	            //ScopedTimer t(("BrightenImageChunked2Thread " + std::to_string(i)).c_str());
-#if defined(__ARM_NEON) || defined(__aarch64__)
-	            this->BrightenImageChunked2_NEON(buf.data(), start, end, shift);
-#else
-	            this->BrightenImageChunked2(buf.data(), start, end, shift);
-#endif
-	        });
-	    }
-	    for (auto &t : workers) t.join();
-	}
+	        //workers.emplace_back([this, buf, start, end, shift, i]() {
+	            //pthread_setname_np(pthread_self(), "Brighten");
+	            ////ScopedTimer t(("BrightenImageChunked2Thread " + std::to_string(i)).c_str());
+//#if defined(__ARM_NEON) || defined(__aarch64__)
+	            //this->BrightenImageChunked2_NEON(buf.data(), start, end, shift);
+//#else
+	            //this->BrightenImageChunked2(buf.data(), start, end, shift);
+//#endif
+	        //});
+	    //}
+	    //for (auto &t : workers) t.join();
+	//}
 	
 	
-	template<size_t n>
-	void AperturePeer<n>::BrightenImageChunked2(uint16_t* buffer, size_t start, size_t end, size_t shift)
-	{
-		log_verbose("[Aperture::BrightenImageChunked2]");
+	//template<size_t n>
+	//void AperturePeer<n>::BrightenImageChunked2(uint16_t* buffer, size_t start, size_t end, size_t shift)
+	//{
+		//log_verbose("[Aperture::BrightenImageChunked2]");
 	
-		if (!buffer || start >= end) return;
-		if (shift > 15) shift = 15;
+		//if (!buffer || start >= end) return;
+		//if (shift > 15) shift = 15;
 	
-#if defined(__ARM_NEON) || defined(__aarch64__)
-		BrightenImageChunked2_NEON(buffer, start, end, shift);
-#else
-		uint16_t* data = buffer + start;
-		const size_t count = end - start;
+//#if defined(__ARM_NEON) || defined(__aarch64__)
+		//BrightenImageChunked2_NEON(buffer, start, end, shift);
+//#else
+		//uint16_t* data = buffer + start;
+		//const size_t count = end - start;
 	
-		for (size_t i = 0; i < count; ++i) {
-			data[i] <<= shift;
-		}
-#endif
-}
+		//for (size_t i = 0; i < count; ++i) {
+			//data[i] <<= shift;
+		//}
+//#endif
+//}
 	
-#if defined(__ARM_NEON) || defined(__aarch64__)	
-	template<size_t n>
-	void AperturePeer<n>::BrightenImageChunked2_NEON(uint16_t *buffer, size_t start, size_t end, size_t shift) {
-	    log_verbose("[Aperture::BrightenImageChunked2_NEON]");
-	    if (shift > 15) shift = 15;
+//#if defined(__ARM_NEON) || defined(__aarch64__)	
+	//template<size_t n>
+	//void AperturePeer<n>::BrightenImageChunked2_NEON(uint16_t *buffer, size_t start, size_t end, size_t shift) {
+	    //log_verbose("[Aperture::BrightenImageChunked2_NEON]");
+	    //if (shift > 15) shift = 15;
 	
-	    const size_t count = end - start;
-	    uint16_t* data = buffer + start;
+	    //const size_t count = end - start;
+	    //uint16_t* data = buffer + start;
 	
-	    const size_t simdWidth = 8;  // 8x uint8_t per 128-bit NEON register
-	    size_t i = 0;
+	    //const size_t simdWidth = 8;  // 8x uint8_t per 128-bit NEON register
+	    //size_t i = 0;
 	
-	    int16x8_t shiftAmount = vdupq_n_s16(static_cast<int16_t>(shift));
+	    //int16x8_t shiftAmount = vdupq_n_s16(static_cast<int16_t>(shift));
 	
-	    for (; i + simdWidth <= count; i += simdWidth) {
-	        uint16x8_t pixels = vld1q_u16(data + i);           // load 8 pixels
-	        uint16x8_t bright = vshlq_u16(pixels, shiftAmount); // shift left
-	        vst1q_u16(data + i, bright);                       // store back
-	    }
+	    //for (; i + simdWidth <= count; i += simdWidth) {
+	        //uint16x8_t pixels = vld1q_u16(data + i);           // load 8 pixels
+	        //uint16x8_t bright = vshlq_u16(pixels, shiftAmount); // shift left
+	        //vst1q_u16(data + i, bright);                       // store back
+	    //}
 	
-	    // Remainder loop (scalar)
-	    for (; i < count; ++i) {
-	        data[i] <<= shift;
-	    }
-	}
-#endif
+	    //// Remainder loop (scalar)
+	    //for (; i < count; ++i) {
+	        //data[i] <<= shift;
+	    //}
+	//}
+//#endif
 	
 	template<size_t n>
 	float AperturePeer<n>::ComputeRequestedGain(const GainMsg& msg)
