@@ -54,6 +54,7 @@ constexpr size_t kCamerasPerModule = kPeerStreams;
 constexpr auto kRetryDelay  = std::chrono::milliseconds(5);
 constexpr auto kNoFrameDelay = std::chrono::milliseconds(20);
 constexpr auto kStitchDelay  = std::chrono::milliseconds(30);
+constexpr std::uint64_t kSignatureLogEvery = 10;
 
 struct ProgramOptions {
     int nApertureComputeModules{0};
@@ -1983,7 +1984,8 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                 }
 
                 bool gotAnyFrameThisLoop = false;
-                bool gotNonOverlapThisLoop = false;
+                bool gotStream0ThisLoop = false;
+                bool gotStream1ThisLoop = false;
 
                 for (size_t localCameraIndex = 0; localCameraIndex < (N + 1); ++localCameraIndex) {
                     raw.clear();
@@ -1993,7 +1995,10 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                     }
                     gotAnyFrameThisLoop = true;
                     if (localCameraIndex == 0) {
-                        gotNonOverlapThisLoop = true;
+                        gotStream0ThisLoop = true;
+                    }
+                    if (localCameraIndex == 1) {
+                        gotStream1ThisLoop = true;
                     }
 
                     if (static_cast<int>(raw.size()) != kExpectedPixels) {
@@ -2020,8 +2025,8 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                     updateLatestFrame(liveCameras[globalIndex].frame, bgr);
 
                     const bool shouldLogSignature =
-                        ((++frameCounter % 120) == 0) &&
-                        (localCameraIndex == 0 || !gotNonOverlapThisLoop);
+                        ((++frameCounter % kSignatureLogEvery) == 0) &&
+                        (localCameraIndex == 0 || localCameraIndex == 1);
 
                     if (shouldLogSignature) {
                         const cv::Scalar meanBgr = cv::mean(bgr);
@@ -2045,12 +2050,15 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                                   << noFrameLoopCount
                                   << " RunFrameLoop cycles\n";
                     }
-                } else if (!gotNonOverlapThisLoop) {
+                } else if (!gotStream0ThisLoop || !gotStream1ThisLoop) {
                     ++noFrameLoopCount;
-                    if ((noFrameLoopCount % 120) == 0) {
+                    if ((noFrameLoopCount % kSignatureLogEvery) == 0) {
                         std::cout << "[frame warning] peer=" << peerIndex
                                   << " module=" << moduleIndex
-                                  << " is missing localCameraIndex=0 for "
+                                  << " missing stream(s):"
+                                  << (gotStream0ThisLoop ? "" : " 0")
+                                  << (gotStream1ThisLoop ? "" : " 1")
+                                  << " for "
                                   << noFrameLoopCount
                                   << " RunFrameLoop cycles\n";
                     }
