@@ -37,7 +37,8 @@ namespace DASPi{
 		
 		const size_t maxUdpPayloadBytes_{1400};
 	    sockaddr_in clntAddr_;
-		const int port_;
+		const int clntPort_;
+		const int srvPort_;
 	
 		int sockfd_{0};
 		sockaddr_in srvAddr_;
@@ -47,8 +48,11 @@ namespace DASPi{
 	    public:
 	    //sockaddr_in clntAddr_ = { INADDR_NONE, 0, { INADDR_NONE } };
 
-	    UDPClnt():UDPClnt(INADDR_NONE, 0000, INADDR_NONE){};
-		UDPClnt(const in_addr_t clntAddr, const int port, const in_addr_t srvAddr);
+	    UDPClnt():UDPClnt(INADDR_NONE, 0, INADDR_NONE, 0){};
+		UDPClnt(const in_addr_t clntAddr,
+		       const int clntPort,
+		       const in_addr_t srvAddr,
+		       const int srvPort);
 		~UDPClnt();
 		
 		size_t GetMaximumTransmittableUnits();

@@ -26,9 +26,13 @@
 using namespace DASPi;
 
 // Constructor
-UDPClnt::UDPClnt(const in_addr_t clntAddr, const int port, const in_addr_t srvAddr)
-    :clntAddr_(FillingClientInformation(clntAddr, port)),
-    port_(port)
+UDPClnt::UDPClnt(const in_addr_t clntAddr,
+                 const int clntPort,
+                 const in_addr_t srvAddr,
+                 const int srvPort)
+    :clntAddr_(FillingClientInformation(clntAddr, clntPort)),
+    clntPort_(clntPort),
+    srvPort_(srvPort)
 {
 #ifdef VERBATIUM_COUT
    std::cout << "[UDPClnt]" << std::endl;
@@ -144,7 +148,7 @@ void UDPClnt::FillingServerInformation(const in_addr_t &addr) {
     memset(&srvAddr_, 0, sizeof(srvAddr_));
 
     srvAddr_.sin_family = AF_INET;
-    srvAddr_.sin_port = htons(port_);
+    srvAddr_.sin_port = htons(srvPort_);
     srvAddr_.sin_addr.s_addr = addr;
 }
 

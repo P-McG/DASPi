@@ -53,9 +53,11 @@ class AperturePeer {
     
 public:
     AperturePeer(in_addr_t clntAddr,
-                 int framePort,
-                 int controlPort,
-                 in_addr_t srvAddr);
+                 int clntFramePort,
+                 int clntControlPort,
+                 in_addr_t srvAddr,
+                 int srvFramePort,
+                 int srvControlPort);
 
     bool RunFrameLoop();
     bool RunControlLoop();

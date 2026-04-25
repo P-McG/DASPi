@@ -13,16 +13,19 @@ namespace DASPi{
 	
 	template<size_t n>
 	AperturePeer<n>::AperturePeer(in_addr_t clntAddr,
-										 int framePort,
-										 int controlPort,
-										 in_addr_t srvAddr)
+										 int clntFramePort,
+										 int clntControlPort,
+										 in_addr_t srvAddr,
+										 int srvFramePort,
+										 int srvControlPort)
 		: sf_(),
 		  sfdp_(this->sf_),
-		  frameClnt_(clntAddr, framePort, srvAddr),
-		  controlClnt_(clntAddr, controlPort, srvAddr)
+		  frameClnt_(clntAddr, clntFramePort, srvAddr, srvFramePort),
+		  controlClnt_(clntAddr, clntControlPort, srvAddr, srvControlPort)
 	{
 		peerLabel_ = "srv=" + inAddrTToString(srvAddr) +
-		             " framePort=" + std::to_string(framePort);
+		             " srvFramePort=" + std::to_string(srvFramePort) +
+		             " clntFramePort=" + std::to_string(clntFramePort);
 
 		for (size_t i = 0; i < n + 1; ++i) {
 			std::string name = "output-" +  inAddrTToString(srvAddr) + "_" + std::to_string(i) + ".bayer";
@@ -342,12 +345,12 @@ namespace DASPi{
 	
 	template<size_t n>
 	int AperturePeer<n>::GetFramePort() {
-		return frameClnt_.port_;
+		return frameClnt_.clntPort_;
 	}
 	
 	template<size_t n>
 	int AperturePeer<n>::GetControlPort() {
-		return controlClnt_.port_;
+		return controlClnt_.clntPort_;
 	}
 	
 	//template<size_t n>

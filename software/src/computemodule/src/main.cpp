@@ -362,21 +362,27 @@ std::vector<std::unique_ptr<AperturePeer<N>>> CreateAperturePeers(
 
     std::cout << "[main] Setting up AperturePeers\n";
     for (size_t i = 0; i < aperturePeers.size(); ++i) {
-        const int framePort = options.framePort + static_cast<int>(i) * 2;
-        const int controlPort = framePort + kControlPortOffset;
+        const int clntFramePort = options.framePort + static_cast<int>(i) * 2;
+        const int clntControlPort = clntFramePort + kControlPortOffset;
+        const int srvFramePort = options.framePort;
+        const int srvControlPort = srvFramePort + kControlPortOffset;
 
         std::cout << "[main] Creating AperturePeer " << i
-                  << ", framePort=" << framePort
-                  << ", controlPort=" << controlPort
+                  << ", clntFramePort=" << clntFramePort
+                  << ", clntControlPort=" << clntControlPort
+                  << ", srvFramePort=" << srvFramePort
+                  << ", srvControlPort=" << srvControlPort
                   << ", clntAddr=" << InAddrTToString(addressPlan.client)
                   << ", srvAddr=" << InAddrTToString(addressPlan.servers[i])
                   << '\n';
 
         aperturePeers[i] = std::make_unique<AperturePeer<N>>(
             addressPlan.client,
-            framePort,
-            controlPort,
-            addressPlan.servers[i]);
+            clntFramePort,
+            clntControlPort,
+            addressPlan.servers[i],
+            srvFramePort,
+            srvControlPort);
     }
 
     return aperturePeers;
