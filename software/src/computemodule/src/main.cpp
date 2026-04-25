@@ -1770,6 +1770,11 @@ void updateCameraImages(std::vector<CameraView>& cameras,
         if (haveFrame) {
             cam.image = latest;
         }
+        else {
+		    std::cout << "[WARN] Missing frame for cam=" << i
+		              << " module=" << cam.moduleIndex
+		              << " stream=" << cfg.localStreamIndex << '\n';
+		}
 
         std::cout << "[updateCameraImages] cam=" << i
                   << " module=" << cam.moduleIndex
@@ -2003,6 +2008,13 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
 
                     if (!tryCopyLatestFrameFromPeer(*peer, localCameraIndex, raw)) {
                         continue;
+                    }
+                    gotAnyFrameThisLoop = true;
+                    if (localCameraIndex == 0) {
+                        gotStream0ThisLoop = true;
+                    }
+                    if (localCameraIndex == 1) {
+                        gotStream1ThisLoop = true;
                     }
 
                     if (static_cast<int>(raw.size()) != kExpectedPixels) {
