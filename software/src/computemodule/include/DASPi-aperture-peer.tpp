@@ -3,6 +3,7 @@
 #include <execution>
 #include <span>
 #include <string>
+#include <algorithm>
 #include "DASPi-logger.h"
 #include "DASPi-udp-clnt.h"
 #include "DASPi-aperture-peer.h"
@@ -232,6 +233,7 @@ namespace DASPi{
 		log_verbose("[AperturePeer::BufferToFile]");
 		
 		std::scoped_lock lock(bufferMutex_);
+		++bufferToFileCount_;
 
 		for (size_t i = 0; i < n_ + 1; ++i) {
 			log_verbose("Writing file:" + std::to_string(i));
@@ -262,6 +264,23 @@ namespace DASPi{
 				}
 				std::cerr << "[BufferToFile] buffer_[" << i << "] is empty, skipping\n";
 				continue;
+			}
+
+			if ((i <= 1) && ((bufferToFileCount_ % 30) == 0)) {
+				const auto& buf = this->buffer_[i];
+				std::uint64_t sig = 1469598103934665603ull; // FNV offset basis
+				const size_t sampleCount = std::min<size_t>(buf.size(), 1024);
+				for (size_t j = 0; j < sampleCount; ++j) {
+					sig ^= static_cast<std::uint64_t>(buf[j]);
+					sig *= 1099511628211ull; // FNV prime
+				}
+				std::cout << "[BufferSig] " << peerLabel_
+				          << " stream=" << i
+				          << " sampleCount=" << sampleCount
+				          << " fnv64=" << sig
+				          << " first=" << buf.front()
+				          << " last=" << buf.back()
+				          << std::endl;
 			}
 
 			if (!this->files_[i]->write(
