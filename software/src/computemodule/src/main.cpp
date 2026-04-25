@@ -2019,11 +2019,16 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                     cv::Mat bgr = decodeBayer16ToBgr8(raw);
                     updateLatestFrame(liveCameras[globalIndex].frame, bgr);
 
-                    if (localCameraIndex == 0 && ((++frameCounter % 120) == 0)) {
+                    const bool shouldLogSignature =
+                        ((++frameCounter % 120) == 0) &&
+                        (localCameraIndex == 0 || !gotNonOverlapThisLoop);
+
+                    if (shouldLogSignature) {
                         const cv::Scalar meanBgr = cv::mean(bgr);
                         std::cout << "[frame signature] peer=" << peerIndex
                                   << " module=" << moduleIndex
                                   << " global=" << globalIndex
+                                  << " local=" << localCameraIndex
                                   << " meanBGR=("
                                   << meanBgr[0] << ","
                                   << meanBgr[1] << ","
