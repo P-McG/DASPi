@@ -9,6 +9,7 @@ Hard-earned fixes here:
 - No response to ```ping <aperturecomputemodule>```
 - `apt update` Fails (No Internet from PXE Nodes)
 - ERROR: Malformed machine file: Source contains parsing errors:[line  7]: ']\n'
+- qt.qpa.plugin: Could not find the Qt platform plugin "wayland" in ""
 
 ## sudo: unable to resolve host
 ### Cause
@@ -566,3 +567,12 @@ Assigning the correct gateway (laptop) restores internet access for PXE nodes an
 The cross compilation file is malformed and needs fixed.
 ### Fix
 Put the `]\n` on the previous line.
+
+## Error qt.qpa.plugin: Could not find the Qt platform plugin "wayland" in ""
+## Problem
+That usually means a Qt/OpenCV GUI program is trying to use Wayland, but the Qt Wayland plugin is missing or broken.
+## Fix
+```
+sudo apt update
+sudo apt install qtwayland5 qt6-wayland
+```
