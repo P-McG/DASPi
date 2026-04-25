@@ -234,15 +234,18 @@ namespace DASPi{
 		
 		std::scoped_lock lock(bufferMutex_);
 		++bufferToFileCount_;
+		const bool shouldLogBuffer = ((bufferToFileCount_ % 30) == 0);
 
 		for (size_t i = 0; i < n_ + 1; ++i) {
 			log_verbose("Writing file:" + std::to_string(i));
 	
-			std::cout << "[BufferToFile] " << peerLabel_
-			          << " i=" << i
-					  << " files_[i]=" << files_[i].get()
-					  << " buffer_[i].size()=" << buffer_[i].size()
-					  << std::endl;
+			if (shouldLogBuffer) {
+				std::cout << "[BufferToFile] " << peerLabel_
+				          << " i=" << i
+						  << " files_[i]=" << files_[i].get()
+						  << " buffer_[i].size()=" << buffer_[i].size()
+						  << std::endl;
+			}
 	
 			if (!files_[i]) {
 				std::cerr << "[BufferToFile] files_[" << i << "] is null\n";
@@ -266,7 +269,7 @@ namespace DASPi{
 				continue;
 			}
 
-			if ((i <= 1) && ((bufferToFileCount_ % 30) == 0)) {
+			if ((i <= 1) && shouldLogBuffer) {
 				const auto& buf = this->buffer_[i];
 				std::uint64_t sig = 1469598103934665603ull; // FNV offset basis
 				const size_t sampleCount = std::min<size_t>(buf.size(), 1024);
