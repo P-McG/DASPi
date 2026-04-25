@@ -239,12 +239,11 @@ namespace DASPi{
 			}
 	
 			const size_t bytesToWrite = this->buffer_[i].size() * sizeof(uint16_t);
-			
 			if (bytesToWrite == 0) {
 				std::cerr << "[BufferToFile] buffer_[" << i << "] is empty, skipping\n";
 				continue;
 			}
-			
+
 			if (!this->files_[i]->write(
 					reinterpret_cast<const char*>(this->buffer_[i].data()),
 					static_cast<std::streamsize>(bytesToWrite))) {
@@ -823,4 +822,3 @@ bool AperturePeer<n>::CopyValidMask(size_t regionIndex, cv::Mat& out)
 }
 					  
 };//ending namespace DASPi
-
