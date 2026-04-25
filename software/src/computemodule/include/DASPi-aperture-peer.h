@@ -5,6 +5,7 @@
 #include <vector>
 #include <fstream>
 #include <mutex>
+#include <cstdint>
 #include <span>
 #include <cmath>
 #include <numbers>
@@ -47,6 +48,8 @@ class AperturePeer {
     FPSCounter fpsReceived_{"computemodule received"};
     FPSCounter fpsPublished_{"computemodule published"};
     FPSCounter fpsRunFrameLoop_{"computemodule total"};
+    std::string peerLabel_;
+    std::uint64_t bufferToFileCount_{0};
     
 public:
     AperturePeer(in_addr_t clntAddr,
