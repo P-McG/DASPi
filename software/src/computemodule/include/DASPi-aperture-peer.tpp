@@ -83,7 +83,8 @@ namespace DASPi{
 	template<size_t n>
 	bool AperturePeer<n>::RunFrameLoop()
 	{
-		log_verbose("RunFrameLoop");
+		log_verbose("[AperturePeer<n>::RunFrameLoop]");
+		std::cout << "[RunFrameLoop] ENTER" << std::endl;
 	
 		FrameHeader frameHeader{};
 		std::vector<uint16_t> maskedBuffer;

@@ -1964,6 +1964,7 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                       std::vector<std::jthread>& controlThreads,
                       bool reverseModuleOrder)
 {
+	log_verbose("[StartPeerThreads]");
     std::cout << "[main] Starting per-peer frame/control threads\n";
 
     frameThreads.reserve(aperturePeers.size());
@@ -2479,6 +2480,7 @@ int main(int argc, char* argv[])
         std::vector<std::jthread> frameThreads;
         std::vector<std::jthread> controlThreads;
 
+		
         StartPeerThreads<n>(aperturePeers,
                             liveCameras,
                             frameThreads,
