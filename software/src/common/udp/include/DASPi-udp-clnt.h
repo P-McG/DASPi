@@ -18,7 +18,7 @@
 #include "DASPi-frameheader.h"
 #include "DASPi-udp-chunk-header.h"
 #include "DASPi-wire-utils.h"
-
+#include "DASPi-udp_clnt_rx_counters.h"
 
 struct sockaddr_in;
 
@@ -44,6 +44,8 @@ namespace DASPi{
 		sockaddr_in srvAddr_;
 		
 		std::unordered_map<uint32_t, RxFrameAssembly> rxAssemblies_;
+		
+		UDPClntRxCounters rxCounters_{};
 		
 	    public:
 	    //sockaddr_in clntAddr_ = { INADDR_NONE, 0, { INADDR_NONE } };
@@ -83,6 +85,7 @@ namespace DASPi{
 		int SetNonBlocking(bool enabled);
 		bool SendFramePackets(const std::vector<std::vector<uint8_t>>& packets);
 		std::vector<std::vector<uint8_t>> BuildPackets(const FrameHeader& header, const uint8_t* data, size_t bytes, size_t mtu);
+		UDPClntRxCounters ConsumeRxCounters();
 	private:
 	};
 };//ending namespace DASPi

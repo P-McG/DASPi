@@ -142,7 +142,7 @@ namespace DASPi{
  		template<size_t n, PointData center, DirectionData direction> 
         template <typename T0>
         auto RegularPolygonalShapeFunction<n, center, direction>::FrameBufferUnmask(T0 &&frameBuffer){
-		     log_verbose("[RegularPolygonalShapeFunction::FrameBufferUnmask]");
+		     //log_verbose("[RegularPolygonalShapeFunction::FrameBufferUnmask]");
 			 
 			 if (!indexLinearMax_) {
 				std::cerr << "[FATAL] indexLinearMax_ is null before FrameBufferUnmask!" << std::endl;

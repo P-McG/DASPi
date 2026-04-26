@@ -10,6 +10,7 @@ Hard-earned fixes here:
 - `apt update` Fails (No Internet from PXE Nodes)
 - ERROR: Malformed machine file: Source contains parsing errors:[line  7]: ']\n'
 - qt.qpa.plugin: Could not find the Qt platform plugin "wayland" in ""
+- Viewing captured output
 
 ## sudo: unable to resolve host
 ### Cause
@@ -569,10 +570,15 @@ The cross compilation file is malformed and needs fixed.
 Put the `]\n` on the previous line.
 
 ## Error qt.qpa.plugin: Could not find the Qt platform plugin "wayland" in ""
-## Problem
+### Problem
 That usually means a Qt/OpenCV GUI program is trying to use Wayland, but the Qt Wayland plugin is missing or broken.
-## Fix
+### Fix
 ```
 sudo apt update
 sudo apt install qtwayland5 qt6-wayland
+```
+
+## Viewing captured output
+```
+ffplay -f rawvideo -pixel_format bayer_rggb16le -video_size 1456x1088 output-10.0.2.3_0.bayer
 ```

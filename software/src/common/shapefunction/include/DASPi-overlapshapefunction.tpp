@@ -198,7 +198,7 @@ namespace DASPi{
         auto OverlapShapeFunction<n, center, direction, nonOverlapScale>::FrameBufferUnmask(
             frameBuffer_t &&frameBuffer, size_t overlapRegion
         ){
-			 log_verbose("[OverlapShapeFunction::FrameBufferUnmask]");
+			 //log_verbose("[OverlapShapeFunction::FrameBufferUnmask]");
 			 
 			 //check to see if overlapRegion is within limits
 			 if(overlapRegion >= n_){

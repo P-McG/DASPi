@@ -141,16 +141,16 @@ SphereStitcher::SphereStitcher(std::vector<CameraView> cameras,
 
         faceToCameraIndex_[static_cast<std::size_t>(face)] = i;
         
-        for (size_t f = 0; f < faceToCameraIndex_.size(); ++f) {
-            if (faceToCameraIndex_[f] >= 0) {
-                const auto& cam = cameras_[static_cast<size_t>(faceToCameraIndex_[f])];
-                std::cout << "[faceToCameraIndex] face=" << f
-                          << " -> cam=" << faceToCameraIndex_[f]
-                          << " module=" << cam.moduleIndex
-                          << " stream=" << cam.localStreamIndex
-                          << '\n';
-            }
-        }
+        //for (size_t f = 0; f < faceToCameraIndex_.size(); ++f) {
+            //if (faceToCameraIndex_[f] >= 0) {
+                ////const auto& cam = cameras_[static_cast<size_t>(faceToCameraIndex_[f])];
+                ////std::cout << "[faceToCameraIndex] face=" << f
+                          ////<< " -> cam=" << faceToCameraIndex_[f]
+                          ////<< " module=" << cam.moduleIndex
+                          ////<< " stream=" << cam.localStreamIndex
+                          ////<< '\n';
+            //}
+        //}
     }
 }
 

@@ -230,7 +230,7 @@ namespace DASPi{
 	    const T0& frameBuffer,
 	    const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax)
 	{
-	    log_verbose("[GlobalLinearShapeFunction::FrameBufferUnmask]");
+	    //log_verbose("[GlobalLinearShapeFunction::FrameBufferUnmask]");
 	
 	    if (!indexLinearMax || frameBuffer.size() > indexLinearMax->size()) {
 	        throw std::runtime_error("FrameBufferUnmask: invalid index map or size mismatch.");
@@ -298,7 +298,7 @@ namespace DASPi{
 	    DstT* dst,
 	    size_t dstSize)
 	{
-	    log_verbose("[GlobalLinearShapeFunction::FrameBufferScatterTo]");
+	    //log_verbose("[GlobalLinearShapeFunction::FrameBufferScatterTo]");
 	
 	    if (!indexLinearMax) {
 	        throw std::runtime_error("FrameBufferScatterTo: null index map.");

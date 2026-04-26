@@ -260,3 +260,8 @@ This configuration provides:
 - consistent DASPi deployment
 
 All nodes should now PXE boot and integrate cleanly into the system.
+
+## Changing launch of the  ApertureComputeModule binary
+The binary is launched as a service on the nodes so altering
+```daspi@PXEServer:/ $ nano /srv/nfs/default/etc/default/aperturecomputemodule```
+will change the launch parameters.

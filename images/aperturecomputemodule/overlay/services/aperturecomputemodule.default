@@ -1,4 +1,26 @@
 CLIENT_IP=10.0.2.1
+PXE_SERVER_IP=10.0.2.2
 BASE_PORT=5000
 VERBOSE=--verbose
 BINARY=/opt/daspi/aperturecomputemodule
+
+NODE_IP="$(ip -4 route get "$CLIENT_IP" | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')"
+
+case "$NODE_IP" in
+  10.0.2.4)
+    CLIENT_PORT=5000
+    ;;
+  10.0.2.5)
+    CLIENT_PORT=5010
+    ;;
+  *)
+    CLIENT_PORT="$BASE_PORT"
+    ;;
+esac
+
+export CLIENT_IP
+export PXE_SERVER_IP
+export BASE_PORT
+export CLIENT_PORT
+export VERBOSE
+export BINARY

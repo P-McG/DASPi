@@ -34,8 +34,9 @@ template<size_t n>
 Aperture<n>::Aperture(const std::string clientIp, const size_t port)
     : frameSrv_{clientIp, port},
       controlClnt_{INADDR_ANY,
-                   static_cast<int>(port + 1),
-                   inet_addr(clientIp.c_str())}
+             static_cast<int>(port + 1),
+             inet_addr(clientIp.c_str()),
+             static_cast<int>(port + 1)}
 {
 	
 	std::cout << "[TX sizeof]\n";

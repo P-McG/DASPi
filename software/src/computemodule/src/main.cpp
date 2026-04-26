@@ -42,6 +42,7 @@ namespace {
 constexpr int kFrameWidth = 1456;
 constexpr int kFrameHeight = 1088;
 constexpr int kExpectedPixels = kFrameWidth * kFrameHeight;
+constexpr int kModulePortStride = 10;
 constexpr int kControlPortOffset = 1;
 
 // n = overlap images per module
@@ -362,10 +363,10 @@ std::vector<std::unique_ptr<AperturePeer<N>>> CreateAperturePeers(
 
     std::cout << "[main] Setting up AperturePeers\n";
     for (size_t i = 0; i < aperturePeers.size(); ++i) {
-        const int clntFramePort = options.framePort + static_cast<int>(i) * 2;
-        const int clntControlPort = clntFramePort + kControlPortOffset;
-        const int srvFramePort = options.framePort;
-        const int srvControlPort = srvFramePort + kControlPortOffset;
+        const int clntFramePort = options.framePort + static_cast<int>(i) * kModulePortStride;
+        const int clntControlPort = clntFramePort + 1;
+		const int srvFramePort = clntFramePort;
+		const int srvControlPort = clntControlPort;
 
         std::cout << "[main] Creating AperturePeer " << i
                   << ", clntFramePort=" << clntFramePort
@@ -461,27 +462,45 @@ CameraView makeCameraView(const cv::Mat& image,
 
 cv::Mat decodeBayer16ToBgr8(const std::vector<uint16_t>& data)
 {
-    cv::Mat raw16(kFrameHeight, kFrameWidth, CV_16UC1,
+    constexpr bool kWriteRawDebugImage = false;
+    constexpr bool kVerboseDecode = false;
+
+    const size_t expected =
+        static_cast<size_t>(kFrameWidth) * static_cast<size_t>(kFrameHeight);
+
+    if (data.size() != expected) {
+        std::cerr << "[decodeBayer16ToBgr8] bad input size: data.size()="
+                  << data.size()
+                  << " expected=" << expected
+                  << std::endl;
+        return {};
+    }
+
+    cv::Mat raw16(kFrameHeight,
+                  kFrameWidth,
+                  CV_16UC1,
                   const_cast<uint16_t*>(data.data()));
-    cv::Mat rawCopy = raw16.clone();
+
+    if constexpr (kVerboseDecode || kWriteRawDebugImage) {
+        cv::Mat test8;
+        raw16.convertTo(test8, CV_8UC1, 1.0 / 256.0);
+
+        if constexpr (kVerboseDecode) {
+            std::cout << "[decodeBayer16ToBgr8] data.size()=" << data.size()
+                      << " expected=" << expected
+                      << " raw16.empty()=" << raw16.empty()
+                      << " test8.empty()=" << test8.empty()
+                      << " test8.type()=" << test8.type()
+                      << std::endl;
+        }
+
+        if constexpr (kWriteRawDebugImage) {
+            cv::imwrite("/tmp/raw_debug.png", test8);
+        }
+    }
 
     cv::Mat bgr16;
-    
-    cv::Mat testGray(kFrameHeight, kFrameWidth, CV_16UC1, const_cast<uint16_t*>(data.data()));
-	cv::Mat test8;
-	testGray.convertTo(test8, CV_8UC1, 1.0 / 256.0);
-	
-	std::cout << "data.size() = " << data.size() << std::endl;
-	std::cout << "expected    = " << (kFrameWidth * kFrameHeight) << std::endl;
-	std::cout << "testGray.empty() = " << testGray.empty() << std::endl;
-	std::cout << "test8.empty()    = " << test8.empty() << std::endl;
-	std::cout << "test8.type()     = " << test8.type() << std::endl;
-	
-	//cv::imshow("RAW", test8);
-	cv::imwrite("/tmp/raw_debug.png", test8);
-	//cv::waitKey(0);
-    
-    cv::cvtColor(rawCopy, bgr16, cv::COLOR_BayerRG2BGR);
+    cv::cvtColor(raw16, bgr16, cv::COLOR_BayerRG2BGR);
 
     cv::Mat bgr8;
     bgr16.convertTo(bgr8, CV_8UC3, 1.0 / 256.0);
@@ -1737,11 +1756,11 @@ void updateCameraImages(std::vector<CameraView>& cameras,
         const CameraConfig& cfg = configs[i];
         const LiveCameraState& live = liveCameras[i];
 
-        std::cout << "[pre-frame] cam=" << i
-                  << " module=" << cam.moduleIndex
-                  << " stream=" << cfg.localStreamIndex
-                  << " liveValidNZ=" << cv::countNonZero(live.validMask)
-                  << '\n';
+        //std::cout << "[pre-frame] cam=" << i
+                  //<< " module=" << cam.moduleIndex
+                  //<< " stream=" << cfg.localStreamIndex
+                  //<< " liveValidNZ=" << cv::countNonZero(live.validMask)
+                  //<< '\n';
 
         // Always update masks from live state, even if no frame arrived yet.
         cv::Mat zeroMask;
@@ -1761,11 +1780,11 @@ void updateCameraImages(std::vector<CameraView>& cameras,
         cv::Mat latest;
         const bool haveFrame = tryGetLatestFrame(liveCameras[i].frame, latest);
 
-        std::cout << "[frame] cam=" << i
-                  << " module=" << cam.moduleIndex
-                  << " stream=" << cfg.localStreamIndex
-                  << " haveFrame=" << haveFrame
-                  << '\n';
+        //std::cout << "[frame] cam=" << i
+                  //<< " module=" << cam.moduleIndex
+                  //<< " stream=" << cfg.localStreamIndex
+                  //<< " haveFrame=" << haveFrame
+                  //<< '\n';
 
         if (haveFrame) {
             cam.image = latest;
@@ -1776,15 +1795,15 @@ void updateCameraImages(std::vector<CameraView>& cameras,
 		              << " stream=" << cfg.localStreamIndex << '\n';
 		}
 
-        std::cout << "[updateCameraImages] cam=" << i
-                  << " module=" << cam.moduleIndex
-                  << " face=" << cam.faceIndex
-                  << " stream=" << cfg.localStreamIndex
-                  << " localEdge=" << cfg.localEdgeIndex
-                  << " neighborFace=" << cfg.neighborFaceIndex
-                  << " nonOverlapNZ=" << cv::countNonZero(cam.maskNonOverlap)
-                  << " overlapNZ=" << cv::countNonZero(cam.maskOverlap)
-                  << '\n';
+        //std::cout << "[updateCameraImages] cam=" << i
+                  //<< " module=" << cam.moduleIndex
+                  //<< " face=" << cam.faceIndex
+                  //<< " stream=" << cfg.localStreamIndex
+                  //<< " localEdge=" << cfg.localEdgeIndex
+                  //<< " neighborFace=" << cfg.neighborFaceIndex
+                  //<< " nonOverlapNZ=" << cv::countNonZero(cam.maskNonOverlap)
+                  //<< " overlapNZ=" << cv::countNonZero(cam.maskOverlap)
+                  //<< '\n';
     }
 
     static bool savedOnce = false;
@@ -1979,7 +1998,7 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
         frameThreads.emplace_back([peer, peerIndex, moduleIndex, &liveCameras]() {
             std::vector<uint16_t> raw;
             raw.reserve(kExpectedPixels);
-            std::uint64_t frameCounter = 0;
+            //std::uint64_t frameCounter = 0;
             std::uint64_t noFrameLoopCount = 0;
             std::uint64_t runFrameLoopFailCount = 0;
 
@@ -2048,21 +2067,21 @@ void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePee
                         gotStream1ThisLoop = true;
                     }
 
-                    const bool shouldLogSignature =
-                        ((++frameCounter % kSignatureLogEvery) == 0) &&
-                        (localCameraIndex == 0 || localCameraIndex == 1);
+                    //const bool shouldLogSignature =
+                        //((++frameCounter % kSignatureLogEvery) == 0) &&
+                        //(localCameraIndex == 0 || localCameraIndex == 1);
 
-                    if (shouldLogSignature) {
-                        const cv::Scalar meanBgr = cv::mean(bgr);
-                        std::cout << "[frame signature] peer=" << peerIndex
-                                  << " module=" << moduleIndex
-                                  << " global=" << globalIndex
-                                  << " local=" << localCameraIndex
-                                  << " meanBGR=("
-                                  << meanBgr[0] << ","
-                                  << meanBgr[1] << ","
-                                  << meanBgr[2] << ")\n";
-                    }
+                    //if (shouldLogSignature) {
+                        //const cv::Scalar meanBgr = cv::mean(bgr);
+                        //std::cout << "[frame signature] peer=" << peerIndex
+                                  //<< " module=" << moduleIndex
+                                  //<< " global=" << globalIndex
+                                  //<< " local=" << localCameraIndex
+                                  //<< " meanBGR=("
+                                  //<< meanBgr[0] << ","
+                                  //<< meanBgr[1] << ","
+                                  //<< meanBgr[2] << ")\n";
+                    //}
                 }
 
                 if (!gotAnyFrameThisLoop) {
@@ -2234,10 +2253,10 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         cv::Mat display = pano.clone();
         DrawPanoramaOverlay(display, frameNumber++, validMask);
 
-        std::cout << "[GUI] rows=" << display.rows
-                  << " cols=" << display.cols
-                  << " empty=" << display.empty()
-                  << '\n';
+        //std::cout << "[GUI] rows=" << display.rows
+                  //<< " cols=" << display.cols
+                  //<< " empty=" << display.empty()
+                  //<< '\n';
 
         cv::imshow("Stitched Panorama", display);
 

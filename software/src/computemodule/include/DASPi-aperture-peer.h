@@ -16,6 +16,7 @@
 #include "DASPi-overlapshapefunction.h"
 #include "DASPi-shapefunctiondatapacket.h"
 #include "DASPi-fps-counter.h"
+#include "DASPi-rx_stats.h"
 
 
 namespace DASPi {
@@ -45,11 +46,13 @@ class AperturePeer {
     uint32_t latestFrameId_{0};
     bool gainValid_{false};
     
-    FPSCounter fpsReceived_{"computemodule received"};
-    FPSCounter fpsPublished_{"computemodule published"};
-    FPSCounter fpsRunFrameLoop_{"computemodule total"};
+    //FPSCounter fpsReceived_{"computemodule received"};
+    //FPSCounter fpsPublished_{"computemodule published"};
+    //FPSCounter fpsRunFrameLoop_{"computemodule total"};
     std::string peerLabel_;
     std::uint64_t bufferToFileCount_{0};
+    
+    mutable RxStats rxStats_;
     
 public:
     AperturePeer(in_addr_t clntAddr,
@@ -84,6 +87,8 @@ public:
                         bool reverseOther = false);
     cv::Mat BuildValidMask(size_t regionIndex);
     bool CopyValidMask(size_t regionIndex, cv::Mat& out);
+    void MaybePrintRxSummary();
+    //void MaybePrintRxSummary(size_t peerIndex, size_t moduleIndex);
     
 private:
     const int processingThreads_{4};
