@@ -8,6 +8,7 @@
 #include "DASPi-logger.h"
 #include "DASPi-udp-clnt.h"
 #include "DASPi-aperture-peer.h"
+#include "DASPi-benchmark-config.h"
 
 namespace DASPi{
 	
@@ -80,166 +81,162 @@ namespace DASPi{
 	    //return true;
 	//}        
 	     
-template<size_t n>
-bool AperturePeer<n>::RunFrameLoop()
-{
-    FrameHeader frameHeader{};
-    std::vector<uint16_t> maskedBuffer;
-
-    UDPClnt::EpollData epollData;
-
-    if (!frameClnt_.InitEpollForSrvUDPPackets(epollData)) {
-        std::cerr << "[RunFrameLoop] initializing epoll for server UDP packets failed\n";
-        ++rxStats_.rxFail;
-        MaybePrintRxSummary();
-        return false;
-    }
-
-    const auto finalizeEpoll = [&]() -> bool {
-        if (!frameClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
-            std::cerr << "[RunFrameLoop] finalize epoll for server UDP packets failed\n";
-            return false;
-        }
-        return true;
-    };
-
-    const bool ok =
-        frameClnt_.ReceiveAndReassembleFramePacket(maskedBuffer, frameHeader);
-
-    const auto counters = frameClnt_.ConsumeRxCounters();
-    rxStats_.rxDropOld += counters.dropOld;
-    rxStats_.rxTimeout += counters.timeout;
-
-    if (ok) {
-        ++rxStats_.rxComplete;
-    } else {
-        ++rxStats_.rxFail;
-    }
-
-    MaybePrintRxSummary();
-
-    if (!ok) {
-        finalizeEpoll();
-        return false;
-    }
-
-    //this->fpsReceived_.Tick();
-
-    if (!finalizeEpoll()) {
-        ++rxStats_.rxFail;
-        MaybePrintRxSummary();
-        return false;
-    }
-
-    this->sfdp_.ResetValidSizes();
-
-    size_t offset = 0;
-
-    for (size_t i = 0; i < NUM_REGIONS; ++i) {
-        const size_t count = frameHeader.regionSizes_[i];
-
-        if (count > this->sfdp_[i].size()) {
-            std::cerr << "[RunFrameLoop] region overflow: i=" << i
-                      << " count=" << count
-                      << " capacity=" << this->sfdp_[i].size()
-                      << '\n';
-            ++rxStats_.rxFail;
-            MaybePrintRxSummary();
-            return false;
-        }
-
-        if (offset + count > maskedBuffer.size()) {
-            std::cerr << "[RunFrameLoop] packed payload overflow: offset="
-                      << offset
-                      << " count=" << count
-                      << " maskedBuffer.size()=" << maskedBuffer.size()
-                      << '\n';
-            ++rxStats_.rxFail;
-            MaybePrintRxSummary();
-            return false;
-        }
-
-        if (count != 0) {
-            std::memcpy(this->sfdp_[i].data(),
-                        maskedBuffer.data() + offset,
-                        count * sizeof(uint16_t));
-        }
-
-        this->sfdp_.SetRegionValidSize(i, count);
-        offset += count;
-    }
-
-    if (offset != maskedBuffer.size()) {
-        std::cerr << "[RunFrameLoop] payload size mismatch after unpack: offset="
-                  << offset
-                  << " maskedBuffer.size()=" << maskedBuffer.size()
-                  << '\n';
-        ++rxStats_.rxFail;
-        MaybePrintRxSummary();
-        return false;
-    }
-
-    std::array<std::vector<uint16_t>, n + 1> newBuffers;
-
-    auto unmasked0 =
-        this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(this->sfdp_[0]);
-
-    newBuffers[0].resize(unmasked0.size());
-
-    if (!unmasked0.empty()) {
-        std::memcpy(newBuffers[0].data(),
-                    unmasked0.data(),
-                    unmasked0.size() * sizeof(uint16_t));
-    }
-
-    for (size_t i = 0; i < n_; ++i) {
-        auto unmasked = this->sf_.FrameBufferUnmask(this->sfdp_[i + 1], i);
-
-        newBuffers[i + 1].resize(unmasked.size());
-
-        if (!unmasked.empty()) {
-            std::memcpy(newBuffers[i + 1].data(),
-                        unmasked.data(),
-                        unmasked.size() * sizeof(uint16_t));
-        }
-    }
-
-    constexpr bool kTraceEmptyStreams = false;
-
-    if constexpr (kTraceEmptyStreams) {
-        if (!newBuffers[0].empty() && newBuffers[1].empty()) {
-            std::cout << "[RunFrameLoop trace] " << peerLabel_
-                      << " stream1 empty while stream0 has data"
-                      << " regionSize[0]=" << frameHeader.regionSizes_[0]
-                      << " regionSize[1]=" << frameHeader.regionSizes_[1]
-                      << " buffer0=" << newBuffers[0].size()
-                      << " buffer1=" << newBuffers[1].size()
-                      << '\n';
-        }
-    }
-
-    {
-        std::scoped_lock lock(bufferMutex_);
-        this->buffer_ = std::move(newBuffers);
-    }
-
-    //this->fpsPublished_.Tick();
-
-    constexpr bool kWriteBuffersToFile = false;
-
-    if constexpr (kWriteBuffersToFile) {
-        if (!this->BufferToFile()) {
-            std::cerr << "[RunFrameLoop] BufferToFile failed\n";
-            ++rxStats_.rxFail;
-            MaybePrintRxSummary();
-            return false;
-        }
-    }
-
-    //this->fpsRunFrameLoop_.Tick();
-
-    return true;
-}
+	template<size_t n>
+	bool AperturePeer<n>::RunFrameLoop()
+	{
+		//constexpr bool kRxOnlyBenchmark = true;
+	
+		FrameHeader frameHeader{};
+		std::vector<uint16_t> maskedBuffer;
+	
+		UDPClnt::EpollData epollData;
+	
+		if (!frameClnt_.InitEpollForSrvUDPPackets(epollData)) {
+			++rxStats_.rxFail;
+			MaybePrintRxSummary();
+			return false;
+		}
+	
+		auto finalizeEpoll = [&]() -> bool {
+			if (!frameClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
+				++rxStats_.rxFail;
+				MaybePrintRxSummary();
+				return false;
+			}
+			return true;
+		};
+	
+		const bool ok =
+			frameClnt_.ReceiveAndReassembleFramePacket(maskedBuffer, frameHeader);
+	
+		const auto counters = frameClnt_.ConsumeRxCounters();
+	
+		rxStats_.rxDropOld += counters.dropOld;
+		rxStats_.rxTimeout += counters.timeout;
+	
+		if (ok) {
+			++rxStats_.rxComplete;
+		} else {
+			++rxStats_.rxFail;
+		}
+	
+		MaybePrintRxSummary();
+	
+		if (!ok) {
+			finalizeEpoll();
+			return false;
+		}
+	
+		//this->fpsReceived_.Tick();
+	
+		if (!finalizeEpoll()) {
+			return false;
+		}
+	
+		if constexpr (kRxOnlyBenchmark) {
+			return true;
+		}
+	
+		/*
+		 * Normal processing starts here.
+		 * This code is skipped while kRxOnlyBenchmark=true.
+		 */
+	
+		this->sfdp_.ResetValidSizes();
+	
+		size_t offset = 0;
+	
+		for (size_t i = 0; i < NUM_REGIONS; ++i) {
+			const size_t count = frameHeader.regionSizes_[i];
+	
+			if (count > this->sfdp_[i].size()) {
+				std::cerr << "[RunFrameLoop] region overflow: i=" << i
+						  << " count=" << count
+						  << " capacity=" << this->sfdp_[i].size()
+						  << '\n';
+				++rxStats_.rxFail;
+				MaybePrintRxSummary();
+				return false;
+			}
+	
+			if (offset + count > maskedBuffer.size()) {
+				std::cerr << "[RunFrameLoop] packed payload overflow: offset="
+						  << offset
+						  << " count=" << count
+						  << " maskedBuffer.size()=" << maskedBuffer.size()
+						  << '\n';
+				++rxStats_.rxFail;
+				MaybePrintRxSummary();
+				return false;
+			}
+	
+			if (count != 0) {
+				std::memcpy(this->sfdp_[i].data(),
+							maskedBuffer.data() + offset,
+							count * sizeof(uint16_t));
+			}
+	
+			this->sfdp_.SetRegionValidSize(i, count);
+			offset += count;
+		}
+	
+		if (offset != maskedBuffer.size()) {
+			std::cerr << "[RunFrameLoop] payload size mismatch after unpack: offset="
+					  << offset
+					  << " maskedBuffer.size()=" << maskedBuffer.size()
+					  << '\n';
+			++rxStats_.rxFail;
+			MaybePrintRxSummary();
+			return false;
+		}
+	
+		std::array<std::vector<uint16_t>, n + 1> newBuffers;
+	
+		auto unmasked0 =
+			this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(this->sfdp_[0]);
+	
+		newBuffers[0].resize(unmasked0.size());
+	
+		if (!unmasked0.empty()) {
+			std::memcpy(newBuffers[0].data(),
+						unmasked0.data(),
+						unmasked0.size() * sizeof(uint16_t));
+		}
+	
+		for (size_t i = 0; i < n_; ++i) {
+			auto unmasked = this->sf_.FrameBufferUnmask(this->sfdp_[i + 1], i);
+	
+			newBuffers[i + 1].resize(unmasked.size());
+	
+			if (!unmasked.empty()) {
+				std::memcpy(newBuffers[i + 1].data(),
+							unmasked.data(),
+							unmasked.size() * sizeof(uint16_t));
+			}
+		}
+	
+		{
+			std::scoped_lock lock(bufferMutex_);
+			this->buffer_ = std::move(newBuffers);
+		}
+	
+		//this->fpsPublished_.Tick();
+	
+		constexpr bool kWriteBuffersToFile = false;
+	
+		if constexpr (kWriteBuffersToFile) {
+			if (!this->BufferToFile()) {
+				std::cerr << "[RunFrameLoop] BufferToFile failed\n";
+				++rxStats_.rxFail;
+				MaybePrintRxSummary();
+				return false;
+			}
+		}
+	
+		//this->fpsRunFrameLoop_.Tick();
+	
+		return true;
+	}
 	
 	template<size_t n>
 	bool AperturePeer<n>::BufferToFile()
@@ -316,18 +313,22 @@ bool AperturePeer<n>::RunFrameLoop()
 	template<size_t n>
 	bool AperturePeer<n>::CopyBuffer(size_t index, std::vector<uint16_t>& out) const
 	{
-		//log_verbose("[AperturePeer::CopyBuffer]");
+		constexpr bool kVerboseCopyBufferFailures = false;
 	
 		if (index >= n_ + 1) {
-			std::cerr << "[CopyBuffer] index out of range: " << index
-					  << " (max valid: " << n_ << ")\n";
+			if constexpr (kVerboseCopyBufferFailures) {
+				std::cerr << "[CopyBuffer] index out of range: " << index
+						  << " (max valid: " << n_ << ")\n";
+			}
 			return false;
 		}
 	
 		std::scoped_lock lock(bufferMutex_);
 	
 		if (buffer_[index].empty()) {
-			std::cerr << "[CopyBuffer] buffer_[" << index << "] is empty\n";
+			if constexpr (kVerboseCopyBufferFailures) {
+				std::cerr << "[CopyBuffer] buffer_[" << index << "] is empty\n";
+			}
 			return false;
 		}
 	
