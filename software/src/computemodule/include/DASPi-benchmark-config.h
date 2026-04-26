@@ -2,5 +2,5 @@
 #pragma once
 
 namespace DASPi {
-inline constexpr bool kRxOnlyBenchmark = true;
+inline constexpr bool kRxOnlyBenchmark = false;
 }

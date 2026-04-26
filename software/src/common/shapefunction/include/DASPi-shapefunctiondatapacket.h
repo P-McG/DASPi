@@ -28,7 +28,7 @@ private:
 public:
     ShapeFunctionDataPacket(const OverlapShapeFunction<n, center, direction, nonOverlapScale>& sf)
     {
-        log_verbose("[ShapeFunctonDataPacket::ShapeFunctionDataPacket]");
+        //log_verbose("[ShapeFunctonDataPacket::ShapeFunctionDataPacket]");
 
         capacities_[0] = sf.RegularPolygonalShapeFunction<n, center, direction>::size();
         for (size_t i = 0; i < n; ++i) {

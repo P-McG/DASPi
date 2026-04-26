@@ -159,7 +159,7 @@ namespace DASPi{
  		template<size_t n, PointData center, DirectionData direction> 
         template<typename frameBuffer_t>
         std::vector<uint16_t> RegularPolygonalShapeFunction<n, center, direction>::FrameBufferMask(frameBuffer_t &&frameBuffer) {
-            log_verbose("[RegularPolygonalShapeFunction::FrameBufferMask2]");
+            //log_verbose("[RegularPolygonalShapeFunction::FrameBufferMask2]");
 			std::vector<uint16_t>output(frameBuffer.size());
 
             {
@@ -181,7 +181,7 @@ namespace DASPi{
                        // pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
                         pthread_setname_np(pthread_self(), "Mask");
                 
-                        std::cout << "[Thread " << i << "] started, start=" << start << ", end=" << end << std::endl;
+                        //std::cout << "[Thread " << i << "] started, start=" << start << ", end=" << end << std::endl;
                 
                         try {
                             // Write directly into the correct segment of finalResult
@@ -193,7 +193,7 @@ namespace DASPi{
                             std::cerr << "[Thread " << i << "] unknown exception" << std::endl;
                         }
                 
-                        std::cout << "[Thread " << i << "] completed" << std::endl;
+                        //std::cout << "[Thread " << i << "] completed" << std::endl;
                     });
                 }
                 
@@ -214,7 +214,7 @@ namespace DASPi{
             size_t end,
             uint16_t* outputBuffer   // New output pointer
         ) {
-            log_verbose("[RegularPolygonalShapeFunction::FrameBufferMaskChunked]");
+            //log_verbose("[RegularPolygonalShapeFunction::FrameBufferMaskChunked]");
             size_t maxSize = size();
         
             if (start >= maxSize) {
@@ -223,9 +223,9 @@ namespace DASPi{
             }
         
             size_t clampedEnd = std::min(end, maxSize);
-        #ifdef VERBATIUM_COUT
-            std::cout << "[Chunk] start=" << start << ", clampedEnd=" << clampedEnd << std::endl;
-        #endif
+        //#ifdef VERBATIUM_COUT
+            //std::cout << "[Chunk] start=" << start << ", clampedEnd=" << clampedEnd << std::endl;
+        //#endif
         
             typename GlobalLinearShapeFunction_t::IndexLinearMax<typename GlobalLinearShapeFunction_t::Index>::iterator chunkBegin = indexLinearMax_->begin() + start;
             typename GlobalLinearShapeFunction_t::IndexLinearMax<typename GlobalLinearShapeFunction_t::Index>::iterator chunkEnd = indexLinearMax_->begin() + clampedEnd;

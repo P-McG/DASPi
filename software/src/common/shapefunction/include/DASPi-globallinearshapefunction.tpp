@@ -207,7 +207,7 @@ namespace DASPi{
 									 IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>::iterator indexBegin,
 									 IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>::iterator indexEnd,
 									 uint16_t* outputBuffer) {
-		log_verbose("[GlobalLinearShapeFunction::FrameBufferMaskedChunked]");
+		//log_verbose("[GlobalLinearShapeFunction::FrameBufferMaskedChunked]");
 		if (indexBegin >= indexEnd) {
 			std::cerr << "Invalid range: indexBegin >= indexEnd" << std::endl;
 			return;

@@ -27,7 +27,12 @@ using namespace std::chrono;
 using namespace libcamera;
 
 namespace DASPi{
-
+    
+inline constexpr bool kApertureTxLogStartup = true;
+inline constexpr bool kApertureTxLogPerFrame = false;
+inline constexpr bool kApertureTxLogQueue = false;
+inline constexpr bool kApertureTxLogRequest = false;
+inline constexpr bool kApertureTxLogUdpFrame = false;
 
 // Constructor
 template<size_t n>
@@ -412,13 +417,13 @@ std::unique_ptr<libcamera::Request> Aperture<n>::CreateRequestWithControls(){
     if (!request) return nullptr;
 
 	auto &ctrls = request->controls();
-    //request->controls().set(libcamera::controls::FrameDurationLimits, {16666, 16666});
-	const std::array<int64_t, 2> duration = {33333, 33333}; // min = max = 1/30 s
-	ctrls.set(libcamera::controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(duration));
-	//ctrls.set(libcamera::controls::ExposureTime, 20000); // 20 ms
-	ctrls.set(libcamera::controls::ExposureTime, 33333); // MAX
-	ctrls.set(libcamera::controls::AnalogueGain, 1.5f);  // gain ×1.5; all colors
-	ctrls.set(libcamera::controls::AeEnable, false);
+    const std::array<int64_t, 2> duration = {33333, 33333};
+    ctrls.set(libcamera::controls::FrameDurationLimits,
+              libcamera::Span<const int64_t, 2>(duration));
+    
+    ctrls.set(libcamera::controls::ExposureTime, 10000); // 10 ms test
+    ctrls.set(libcamera::controls::AnalogueGain, 1.5f);
+    ctrls.set(libcamera::controls::AeEnable, false);
 	// Change the exposure
 	//SetAeCompensationOnRequest(request.get(), +2.0f);
 
@@ -539,14 +544,32 @@ void Aperture<n>::QueueCameraRequests(bool isRequests){
  */
  template<size_t n>
  void Aperture<n>::RequestComplete(libcamera::Request *request){
-    std::cout << "[RequestComplete] req=" << request
-              << " status=" << static_cast<int>(request->status())
-              << " seq=" << request->sequence() << std::endl;
-			  
-	std::cout << ">>> REQUEST COMPLETE FIRED <<<" << std::endl;
+    if constexpr (kApertureTxLogRequest) {
+        std::cout << "[RequestComplete] req=" << request
+                  << " status=" << static_cast<int>(request->status())
+                  << " seq=" << request->sequence() << '\n';
+    }
 	
     if (request->status() == libcamera::Request::RequestCancelled)
         return;
+        
+    static uint64_t completedRequests = 0;
+    static auto lastCamPrint = std::chrono::steady_clock::now();
+    
+    ++completedRequests;
+    
+    const auto now = std::chrono::steady_clock::now();
+    const double elapsed =
+        std::chrono::duration<double>(now - lastCamPrint).count();
+    
+    if (elapsed >= 1.0) {
+        std::cout << "[CAM summary] requests=" << completedRequests
+                  << " fps=" << static_cast<double>(completedRequests) / elapsed
+                  << '\n';
+    
+        completedRequests = 0;
+        lastCamPrint = now;
+    }
 
     ProcessRequestImpl(request);
 }
@@ -634,7 +657,7 @@ void Aperture<n>::RequestProcessingThread() {
 template<size_t n>
 void Aperture<n>::ProcessRequestImpl(libcamera::Request *request)
 {
-    log_verbose("[Aperture::ProcessRequestImpl]");
+    //log_verbose("[Aperture::ProcessRequestImpl]");
 
     if (!request) {
         std::cerr << "ProcessRequestImpl: null request\n";
@@ -672,30 +695,21 @@ void Aperture<n>::ProcessRequestImpl(libcamera::Request *request)
     {
         std::lock_guard<std::mutex> lock(postProcessingQueueMutex_);
 
-        constexpr size_t MAX_QUEUE_SIZE = 256;
-        const size_t needed = completedBuffers.size();
-
-		 if (postProcessingQueue_.size() + needed <= MAX_QUEUE_SIZE) {
-			for (const auto &[stream, buffer] : completedBuffers) {
-				std::cout << "[PostQueuePush] frame=" << completedFrameId
-						  << " buffers=" << completedBuffers.size()
-						  << " queue_size_before=" << postProcessingQueue_.size()
-						  << " buffer=" << buffer
-						  << std::endl;
-		
-				postProcessingQueue_.push(PostProcessItem{
-					.frameNumber = completedFrameId,
-					.buffer = buffer,
-					.gainMsg = gainMsg
-				});
-			}
-			postProcessingQueueCV_.notify_all();
-		} else {
-			std::cerr << "[ProcessRequestImpl] postProcessingQueue full, dropping frame "
-					  << completedFrameId
-					  << " queue_size=" << postProcessingQueue_.size()
-					  << " needed=" << needed << std::endl;
-		}
+        constexpr size_t MAX_QUEUE_SIZE = 2;
+        
+        for (const auto &[stream, buffer] : completedBuffers) {
+            while (postProcessingQueue_.size() >= MAX_QUEUE_SIZE) {
+                postProcessingQueue_.pop();  // drop stale frame
+            }
+        
+            postProcessingQueue_.push(PostProcessItem{
+                .frameNumber = completedFrameId,
+                .buffer = buffer,
+                .gainMsg = gainMsg
+            });
+        }
+        
+        postProcessingQueueCV_.notify_one();
 	}
     request->reuse();
 
@@ -742,8 +756,10 @@ void Aperture<n>::PostProcessingThread()
             item = std::move(postProcessingQueue_.front());
             postProcessingQueue_.pop();
 			
-			std::cout << "[PostProcessingThread] frame=" << item.frameNumber
-					  << " buffer=" << item.buffer << std::endl;			
+            if constexpr (kApertureTxLogQueue) {
+                std::cout << "[PostProcessingThread] frame=" << item.frameNumber
+                          << " buffer=" << item.buffer << '\n';
+            }			
         }
 
         FrameBufferToUDP(item.frameNumber, item.buffer, item.gainMsg);
@@ -752,9 +768,10 @@ void Aperture<n>::PostProcessingThread()
 
 template<size_t n>
 void Aperture<n>::ProcessRequest(libcamera::Request* request) {
-    std::cout << "[ProcessRequest] req=" << request
-              << " seq=" << request->sequence() << std::endl;
-
+    if constexpr (kApertureTxLogRequest) {
+        std::cout << "[ProcessRequest] req=" << request
+                  << " seq=" << request->sequence() << '\n';
+    }
     {
         std::lock_guard<std::mutex> lock(queueMutex_);
         requestQueue_.push(request);
@@ -881,8 +898,8 @@ void Aperture<n>::StartCapture() {
  */
 template<size_t n>
 void Aperture<n>::RunEventLoop(int timeout){
-	std::cout << "[EventLoop] ENTER" << std::endl;
-	log_verbose("[Aperture::RunEventLoop]");
+	//std::cout << "[EventLoop] ENTER" << std::endl;
+	//log_verbose("[Aperture::RunEventLoop]");
 
 	loop_.timeout(timeout);
 	loop_.exec();
@@ -894,27 +911,25 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
                                    const libcamera::FrameBuffer *buffer,
                                    const GainMsg& gainMsg)
 {
-    log_verbose("[Aperture::FrameBufferToUDP]");
+    constexpr bool kWriteBayerDebugImages = false;
+    constexpr bool kVerboseTxTiming = true;
 
-    std::cout << "[FrameBufferToUDP] frame=" << frameNumber
-              << " buffer=" << buffer << std::endl;
+    const auto t0 = std::chrono::steady_clock::now();
 
-    static int producedFrames = 0;
-    ++producedFrames;
-    if ((producedFrames % 10) == 0) {
-        std::cout << "[Produced] " << producedFrames
-                  << " frames buffered for UDP" << std::endl;
+    if constexpr (kApertureTxLogUdpFrame) {
+        std::cout << "[FrameBufferToUDP] frame=" << frameNumber
+                  << " buffer=" << buffer << '\n';
     }
 
     const auto planes = buffer->planes();
     if (planes.empty()) {
-        std::cerr << "Frame buffer has no planes" << std::endl;
+        std::cerr << "Frame buffer has no planes\n";
         std::exit(EXIT_FAILURE);
     }
 
     const auto &plane = planes.back();
     if (!plane.fd.isValid()) {
-        std::cerr << "Invalid file descriptor for plane" << std::endl;
+        std::cerr << "Invalid file descriptor for plane\n";
         std::exit(EXIT_FAILURE);
     }
 
@@ -926,20 +941,11 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
     constexpr size_t activeHeight = sensorHeightValue_;
     constexpr size_t expectedElems = activeWidth * activeHeight;
 
-    std::cout << "[FrameBufferToUDP] pixelFormat=" << pixelFormat.toString()
-              << " plane.length=" << plane.length
-              << " strideBytes=" << strideBytes
-              << " activeWidth=" << activeWidth
-              << " activeHeight=" << activeHeight
-              << std::endl;
-
-    sfdp_t sfdp(sf_);
-
     if (expectedElems != sf_.sf_t::GlobalLinearShapeFunction_t::size()) {
         std::cerr << "Shape function size mismatch: expected activeElems="
                   << expectedElems
                   << " sf size=" << sf_.sf_t::GlobalLinearShapeFunction_t::size()
-                  << std::endl;
+                  << '\n';
         std::exit(EXIT_FAILURE);
     }
 
@@ -951,7 +957,7 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
 
     if (!isSBGGR16 && !isSBGGR10Packed) {
         std::cerr << "Unsupported validated pixel format for current UDP path: "
-                  << pixelFormat.toString() << std::endl;
+                  << pixelFormat.toString() << '\n';
         std::exit(EXIT_FAILURE);
     }
 
@@ -960,11 +966,19 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
         std::cerr << "Plane too small for configured stride/height: plane.length="
                   << plane.length
                   << " requiredBytes=" << requiredBytes
-                  << std::endl;
+                  << '\n';
         std::exit(EXIT_FAILURE);
     }
 
-    void *mapped = mmap(nullptr, plane.length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
+    const auto tValidateDone = std::chrono::steady_clock::now();
+
+    void *mapped = mmap(nullptr,
+                        plane.length,
+                        PROT_READ,
+                        MAP_SHARED,
+                        plane.fd.get(),
+                        0);
+
     if (mapped == MAP_FAILED) {
         perror("Failed to mmap plane data");
         std::exit(EXIT_FAILURE);
@@ -974,6 +988,7 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
         if (mapped != MAP_FAILED && munmap(mapped, plane.length) != 0) {
             perror("Failed to unmap plane data");
         }
+        mapped = MAP_FAILED;
     };
 
     std::vector<uint16_t> activeFrame(expectedElems);
@@ -981,27 +996,23 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
     if (isSBGGR16) {
         if ((strideBytes % sizeof(uint16_t)) != 0) {
             std::cerr << "Stride is not 16-bit aligned for SBGGR16: strideBytes="
-                      << strideBytes << std::endl;
+                      << strideBytes << '\n';
             unmapPlane();
             std::exit(EXIT_FAILURE);
         }
 
         const size_t strideElems = strideBytes / sizeof(uint16_t);
+
         if (strideElems < activeWidth) {
             std::cerr << "Stride smaller than active width: strideElems="
                       << strideElems
                       << " activeWidth=" << activeWidth
-                      << std::endl;
+                      << '\n';
             unmapPlane();
             std::exit(EXIT_FAILURE);
         }
 
         const auto *mappedData = static_cast<const uint16_t *>(mapped);
-
-        std::cout << "[FrameBufferToUDP] SBGGR16 strideElems=" << strideElems
-                  << " expectedElems=" << expectedElems
-                  << " requiredBytes=" << requiredBytes
-                  << std::endl;
 
         for (size_t y = 0; y < activeHeight; ++y) {
             const uint16_t *srcRow = mappedData + y * strideElems;
@@ -1016,16 +1027,10 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
             std::cerr << "Stride smaller than packed RAW10 row size: strideBytes="
                       << strideBytes
                       << " packedRowBytes=" << packedRowBytes
-                      << std::endl;
+                      << '\n';
             unmapPlane();
             std::exit(EXIT_FAILURE);
         }
-
-        std::cout << "[FrameBufferToUDP] SBGGR10_CSI2P packedRowBytes="
-                  << packedRowBytes
-                  << " expectedElems=" << expectedElems
-                  << " requiredBytes=" << requiredBytes
-                  << std::endl;
 
         for (size_t y = 0; y < activeHeight; ++y) {
             const uint8_t *srcRow = mappedData + y * strideBytes;
@@ -1053,41 +1058,41 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
 
             if (x != activeWidth) {
                 std::cerr << "Active width must currently be divisible by 4 for RAW10 unpack: "
-                          << activeWidth << std::endl;
+                          << activeWidth << '\n';
                 unmapPlane();
                 std::exit(EXIT_FAILURE);
             }
         }
     }
 
-    {
-        auto [minIt, maxIt] = std::minmax_element(activeFrame.begin(), activeFrame.end());
-        std::cout << "[activeFrame] min=" << *minIt
-                  << " max=" << *maxIt << std::endl;
-    
+    const auto tMapCopyDone = std::chrono::steady_clock::now();
+
+    if constexpr (kWriteBayerDebugImages) {
         cv::Mat raw16(static_cast<int>(activeHeight),
                       static_cast<int>(activeWidth),
                       CV_16UC1,
                       activeFrame.data());
-    
+
         cv::Mat bgr_bg_16, bgr_gb_16, bgr_rg_16, bgr_gr_16;
         cv::Mat bgr_bg_8,  bgr_gb_8,  bgr_rg_8,  bgr_gr_8;
-    
+
         cv::cvtColor(raw16, bgr_bg_16, cv::COLOR_BayerBG2BGR);
         cv::cvtColor(raw16, bgr_gb_16, cv::COLOR_BayerGB2BGR);
         cv::cvtColor(raw16, bgr_rg_16, cv::COLOR_BayerRG2BGR);
         cv::cvtColor(raw16, bgr_gr_16, cv::COLOR_BayerGR2BGR);
-    
+
         bgr_bg_16.convertTo(bgr_bg_8, CV_8UC3, 1.0 / 256.0);
         bgr_gb_16.convertTo(bgr_gb_8, CV_8UC3, 1.0 / 256.0);
         bgr_rg_16.convertTo(bgr_rg_8, CV_8UC3, 1.0 / 256.0);
         bgr_gr_16.convertTo(bgr_gr_8, CV_8UC3, 1.0 / 256.0);
-    
+
         cv::imwrite("/tmp/bayer_bg.png", bgr_bg_8);
         cv::imwrite("/tmp/bayer_gb.png", bgr_gb_8);
         cv::imwrite("/tmp/bayer_rg.png", bgr_rg_8);
         cv::imwrite("/tmp/bayer_gr.png", bgr_gr_8);
     }
+
+    const auto tDebugDone = std::chrono::steady_clock::now();
 
     std::span<uint16_t> mappedDataSpan(activeFrame.data(), activeFrame.size());
 
@@ -1103,55 +1108,120 @@ void Aperture<n>::FrameBufferToUDP(const uint64_t frameNumber,
         }
     }
 
-    FrameBufferTransformation(mappedDataSpan, appliedGainMsg, sfdp, chunkThreads_);
+    sfdp_t sfdp(sf_);
+
+    FrameBufferTransformation(mappedDataSpan,
+                              appliedGainMsg,
+                              sfdp,
+                              chunkThreads_);
+
+    const auto tTransformDone = std::chrono::steady_clock::now();
 
     auto data = sfdp.TakeContiguousMemory();
 
     std::array<uint32_t, NUM_REGIONS> regionSizes{};
     size_t totalElems = 0;
-    for (size_t i = 0; i < NUM_REGIONS; ++i) {
-        regionSizes[i] = static_cast<uint32_t>(sfdp.RegionValidSize(i));
 
+    for (size_t i = 0; i < NUM_REGIONS; ++i) {
         const auto valid = sfdp.RegionValidSize(i);
-        std::cout << "[TX] region " << i
-                  << " valid=" << valid
-                  << " capacity=" << sfdp[i].size()
-                  << std::endl;
+        regionSizes[i] = static_cast<uint32_t>(valid);
         totalElems += valid;
     }
-
-    std::cout << "[TX] packed payload elems=" << data.size()
-              << " bytes=" << data.size() * sizeof(uint16_t)
-              << std::endl;
 
     if (data.size() != totalElems) {
         std::cerr << "[TX ERROR] packed element count mismatch: "
                   << "sum(validSizes)=" << totalElems
                   << " packed=" << data.size()
-                  << std::endl;
+                  << '\n';
         unmapPlane();
         std::exit(EXIT_FAILURE);
     }
 
-    frameSrv_.SubmitFrameOutput(
-        frameNumber,
-        frameSrv_.CreateFramePacket(
-            appliedGainMsg,
-            regionSizes,
-            std::move(data)
-        )
-    );
+    const auto tPackDone = std::chrono::steady_clock::now();
+
+    auto framePacket =
+        frameSrv_.CreateFramePacket(appliedGainMsg,
+                                    regionSizes,
+                                    std::move(data));
+
+    const auto tPacketDone = std::chrono::steady_clock::now();
+
+    frameSrv_.SubmitFrameOutput(frameNumber, std::move(framePacket));
+
+    const auto tSendDone = std::chrono::steady_clock::now();
 
     unmapPlane();
 
-    std::cout << "[GainApply] frame=" << frameNumber
-              << " r_gain=" << appliedGainMsg.r_gain
-              << " b_gain=" << appliedGainMsg.b_gain
-              << " r_gain_apply=" << appliedGainMsg.r_gain_apply
-              << " b_gain_apply=" << appliedGainMsg.b_gain_apply
-              << std::endl;
+    const auto tUnmapDone = std::chrono::steady_clock::now();
 
     fpsSent_.Tick();
+
+    if constexpr (kVerboseTxTiming) {
+        auto ms = [](const auto a, const auto b) {
+            return std::chrono::duration<double, std::milli>(b - a).count();
+        };
+
+        static std::mutex timingMutex;
+        static uint64_t timingFrames = 0;
+
+        static double validateMs = 0.0;
+        static double mapCopyMs = 0.0;
+        static double debugMs = 0.0;
+        static double transformMs = 0.0;
+        static double packMs = 0.0;
+        static double packetMs = 0.0;
+        static double sendMs = 0.0;
+        static double unmapMs = 0.0;
+        static double totalMs = 0.0;
+
+        static auto lastTimingPrint = std::chrono::steady_clock::now();
+
+        std::lock_guard<std::mutex> lock(timingMutex);
+
+        ++timingFrames;
+
+        validateMs  += ms(t0, tValidateDone);
+        mapCopyMs   += ms(tValidateDone, tMapCopyDone);
+        debugMs     += ms(tMapCopyDone, tDebugDone);
+        transformMs += ms(tDebugDone, tTransformDone);
+        packMs      += ms(tTransformDone, tPackDone);
+        packetMs    += ms(tPackDone, tPacketDone);
+        sendMs      += ms(tPacketDone, tSendDone);
+        unmapMs     += ms(tSendDone, tUnmapDone);
+        totalMs     += ms(t0, tUnmapDone);
+
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed =
+            std::chrono::duration<double>(now - lastTimingPrint).count();
+
+        if (elapsed >= 1.0) {
+            std::cout << "[TX timing] frames=" << timingFrames
+                      << " validate_ms=" << validateMs / timingFrames
+                      << " map_copy_ms=" << mapCopyMs / timingFrames
+                      << " debug_ms=" << debugMs / timingFrames
+                      << " transform_ms=" << transformMs / timingFrames
+                      << " pack_ms=" << packMs / timingFrames
+                      << " packet_ms=" << packetMs / timingFrames
+                      << " send_ms=" << sendMs / timingFrames
+                      << " unmap_ms=" << unmapMs / timingFrames
+                      << " total_ms=" << totalMs / timingFrames
+                      << '\n';
+
+            timingFrames = 0;
+
+            validateMs = 0.0;
+            mapCopyMs = 0.0;
+            debugMs = 0.0;
+            transformMs = 0.0;
+            packMs = 0.0;
+            packetMs = 0.0;
+            sendMs = 0.0;
+            unmapMs = 0.0;
+            totalMs = 0.0;
+
+            lastTimingPrint = now;
+        }
+    }
 }
 
 template<size_t n>
@@ -1424,7 +1494,7 @@ inline void Aperture<n>::ApplyWhiteBalanceToMosaic_RGGB(
     std::span<uint16_t> data,
     const GainMsg& gainMsg
 ){
-    log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_RGGB]");
+    //log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_RGGB]");
 
     const size_t elems = (region == 0) ? sf_.sf_t::nonOverlapFacet_t::size()
                                        : sf.size(region - 1);
@@ -1631,7 +1701,7 @@ constexpr void Aperture<n>::FrameBufferTransformation(InputT&& input,
                                                    sfdp_t& output,
                                                    const size_t numThreads)
 {
-    log_verbose("[Aperture::FrameBufferTransformation]");
+    //log_verbose("[Aperture::FrameBufferTransformation]");
 
     if (numThreads == 0) {
         std::cerr << "[FrameBufferTransformation] numThreads must be > 0" << std::endl;
@@ -1643,10 +1713,10 @@ constexpr void Aperture<n>::FrameBufferTransformation(InputT&& input,
     auto copyFacetToOutput = [&](size_t outIndex, auto& maskedOutput) {
         auto& dst = output[outIndex];
 
-        std::cout << "[FrameBufferTransformation] facet=" << outIndex
-                  << " masked.size()=" << maskedOutput.size()
-                  << " dst.capacity()=" << dst.size()
-                  << std::endl;
+        //std::cout << "[FrameBufferTransformation] facet=" << outIndex
+                  //<< " masked.size()=" << maskedOutput.size()
+                  //<< " dst.capacity()=" << dst.size()
+                  //<< std::endl;
 
         if (maskedOutput.size() > dst.size()) {
             std::cerr << "[FrameBufferTransformation] overflow for facet " << outIndex
@@ -1685,8 +1755,8 @@ constexpr void Aperture<n>::FrameBufferTransformation(InputT&& input,
         totalValid += output.RegionValidSize(i);
     }
     
-    std::cout << "[FrameBufferTransformation] total valid elements="
-              << totalValid << std::endl;
+    //std::cout << "[FrameBufferTransformation] total valid elements="
+              //<< totalValid << std::endl;
 }
 
 };//end namespace DASPi

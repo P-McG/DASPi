@@ -2182,90 +2182,209 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
     stitchConfig.outputWidth = 1456;
     stitchConfig.outputHeight = 1088;
     stitchConfig.blendPower = 4.0;
-    // Benchmark mode
-	stitchConfig.mode = StitchMode::ProjectionOnly;	
-	// Normal mode
-	// stitchConfig.mode = StitchMode::Blend;
+
+    // Benchmark mode: projection only.
+    stitchConfig.mode = StitchMode::ProjectionOnly;
+
+    // Full spherical stitching mode:
+    // stitchConfig.mode = StitchMode::Blend;
+
+    constexpr bool kVerboseStitchTiming = true;
+    constexpr bool kSaveDebugImagesEveryFrame = false;
+    constexpr bool kSaveOneShotDebugImages = true;
+    constexpr bool kSleepBetweenFrames = false;
+
+    using Clock = std::chrono::steady_clock;
 
     uint64_t frameNumber = 0;
-    constexpr bool kSaveDebugImages = true;
 
     cv::namedWindow("Stitched Panorama", cv::WINDOW_NORMAL);
     cv::resizeWindow("Stitched Panorama", 1200, 800);
 
     auto saveOneShotDebugImages = [&](const cv::Mat& sourceImage) {
         static bool savedSource = false;
-        if (!savedSource) {
+
+        if (!savedSource && !sourceImage.empty()) {
             cv::imwrite("/tmp/debug_camera0_source.png", sourceImage);
             savedSource = true;
         }
-
-        //static bool savedDebug = false;
-        //if (!savedDebug) {
-            //const cv::Mat footprint = RenderCameraFootprintDebug(cameras[0], 1456, 1088);
-            ////const cv::Mat maskOnly = RenderCameraMaskDebug(cameras[0], 1456, 1088);
-            ////const cv::Mat intersect = RenderCameraIntersectionDebug(cameras[0], 1456, 1088);
-
-            //const bool ok1 = cv::imwrite("/tmp/debug_camera0_footprint.png", footprint);
-            ////const bool ok2 = cv::imwrite("/tmp/debug_camera0_mask.png", maskOnly);
-            ////const bool ok3 = cv::imwrite("/tmp/debug_camera0_intersection.png", intersect);
-
-            ////std::cout << "[DEBUG] saved footprint=" << ok1
-                      ////<< " mask=" << ok2
-                      ////<< " intersection=" << ok3 << '\n';
-
-            //std::cout << "[DEBUG] nonzero footprint=" << cv::countNonZero(footprint)
-                      //<< " mask=" << cv::countNonZero(maskOnly)
-                      //<< " intersection=" << cv::countNonZero(intersect) << '\n';
-
-            //savedDebug = true;
-        //}
     };
 
+    auto ms = [](const auto a, const auto b) -> double {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+
+    struct StitchTimingStats {
+        uint64_t frames = 0;
+        uint64_t emptyPanoCount = 0;
+
+        double waitMs = 0.0;
+        double updateMs = 0.0;
+        double oneShotDebugMs = 0.0;
+        double setCamerasMs = 0.0;
+        double stitchMs = 0.0;
+        double debugSaveMs = 0.0;
+        double overlayMs = 0.0;
+        double displayMs = 0.0;
+        double totalActiveMs = 0.0;
+
+        Clock::time_point lastPrint = Clock::now();
+
+        void reset(Clock::time_point now)
+        {
+            frames = 0;
+            emptyPanoCount = 0;
+
+            waitMs = 0.0;
+            updateMs = 0.0;
+            oneShotDebugMs = 0.0;
+            setCamerasMs = 0.0;
+            stitchMs = 0.0;
+            debugSaveMs = 0.0;
+            overlayMs = 0.0;
+            displayMs = 0.0;
+            totalActiveMs = 0.0;
+
+            lastPrint = now;
+        }
+    };
+
+    StitchTimingStats stats{};
+
+    auto maybePrintTiming = [&]() {
+        if constexpr (!kVerboseStitchTiming) {
+            return;
+        }
+
+        const auto now = Clock::now();
+        const double elapsed =
+            std::chrono::duration<double>(now - stats.lastPrint).count();
+
+        if (elapsed < 1.0 || stats.frames == 0) {
+            return;
+        }
+
+        std::cout << "[Stitch timing]"
+                  << " frames=" << stats.frames
+                  << " fps=" << static_cast<double>(stats.frames) / elapsed
+                  << " empty_pano=" << stats.emptyPanoCount
+                  << " wait_ms=" << stats.waitMs / stats.frames
+                  << " update_ms=" << stats.updateMs / stats.frames
+                  << " one_shot_debug_ms=" << stats.oneShotDebugMs / stats.frames
+                  << " set_cameras_ms=" << stats.setCamerasMs / stats.frames
+                  << " stitch_ms=" << stats.stitchMs / stats.frames
+                  << " debug_save_ms=" << stats.debugSaveMs / stats.frames
+                  << " overlay_ms=" << stats.overlayMs / stats.frames
+                  << " display_ms=" << stats.displayMs / stats.frames
+                  << " total_active_ms=" << stats.totalActiveMs / stats.frames
+                  << '\n';
+
+        stats.reset(now);
+    };
+
+    /*
+     * Construct once.
+     *
+     * This precomputes world rays and face mappings once, then each loop
+     * updates the copied CameraView images with setCameras().
+     */
+    SphereStitcher stitcher(cameras, stitchConfig, rig);
+
     for (;;) {
+        const auto tLoopStart = Clock::now();
+
         if (!haveAnyFrames(liveCameras)) {
             std::this_thread::sleep_for(kNoFrameDelay);
+            maybePrintTiming();
             continue;
         }
+
+        const auto tHaveFrames = Clock::now();
 
         updateCameraImages(cameras, configs, liveCameras);
 
-        saveOneShotDebugImages(cameras[0].image);
+        const auto tUpdateDone = Clock::now();
 
-        SphereStitcher stitcher(cameras, stitchConfig, rig);
+        if constexpr (kSaveOneShotDebugImages) {
+            saveOneShotDebugImages(cameras[0].image);
+        }
 
-        cv::Mat validMask;
-        cv::Mat pano = stitcher.stitch(&validMask);
+        const auto tOneShotDebugDone = Clock::now();
+
+        stitcher.setCameras(cameras);
+
+        const auto tSetCamerasDone = Clock::now();
+
+		cv::Mat validMask;
+		cv::Mat pano;
+		
+		if (stitchConfig.mode == StitchMode::ProjectionOnly) {
+		    pano = stitcher.stitchProjectionOnlyFast(&validMask);
+		} else {
+		    pano = stitcher.stitch(&validMask);
+		}
+		
+		const auto tStitchDone = Clock::now();
+
+        ++stats.frames;
+        stats.waitMs += ms(tLoopStart, tHaveFrames);
+        stats.updateMs += ms(tHaveFrames, tUpdateDone);
+        stats.oneShotDebugMs += ms(tUpdateDone, tOneShotDebugDone);
+        stats.setCamerasMs += ms(tOneShotDebugDone, tSetCamerasDone);
+        stats.stitchMs += ms(tSetCamerasDone, tStitchDone);
 
         if (pano.empty()) {
-            std::cerr << "[RunStitchLoop] stitchFisheye returned empty pano\n";
-            std::this_thread::sleep_for(kStitchDelay);
+            ++stats.emptyPanoCount;
+
+            stats.debugSaveMs += 0.0;
+            stats.overlayMs += 0.0;
+            stats.displayMs += 0.0;
+            stats.totalActiveMs += ms(tHaveFrames, tStitchDone);
+
+            maybePrintTiming();
+
+            std::cerr << "[RunStitchLoop] stitch returned empty pano\n";
+
+            if constexpr (kSleepBetweenFrames) {
+                std::this_thread::sleep_for(kStitchDelay);
+            }
+
             continue;
         }
 
-        if (kSaveDebugImages) {
+        if constexpr (kSaveDebugImagesEveryFrame) {
             cv::imwrite("panorama.png", pano);
             if (!validMask.empty()) {
                 cv::imwrite("valid_mask.png", validMask);
             }
         }
 
+        const auto tDebugSaveDone = Clock::now();
+
         cv::Mat display = pano.clone();
         DrawPanoramaOverlay(display, frameNumber++, validMask);
 
-        //std::cout << "[GUI] rows=" << display.rows
-                  //<< " cols=" << display.cols
-                  //<< " empty=" << display.empty()
-                  //<< '\n';
+        const auto tOverlayDone = Clock::now();
 
         cv::imshow("Stitched Panorama", display);
-
         const int key = cv::waitKey(1);
+
+        const auto tDisplayDone = Clock::now();
+
+        stats.debugSaveMs += ms(tStitchDone, tDebugSaveDone);
+        stats.overlayMs += ms(tDebugSaveDone, tOverlayDone);
+        stats.displayMs += ms(tOverlayDone, tDisplayDone);
+        stats.totalActiveMs += ms(tHaveFrames, tDisplayDone);
+
+        maybePrintTiming();
+
         if (key == 27 || key == 'q' || key == 'Q') {
             break;
         }
 
-        std::this_thread::sleep_for(kStitchDelay);
+        if constexpr (kSleepBetweenFrames) {
+            std::this_thread::sleep_for(kStitchDelay);
+        }
     }
 
     cv::destroyWindow("Stitched Panorama");

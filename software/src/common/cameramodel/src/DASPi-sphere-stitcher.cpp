@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <stdexcept>
+#include <mutex>
 
 #include "DASPi-sphere-stitcher.h"
 //#include "DASPi-spherical-math.h"
@@ -101,6 +103,52 @@ Eigen::Vector2d WorldRayToEquirectPixel(const Eigen::Vector3d& ray,
     //return image.at<cv::Vec3b>(y, x);
 //}
 
+cv::Vec3b SampleBilinear8UC3Fast(const cv::Mat& img, float u, float v)
+{
+    if (img.empty() || img.type() != CV_8UC3) {
+        return cv::Vec3b(0, 0, 0);
+    }
+
+    const int x0 = static_cast<int>(std::floor(u));
+    const int y0 = static_cast<int>(std::floor(v));
+    const int x1 = x0 + 1;
+    const int y1 = y0 + 1;
+
+    if (x0 < 0 || y0 < 0 || x1 >= img.cols || y1 >= img.rows) {
+        return cv::Vec3b(0, 0, 0);
+    }
+
+    const float dx = u - static_cast<float>(x0);
+    const float dy = v - static_cast<float>(y0);
+
+    const cv::Vec3b* row0 = img.ptr<cv::Vec3b>(y0);
+    const cv::Vec3b* row1 = img.ptr<cv::Vec3b>(y1);
+
+    const cv::Vec3b c00 = row0[x0];
+    const cv::Vec3b c10 = row0[x1];
+    const cv::Vec3b c01 = row1[x0];
+    const cv::Vec3b c11 = row1[x1];
+
+    cv::Vec3b out{};
+
+    for (int c = 0; c < 3; ++c) {
+        const float top =
+            static_cast<float>(c00[c]) * (1.0f - dx) +
+            static_cast<float>(c10[c]) * dx;
+
+        const float bottom =
+            static_cast<float>(c01[c]) * (1.0f - dx) +
+            static_cast<float>(c11[c]) * dx;
+
+        const float value = top * (1.0f - dy) + bottom * dy;
+
+        out[c] = static_cast<std::uint8_t>(
+            std::clamp(value, 0.0f, 255.0f));
+    }
+
+    return out;
+}
+
 } // namespace
 
 SphereStitcher::SphereStitcher(std::vector<CameraView> cameras,
@@ -128,7 +176,9 @@ SphereStitcher::SphereStitcher(std::vector<CameraView> cameras,
             continue;
         }
 
-        const int existingIndex = faceToCameraIndex_[static_cast<std::size_t>(face)];
+        const int existingIndex =
+            faceToCameraIndex_[static_cast<std::size_t>(face)];
+
         if (existingIndex != -1) {
             std::cerr << "[SphereStitcher] warning: duplicate non-overlap stream for face "
                       << face
@@ -140,18 +190,9 @@ SphereStitcher::SphereStitcher(std::vector<CameraView> cameras,
         }
 
         faceToCameraIndex_[static_cast<std::size_t>(face)] = i;
-        
-        //for (size_t f = 0; f < faceToCameraIndex_.size(); ++f) {
-            //if (faceToCameraIndex_[f] >= 0) {
-                ////const auto& cam = cameras_[static_cast<size_t>(faceToCameraIndex_[f])];
-                ////std::cout << "[faceToCameraIndex] face=" << f
-                          ////<< " -> cam=" << faceToCameraIndex_[f]
-                          ////<< " module=" << cam.moduleIndex
-                          ////<< " stream=" << cam.localStreamIndex
-                          ////<< '\n';
-            //}
-        //}
     }
+
+    precomputeProjectionOnlyMap();
 }
 
 bool SphereStitcher::IsInsideMask(const cv::Mat& mask, const cv::Point2d& uv)
@@ -186,6 +227,93 @@ void SphereStitcher::precomputeWorldRays() {
         }
     }
 }
+
+void SphereStitcher::precomputeProjectionOnlyMap()
+{
+    projectionOnlyMap_.clear();
+
+    const std::size_t pixelCount =
+        static_cast<std::size_t>(config_.outputWidth) *
+        static_cast<std::size_t>(config_.outputHeight);
+
+    projectionOnlyMap_.resize(pixelCount);
+
+    for (int y = 0; y < config_.outputHeight; ++y) {
+        for (int x = 0; x < config_.outputWidth; ++x) {
+            const std::size_t idx = rayIndex(x, y);
+
+            ProjectionMapEntry entry{};
+            entry.cameraIndex = -1;
+
+            const Eigen::Vector3f& rayWorldF = worldRays_[idx];
+            const int owningFace = FindOwningFace(rayWorldF);
+
+            if (owningFace < 0 ||
+                owningFace >= static_cast<int>(faceToCameraIndex_.size())) {
+                projectionOnlyMap_[idx] = entry;
+                continue;
+            }
+
+            const int camIndex =
+                faceToCameraIndex_[static_cast<std::size_t>(owningFace)];
+
+            if (camIndex < 0 ||
+                camIndex >= static_cast<int>(cameras_.size())) {
+                projectionOnlyMap_[idx] = entry;
+                continue;
+            }
+
+            const auto& cam = cameras_[static_cast<std::size_t>(camIndex)];
+
+            if (cam.localStreamIndex != 0) {
+                projectionOnlyMap_[idx] = entry;
+                continue;
+            }
+
+            const Eigen::Vector3d rayWorld =
+                rayWorldF.cast<double>().normalized();
+
+            const Eigen::Vector3d rayCam =
+                cam.Rcw.transpose() * rayWorld;
+
+            if (rayCam.z() <= 0.0) {
+                projectionOnlyMap_[idx] = entry;
+                continue;
+            }
+
+            const ProjectionResult proj = cam.model->project(rayCam);
+
+            if (!proj.valid) {
+                projectionOnlyMap_[idx] = entry;
+                continue;
+            }
+
+            if (!cam.sensorValidMask.empty()) {
+                const int sx = static_cast<int>(std::floor(proj.uv.x));
+                const int sy = static_cast<int>(std::floor(proj.uv.y));
+
+                if (sx < 0 || sy < 0 ||
+                    sx >= cam.sensorValidMask.cols ||
+                    sy >= cam.sensorValidMask.rows) {
+                    projectionOnlyMap_[idx] = entry;
+                    continue;
+                }
+
+                if (cam.sensorValidMask.at<std::uint8_t>(sy, sx) == 0) {
+                    projectionOnlyMap_[idx] = entry;
+                    continue;
+                }
+            }
+
+            entry.cameraIndex = camIndex;
+            entry.u = static_cast<float>(proj.uv.x);
+            entry.v = static_cast<float>(proj.uv.y);
+
+            projectionOnlyMap_[idx] = entry;
+        }
+    }
+}
+
 cv::Mat SphereStitcher::stitch() const {
     return stitch(nullptr);
 }
@@ -946,4 +1074,151 @@ int SphereStitcher::FindSeamLocalEdgeForRay(const Eigen::Vector3d& ray_world,
     }
 
     return bestLocalEdge;
+}
+
+void SphereStitcher::setCameras(const std::vector<CameraView>& cameras)
+{
+    if (cameras.size() != cameras_.size()) {
+        throw std::runtime_error(
+            "SphereStitcher::setCameras: camera count changed");
+    }
+
+    cameras_ = cameras;
+}
+
+cv::Mat SphereStitcher::stitchProjectionOnlyFast(cv::Mat* validMask) const
+{
+    /*
+     * Fast path for StitchMode::ProjectionOnly.
+     *
+     * The expensive geometry has already been precomputed into
+     * projectionOnlyMap_:
+     *
+     *   output pixel -> source camera index + source uv
+     *
+     * Per frame, this function only samples the current camera images.
+     */
+
+    static std::once_flag printedFastPathOnce;
+
+    std::call_once(printedFastPathOnce, [&]() {
+        size_t validEntries = 0;
+
+        for (const auto& e : projectionOnlyMap_) {
+            if (e.cameraIndex >= 0) {
+                ++validEntries;
+            }
+        }
+
+        std::cout << "[SphereStitcher] using ProjectionOnly fast path"
+                  << " map_entries=" << projectionOnlyMap_.size()
+                  << " valid_entries=" << validEntries
+                  << " outputWidth=" << config_.outputWidth
+                  << " outputHeight=" << config_.outputHeight
+                  << '\n';
+    });
+
+    cv::Mat out(config_.outputHeight,
+                config_.outputWidth,
+                CV_8UC3,
+                config_.backgroundColor);
+
+    cv::Mat localValidMask;
+
+    if (validMask != nullptr) {
+        localValidMask = cv::Mat(config_.outputHeight,
+                                 config_.outputWidth,
+                                 CV_8UC1,
+                                 cv::Scalar(0));
+    }
+
+    const std::size_t expectedMapSize =
+        static_cast<std::size_t>(config_.outputWidth) *
+        static_cast<std::size_t>(config_.outputHeight);
+
+    if (projectionOnlyMap_.size() != expectedMapSize) {
+        std::cerr << "[SphereStitcher::stitchProjectionOnlyFast] bad projection map size: "
+                  << "projectionOnlyMap_.size()=" << projectionOnlyMap_.size()
+                  << " expected=" << expectedMapSize
+                  << '\n';
+
+        if (validMask != nullptr) {
+            *validMask = std::move(localValidMask);
+        }
+
+        return out;
+    }
+
+    if (cameras_.empty()) {
+        if (validMask != nullptr) {
+            *validMask = std::move(localValidMask);
+        }
+
+        return out;
+    }
+
+    /*
+     * Parallelizing over rows is safe:
+     * - each thread writes a different output row
+     * - each thread writes a different valid-mask row
+     * - camera images are read-only
+     */
+#pragma omp parallel for schedule(static)
+    for (int y = 0; y < config_.outputHeight; ++y) {
+        cv::Vec3b* dstRow = out.ptr<cv::Vec3b>(y);
+
+        std::uint8_t* maskRow = nullptr;
+        if (validMask != nullptr) {
+            maskRow = localValidMask.ptr<std::uint8_t>(y);
+        }
+
+        const std::size_t rowBase =
+            static_cast<std::size_t>(y) *
+            static_cast<std::size_t>(config_.outputWidth);
+
+        for (int x = 0; x < config_.outputWidth; ++x) {
+            const std::size_t idx = rowBase + static_cast<std::size_t>(x);
+
+            const ProjectionMapEntry& entry = projectionOnlyMap_[idx];
+
+            if (entry.cameraIndex < 0 ||
+                entry.cameraIndex >= static_cast<int>(cameras_.size())) {
+                continue;
+            }
+
+            const CameraView& cam =
+                cameras_[static_cast<std::size_t>(entry.cameraIndex)];
+
+            if (cam.image.empty() || cam.image.type() != CV_8UC3) {
+                continue;
+            }
+
+            const cv::Vec3b color =
+                SampleBilinear8UC3Fast(cam.image, entry.u, entry.v);
+
+            dstRow[x] = color;
+
+            if (maskRow != nullptr) {
+                /*
+                 * Mark valid only if the sample is inside bounds.
+                 * SampleBilinear8UC3Fast returns black on invalid bounds,
+                 * so repeat a cheap bounds check here for the mask.
+                 */
+                const int sx = static_cast<int>(std::floor(entry.u));
+                const int sy = static_cast<int>(std::floor(entry.v));
+
+                if (sx >= 0 && sy >= 0 &&
+                    sx + 1 < cam.image.cols &&
+                    sy + 1 < cam.image.rows) {
+                    maskRow[x] = 255;
+                }
+            }
+        }
+    }
+
+    if (validMask != nullptr) {
+        *validMask = std::move(localValidMask);
+    }
+
+    return out;
 }

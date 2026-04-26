@@ -230,17 +230,17 @@ Or with a project build script:
 ### Build + deploy:
 
 ```bash
-./build-aperturecomputemodule.sh
+~/DASPi/software/scripts/build-aperturecomputemodule.sh
 ```
 
 ### Build only:
 ```bash
-DEPLOY=0 ./build-aperturecomputemodule.sh
+DEPLOY=0 ~/DASPi/software/scripts/build-aperturecomputemodule.sh
 ```
 
 ### Fast rebuild, no sync, no deploy:
 ```bash
-SYNC_SYSROOT=0 DEPLOY=0 ./build-aperturecomputemodule.sh
+SYNC_SYSROOT=0 DEPLOY=0 ~/DASPi/software/scripts/build-aperturecomputemodule.sh
 ```
 ### Custom destination:
 ```bash

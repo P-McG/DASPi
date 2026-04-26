@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <cstdlib>
 #include <netdb.h>
+#include <sys/uio.h>
 
 #include "DASPi-logger.h"
 #include "DASPi-udp-srv.h"
@@ -177,7 +178,7 @@ void UDPSrv::printSockAddr(const sockaddr_in &addr) {
 
 uint32_t UDPSrv::SimpleChecksum(std::span<const std::byte> bytes) {
 #ifdef VERBATIUM_COUT
-    std::cout << "[UDPSrv::SimpleChecksum]" << std::endl;
+    //std::cout << "[UDPSrv::SimpleChecksum]" << std::endl;
 #endif
     uint32_t sum = 0;
     for (auto b : bytes) {
@@ -248,127 +249,158 @@ uint32_t UDPSrv::SimpleChecksum(std::span<const std::byte> bytes) {
 //}
 
 void UDPSrv::TransmitFrame(const FramePacket &data) {
-  log_verbose("[UDPSrv::TransmitFrame]");
+  //log_verbose("[UDPSrv::TransmitFrame]");
     SendFramePacketToClient(data);
 }
 
-void UDPSrv::SubmitFrameOutput(uint64_t frameNumber, FramePacket &&framePacket) {
+void UDPSrv::SubmitFrameOutput(uint64_t frameNumber, FramePacket&& framePacket)
+{
+    (void)frameNumber;
 
-    log_verbose("[UDPSrv::SubmitFrameOutput]");
-    
-    static size_t submitted = 0;
-    std::cout << "[SubmitFrameOutput] Frame #" << frameNumber << " submitted (" << ++submitted << " total)" << std::endl;
-
-
-    static uint64_t lastFrameNumber = 0;
-    static std::map<int64_t, size_t> disorderHistogram;  // offset -> count
-    
-    int64_t diff = 0;
-    if (lastFrameNumber != 0) {
-        diff = static_cast<int64_t>(frameNumber) - static_cast<int64_t>(lastFrameNumber);
-        if (diff != 1) {
-            std::cout << "[FrameOutOfOrder] Current: " << frameNumber
-                      << ", Last: " << lastFrameNumber
-                      << ", Delta: " << diff << std::endl;
-            disorderHistogram[diff]++;
-        }
-    }
-    lastFrameNumber = frameNumber;
-    
-    static int count = 0;
-    if (++count % 100 == 0) {
-        std::cout << "[DisorderHistogram] Last 100 frames:" << std::endl;
-        for (const auto& [diff, freq] : disorderHistogram) {
-            std::cout << "Delta" << diff << ": " << freq << std::endl;
-        }
-        disorderHistogram.clear();
-    }
-    
-    static int64_t maxDisorder = 0;
-    maxDisorder = std::max(maxDisorder, std::abs(diff));
-
-    //std::vector<uint8_t> payload(data, data + size);
-
-     {
-        std::lock_guard<std::mutex> lock(outputMutex_);
-    
-        // Check for frame rollback or unexpected reset
-        if (nextFrameInitialized_ && frameNumber < nextFrameToSend_) {
-            std::cout << "[WARN] Detected frame rollback from " << nextFrameToSend_
-                      << " to " << frameNumber << ". Resetting state." << std::endl;
-    
-            // Reset internal state
-            orderedFrames_.clear();
-            nextFrameToSend_ = frameNumber;
-            nextFrameInitialized_ = true;  // immediately reinitialize
-        }
-    
-        // Normal one-time init
-        if (!nextFrameInitialized_) {
-            nextFrameToSend_ = frameNumber;
-            nextFrameInitialized_ = true;
-            std::cout << "[Init] nextFrameToSend_ = " << nextFrameToSend_ << std::endl;
-        }
-    
-        orderedFrames_[frameNumber] = std::move(framePacket);
-        
-        std::cout << "[SubmitFrameOutput] Stored frame " << frameNumber
-                  << ", queue size = " << orderedFrames_.size() << std::endl;
-        
-        if (orderedFrames_.size() > 100)
-            orderedFrames_.erase(orderedFrames_.begin());
-    }
-    {
-        std::lock_guard<std::mutex> lock(outputMutex_);
-        TrySendFramesInOrder();
-    }
+    std::lock_guard<std::mutex> lock(outputMutex_);
+    TransmitFrame(framePacket);
 }
 
-bool UDPSrv::TrySendFramesInOrder() {
-    log_verbose("[USPSrv::TrySendFramesInOrder]");
+//void UDPSrv::SubmitFrameOutput(uint64_t frameNumber, FramePacket &&framePacket) {
+
+    ////log_verbose("[UDPSrv::SubmitFrameOutput]");
+    
+    ////static size_t submitted = 0;
+    ////std::cout << "[SubmitFrameOutput] Frame #" << frameNumber << " submitted (" << ++submitted << " total)" << std::endl;
+
+
+    //static uint64_t lastFrameNumber = 0;
+    //static std::map<int64_t, size_t> disorderHistogram;  // offset -> count
+    
+    //int64_t diff = 0;
+    //if (lastFrameNumber != 0) {
+        //diff = static_cast<int64_t>(frameNumber) - static_cast<int64_t>(lastFrameNumber);
+        //if (diff != 1) {
+            //std::cout << "[FrameOutOfOrder] Current: " << frameNumber
+                      //<< ", Last: " << lastFrameNumber
+                      //<< ", Delta: " << diff << std::endl;
+            //disorderHistogram[diff]++;
+        //}
+    //}
+    //lastFrameNumber = frameNumber;
+    
+    //static int count = 0;
+    //if (++count % 100 == 0) {
+        //std::cout << "[DisorderHistogram] Last 100 frames:" << std::endl;
+        //for (const auto& [diff, freq] : disorderHistogram) {
+            //std::cout << "Delta" << diff << ": " << freq << std::endl;
+        //}
+        //disorderHistogram.clear();
+    //}
+    
+    //static int64_t maxDisorder = 0;
+    //maxDisorder = std::max(maxDisorder, std::abs(diff));
+
+    ////std::vector<uint8_t> payload(data, data + size);
+
+     //{
+        //std::lock_guard<std::mutex> lock(outputMutex_);
+    
+        //// Check for frame rollback or unexpected reset
+        //if (nextFrameInitialized_ && frameNumber < nextFrameToSend_) {
+            //std::cout << "[WARN] Detected frame rollback from " << nextFrameToSend_
+                      //<< " to " << frameNumber << ". Resetting state." << std::endl;
+    
+            //// Reset internal state
+            //orderedFrames_.clear();
+            //nextFrameToSend_ = frameNumber;
+            //nextFrameInitialized_ = true;  // immediately reinitialize
+        //}
+    
+        //// Normal one-time init
+        //if (!nextFrameInitialized_) {
+            //nextFrameToSend_ = frameNumber;
+            //nextFrameInitialized_ = true;
+            //std::cout << "[Init] nextFrameToSend_ = " << nextFrameToSend_ << std::endl;
+        //}
+    
+        //orderedFrames_[frameNumber] = std::move(framePacket);
+        
+        ////std::cout << "[SubmitFrameOutput] Stored frame " << frameNumber
+                  ////<< ", queue size = " << orderedFrames_.size() << std::endl;
+        
+        //if (orderedFrames_.size() > 100)
+            //orderedFrames_.erase(orderedFrames_.begin());
+    //}
+    //{
+        //std::lock_guard<std::mutex> lock(outputMutex_);
+        //TrySendFramesInOrder();
+    //}
+//}
+
+bool UDPSrv::TrySendFramesInOrder()
+{
+    constexpr bool kVerboseTrySendFramesInOrder = false;
 
     bool didSend = false;
 
-    // Initialize frame counter if needed
-    if (nextFrameToSend_ == std::numeric_limits<uint64_t>::max() && !orderedFrames_.empty()) {
+    if (nextFrameToSend_ == std::numeric_limits<uint64_t>::max() &&
+        !orderedFrames_.empty()) {
         nextFrameToSend_ = orderedFrames_.begin()->first;
-        std::cout << "[TSFO] Resynced nextFrameToSend_ = " << nextFrameToSend_ << std::endl;
+
+        if constexpr (kVerboseTrySendFramesInOrder) {
+            std::cout << "[TSFO] Resynced nextFrameToSend_ = "
+                      << nextFrameToSend_ << '\n';
+        }
     }
 
     if (orderedFrames_.empty()) {
-        std::cout << "[TSFO] orderedFrames_ is empty — nothing to send" << std::endl;
         return false;
     }
 
-    std::cout << "[TrySendFramesInOrder] nextFrameToSend_ = " << nextFrameToSend_ << std::endl;
-    std::cout << "[TrySendFramesInOrder] orderedFrames_ keys: ";
-    for (const auto& kv : orderedFrames_)
-        std::cout << kv.first << " ";
-    std::cout << std::endl;
+    if constexpr (kVerboseTrySendFramesInOrder) {
+        std::cout << "[TrySendFramesInOrder] nextFrameToSend_ = "
+                  << nextFrameToSend_ << '\n';
+
+        std::cout << "[TrySendFramesInOrder] orderedFrames_ keys: ";
+        for (const auto& kv : orderedFrames_) {
+            std::cout << kv.first << ' ';
+        }
+        std::cout << '\n';
+    }
 
     constexpr size_t maxPerLoop = 100;
     constexpr size_t maxSkips = 1;
+
     size_t skips = 0;
     size_t sent = 0;
 
     while (true) {
         if (++sent > maxPerLoop) {
-            std::cout << "[TSFO] Reached max batch size (" << maxPerLoop << "), breaking." << std::endl;
+            if constexpr (kVerboseTrySendFramesInOrder) {
+                std::cout << "[TSFO] Reached max batch size ("
+                          << maxPerLoop << "), breaking.\n";
+            }
             break;
         }
 
         auto it = orderedFrames_.find(nextFrameToSend_);
+
         if (it == orderedFrames_.end()) {
-            std::cout << "[TSFO] Missing frame " << nextFrameToSend_
-                      << ", current map size: " << orderedFrames_.size() << std::endl;
+            if constexpr (kVerboseTrySendFramesInOrder) {
+                std::cout << "[TSFO] Missing frame " << nextFrameToSend_
+                          << ", current map size: "
+                          << orderedFrames_.size() << '\n';
+            }
 
             if (++skips >= maxSkips) {
-                std::cout << "[TSFO] Skipping missing frame " << nextFrameToSend_ << std::endl;
+                if constexpr (kVerboseTrySendFramesInOrder) {
+                    std::cout << "[TSFO] Skipping missing frame "
+                              << nextFrameToSend_ << '\n';
+                }
 
                 if (!orderedFrames_.empty() &&
                     orderedFrames_.begin()->first > nextFrameToSend_ + 100) {
-                    std::cout << "[TSFO] Large gap detected — fast-forwarding to "
-                              << orderedFrames_.begin()->first << std::endl;
+                    if constexpr (kVerboseTrySendFramesInOrder) {
+                        std::cout << "[TSFO] Large gap detected — fast-forwarding to "
+                                  << orderedFrames_.begin()->first << '\n';
+                    }
+
                     nextFrameToSend_ = orderedFrames_.begin()->first;
                 } else {
                     ++nextFrameToSend_;
@@ -378,11 +410,14 @@ bool UDPSrv::TrySendFramesInOrder() {
                 continue;
             }
 
-            break;  // allow frame to appear on next cycle
+            break;
         }
 
-        // Frame is ready → transmit
-        std::cout << "[TSFO] Sending frame with metadata" << nextFrameToSend_ << std::endl;
+        if constexpr (kVerboseTrySendFramesInOrder) {
+            std::cout << "[TSFO] Sending frame with metadata "
+                      << nextFrameToSend_ << '\n';
+        }
+
         TransmitFrame(it->second);
         orderedFrames_.erase(it);
 
@@ -391,8 +426,12 @@ bool UDPSrv::TrySendFramesInOrder() {
         didSend = true;
     }
 
-    if (didSend)
-        std::cout << "[TSFO] Finished sending " << sent << " frames this batch." << std::endl;
+    if constexpr (kVerboseTrySendFramesInOrder) {
+        if (didSend) {
+            std::cout << "[TSFO] Finished sending "
+                      << sent << " frames this batch.\n";
+        }
+    }
 
     return didSend;
 }
@@ -401,47 +440,63 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
 {
     const auto* payloadPtr =
         reinterpret_cast<const uint8_t*>(framePacket.payload_.data());
-    const size_t totalBytes = framePacket.payload_.size() * sizeof(uint16_t);
+
+    const size_t totalBytes =
+        framePacket.payload_.size() * sizeof(uint16_t);
 
     if (maxUdpPayloadBytes_ <= sizeof(UdpChunkHeader)) {
         std::cerr << "maxUdpPayloadBytes_ too small\n";
         return;
     }
 
-    const size_t maxChunkPayload = maxUdpPayloadBytes_ - sizeof(UdpChunkHeader);
+    const size_t maxChunkPayload =
+        maxUdpPayloadBytes_ - sizeof(UdpChunkHeader);
+
     const size_t chunkCount =
         (totalBytes + maxChunkPayload - 1) / maxChunkPayload;
 
+    if (chunkCount > std::numeric_limits<uint16_t>::max()) {
+        std::cerr << "[SendFramePacketToClient] chunkCount too large: "
+                  << chunkCount << '\n';
+        return;
+    }
+
     static std::atomic<uint32_t> nextFrameId{1};
+
     const uint32_t frameId =
         nextFrameId.fetch_add(1, std::memory_order_relaxed);
 
     FrameHeader fh{};
     fh.magic_ = MAGIC_NUMBER;
-    fh.gainMsg_ = framePacket.header_.gainMsg_;          // or gainMsg_ if that is truly your field
+    fh.gainMsg_ = framePacket.header_.gainMsg_;
     fh.payloadSize_ = static_cast<uint32_t>(totalBytes);
     fh.regionSizes_ = framePacket.header_.regionSizes_;
     fh.checksum_ = SimpleChecksum(std::as_bytes(std::span(framePacket.payload_)));
 
     size_t totalElems = 0;
-    for (size_t i = 0; i < fh.regionSizes_.size(); ++i) {
-        totalElems += fh.regionSizes_[i];
-        std::cout << "[TX-HDR] regionSizes_[" << i << "]=" << fh.regionSizes_[i] << std::endl;
+    for (const auto regionSize : fh.regionSizes_) {
+        totalElems += regionSize;
     }
 
-    std::cout << "[TX-HDR] totalElems=" << totalElems
-              << " payloadElems=" << framePacket.payload_.size()
-              << " payloadBytes=" << fh.payloadSize_
-              << std::endl;
-
     if (totalElems != framePacket.payload_.size()) {
-        std::cerr << "[TX-HDR] regionSizes sum does not match payload size" << std::endl;
+        std::cerr << "[TX-HDR] regionSizes sum does not match payload size: "
+                  << "totalElems=" << totalElems
+                  << " payloadElems=" << framePacket.payload_.size()
+                  << '\n';
         return;
     }
 
+    sockaddr_in dst{};
+    {
+        std::lock_guard<std::mutex> lock(cliaddrMtx_);
+        dst = cliaddr_;
+    }
+
     size_t offset = 0;
+
     for (size_t chunkId = 0; chunkId < chunkCount; ++chunkId) {
-        const size_t payloadBytes = std::min(maxChunkPayload, totalBytes - offset);
+        const size_t payloadBytes =
+            std::min(maxChunkPayload, totalBytes - offset);
 
         UdpChunkHeader hdr{};
         hdr.magic_        = htonl(MAGIC_NUMBER);
@@ -455,14 +510,33 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
             hdr.frameHeader_ = ToWireFrameHeader(fh);
         }
 
-        std::vector<uint8_t> datagram(sizeof(UdpChunkHeader) + payloadBytes);
-        std::memcpy(datagram.data(), &hdr, sizeof(UdpChunkHeader));
-        std::memcpy(datagram.data() + sizeof(UdpChunkHeader),
-                    payloadPtr + offset,
-                    payloadBytes);
+        iovec iov[2]{};
 
-        if (SendRawDatagramToClient(datagram.data(), datagram.size()) < 0) {
-            perror("sendto failed");
+        iov[0].iov_base = &hdr;
+        iov[0].iov_len = sizeof(UdpChunkHeader);
+
+        iov[1].iov_base = const_cast<uint8_t*>(payloadPtr + offset);
+        iov[1].iov_len = payloadBytes;
+
+        msghdr msg{};
+        msg.msg_name = &dst;
+        msg.msg_namelen = sizeof(dst);
+        msg.msg_iov = iov;
+        msg.msg_iovlen = 2;
+
+        const ssize_t sent = sendmsg(sockfd_, &msg, 0);
+
+        if (sent < 0) {
+            perror("sendmsg failed");
+            return;
+        }
+
+        const size_t expected =
+            sizeof(UdpChunkHeader) + payloadBytes;
+
+        if (static_cast<size_t>(sent) != expected) {
+            std::cerr << "[SendFramePacketToClient] partial datagram send: sent="
+                      << sent << " expected=" << expected << '\n';
             return;
         }
 
