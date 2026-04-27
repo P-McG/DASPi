@@ -351,35 +351,17 @@ cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
         for (int x = 0; x < config_.outputWidth; ++x) {
             const Eigen::Vector3f& ray_world = worldRays_[rayIndex(x, y)];
             const std::vector<Contribution> contributions = gatherContributions(ray_world);
-
+    
             if (contributions.empty()) {
                 out.at<cv::Vec3b>(y, x) = config_.backgroundColor;
                 continue;
             }
-
+    
             if (validMask != nullptr) {
                 localValidMask.at<std::uint8_t>(y, x) = 255;
             }
-
-            const int owningFace = FindOwningFace(ray_world);
-            const Contribution* selected = &contributions.front();
-
-            if (owningFace >= 0) {
-                for (const auto& c : contributions) {
-                    const auto& cam = cameras_[static_cast<std::size_t>(c.cameraIndex)];
-                    if (cam.faceIndex == owningFace) {
-                        selected = &c;
-                        break;
-                    }
-                }
-            }
-
-            const cv::Vec3d& color = selected->color;
-            out.at<cv::Vec3b>(y, x) = cv::Vec3b(
-                static_cast<std::uint8_t>(std::clamp(color[0], 0.0, 255.0)),
-                static_cast<std::uint8_t>(std::clamp(color[1], 0.0, 255.0)),
-                static_cast<std::uint8_t>(std::clamp(color[2], 0.0, 255.0))
-            );
+    
+            out.at<cv::Vec3b>(y, x) = resolvePixel(contributions);
         }
     }
 
@@ -488,16 +470,7 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
     std::vector<Contribution> out;
     out.reserve(cameras_.size());
 
-    int owningFace = -1;
-
-    for (int f = 0; f < static_cast<int>(rig_.faces.size()); ++f) {
-        const RigFace<3>& face = rig_.faces[static_cast<std::size_t>(f)];
-        if (spherical::IsRayInsideSphericalFace(ray_world, face, rig_.vertices)) {
-            owningFace = f;
-            break;
-        }
-    }
-
+    const int owningFace = FindOwningFace(ray_world_f);
     if (owningFace < 0) {
         return out;
     }
@@ -507,6 +480,7 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
                               Eigen::Vector3d& rayCamOut) -> bool
     {
         rayCamOut = cam.Rcw.transpose() * ray_world;
+
         if (rayCamOut.z() <= 0.0) {
             return false;
         }
@@ -542,17 +516,17 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
         Contribution c;
         c.cameraIndex = camIndex;
         c.uv = uv;
-        c.color = SampleBilinear(cameras_[static_cast<std::size_t>(camIndex)].image, uv);
+        c.color = SampleBilinear(
+            cameras_[static_cast<std::size_t>(camIndex)].image,
+            uv);
         c.weight = OpticalWeight(ray_cam, config_.blendPower);
         c.fromNonOverlap = fromNonOverlap;
+
         out.push_back(std::move(c));
     };
 
-    // Projection-only:
-    // Use the owning face's mapped non-overlap stream directly.
     if (config_.mode == StitchMode::ProjectionOnly) {
-        if (owningFace < 0 ||
-            owningFace >= static_cast<int>(faceToCameraIndex_.size())) {
+        if (owningFace >= static_cast<int>(faceToCameraIndex_.size())) {
             return out;
         }
 
@@ -564,7 +538,8 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
             return out;
         }
 
-        const auto& cam = cameras_[static_cast<std::size_t>(camIndex)];
+        const CameraView& cam =
+            cameras_[static_cast<std::size_t>(camIndex)];
 
         if (cam.localStreamIndex != 0) {
             return out;
@@ -572,15 +547,8 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
 
         cv::Point2d uv;
         Eigen::Vector3d ray_cam;
+
         if (!projectIfValid(cam, uv, ray_cam)) {
-            return out;
-        }
-
-        const bool inSensorValid =
-            cam.sensorValidMask.empty() ||
-            IsInsideMask(cam.sensorValidMask, uv);
-
-        if (!inSensorValid) {
             return out;
         }
 
@@ -589,11 +557,10 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
     }
 
     // Blend mode:
-    // 1) prefer non-overlap stream for owning face
-    bool foundNonOverlap = false;
-
+    // 1) Use the owning face's non-overlap stream if the ray lands
+    //    inside its non-overlap mask.
     for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
-        const auto& cam = cameras_[static_cast<std::size_t>(i)];
+        const CameraView& cam = cameras_[static_cast<std::size_t>(i)];
 
         if (cam.faceIndex != owningFace) {
             continue;
@@ -605,6 +572,7 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
 
         cv::Point2d uv;
         Eigen::Vector3d ray_cam;
+
         if (!projectIfValid(cam, uv, ray_cam)) {
             continue;
         }
@@ -618,45 +586,54 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
         }
 
         appendContribution(i, uv, ray_cam, true);
-        foundNonOverlap = true;
-        break;
-    }
-
-    if (foundNonOverlap) {
         return out;
     }
 
-    // 2) no interior hit: pick the owning face seam edge
+    // 2) No non-overlap hit. Find which local seam edge of the owning
+    //    face this ray belongs to.
     const int seamLocalEdge = FindSeamLocalEdgeForRay(ray_world, owningFace);
     if (seamLocalEdge < 0) {
         return out;
     }
 
-    // Find the matching neighbor face for that owning-face seam stream.
+    // 3) Find the owning face seam stream. This gives us the global
+    //    edgeIndex and the neighbor face. The global edgeIndex is the
+    //    reliable way to pair the two sides of the same physical seam.
     int seamNeighborFace = -1;
-    for (const auto& cam : cameras_) {
+    int seamEdgeIndex = -1;
+
+    for (const CameraView& cam : cameras_) {
         if (cam.faceIndex == owningFace &&
             cam.localStreamIndex > 0 &&
             cam.localEdgeIndex == seamLocalEdge) {
             seamNeighborFace = cam.neighborFaceIndex;
+            seamEdgeIndex = cam.edgeIndex;
             break;
         }
     }
 
-    // 3) collect exactly the seam-paired overlap streams
+    if (seamNeighborFace < 0 || seamEdgeIndex < 0) {
+        return out;
+    }
+
+    // 4) Collect the two overlap streams that share the same global edge:
+    //    - owning face side
+    //    - neighbor face side
     for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
-        const auto& cam = cameras_[static_cast<std::size_t>(i)];
+        const CameraView& cam = cameras_[static_cast<std::size_t>(i)];
+
+        if (cam.localStreamIndex <= 0) {
+            continue;
+        }
 
         const bool isOwningFaceSeamStream =
-            (cam.faceIndex == owningFace &&
-             cam.localStreamIndex > 0 &&
-             cam.localEdgeIndex == seamLocalEdge);
+            cam.faceIndex == owningFace &&
+            cam.edgeIndex == seamEdgeIndex;
 
         const bool isNeighborMatchingSeamStream =
-            (cam.faceIndex == seamNeighborFace &&
-             cam.localStreamIndex > 0 &&
-             cam.neighborFaceIndex == owningFace &&
-             cam.localEdgeIndex == seamLocalEdge);
+            cam.faceIndex == seamNeighborFace &&
+            cam.neighborFaceIndex == owningFace &&
+            cam.edgeIndex == seamEdgeIndex;
 
         if (!isOwningFaceSeamStream && !isNeighborMatchingSeamStream) {
             continue;
@@ -664,6 +641,7 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
 
         cv::Point2d uv;
         Eigen::Vector3d ray_cam;
+
         if (!projectIfValid(cam, uv, ray_cam)) {
             continue;
         }

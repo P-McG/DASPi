@@ -440,6 +440,18 @@ std::shared_ptr<ICameraModel> makeFisheyeModelForRotation(ImageRotation /*rotati
         size);
 }
 
+//Eigen::Matrix3d ApplyLocalCameraRoll(const Eigen::Matrix3d& Rcw,
+                                     //double rollDeg)
+//{
+    //const double rollRad = rollDeg * M_PI / 180.0;
+
+    //const Eigen::Matrix3d Rlocal =
+        //Eigen::AngleAxisd(rollRad, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+
+    //// Post-multiply = rotate around camera's own local axis.
+    //return Rcw * Rlocal;
+//}
+
 CameraView makeCameraView(const cv::Mat& image,
                           const cv::Mat& maskNonOverlap,
                           const cv::Mat& maskOverlap,
@@ -961,6 +973,7 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
                                         emptyMask,
                                         model,
                                         cfg.Rcw,
+                                        //cfg.localRollDeg,
                                         cfg.imageRotation);
 
         cam.faceIndex = cfg.faceIndex;
@@ -1340,6 +1353,17 @@ Eigen::Matrix3d CameraRollDeg(double deg)
     return Eigen::AngleAxisd(rad, Eigen::Vector3d::UnitZ()).toRotationMatrix();
 }
 
+double CameraLocalRollDegForModule(int module)
+{
+    switch (module) {
+    case 0: return 0.0;
+    case 1: return 180.0;
+    case 2: return 0.0;
+    case 3: return 0.0;
+    default: return 0.0;
+    }
+}
+
 template<std::size_t N>
 std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
 {
@@ -1459,16 +1483,14 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
             moduleFaceRotations[static_cast<std::size_t>(module)];
 
         const ImageRotation imageRotation = ImageRotation::None;
-        Eigen::Matrix3d Rimg = Eigen::Matrix3d::Identity();
+        //Eigen::Matrix3d Rimg = Eigen::Matrix3d::Identity();
 
-        const double module0CameraRollDeg{90.0};
-        if (module == 0) {
-            Rimg = CameraRollDeg(module0CameraRollDeg);
-        } else if (module == 1) {
-            Rimg = CameraRollDeg(module0CameraRollDeg + 180.0);
-        }
-
-        const Eigen::Matrix3d Rfinal = Rrig * Rface * Ralign * Rimg;
+		//const ImageRotation imageRotation = ImageRotation::None;
+		
+		const double cameraRollDeg = CameraLocalRollDegForModule(module);
+		const Eigen::Matrix3d Rimg = CameraRollDeg(cameraRollDeg);
+		
+		const Eigen::Matrix3d Rfinal = Rrig * Rface * Ralign * Rimg;
 
         const Eigen::Vector3d camRightWorld   = Rfinal.col(0);
         const Eigen::Vector3d camUpWorld      = Rfinal.col(1);
@@ -2184,10 +2206,10 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
     stitchConfig.blendPower = 4.0;
 
     // Benchmark mode: projection only.
-    stitchConfig.mode = StitchMode::ProjectionOnly;
+    //stitchConfig.mode = StitchMode::ProjectionOnly;
 
     // Full spherical stitching mode:
-    // stitchConfig.mode = StitchMode::Blend;
+     stitchConfig.mode = StitchMode::Blend;
 
     constexpr bool kVerboseStitchTiming = true;
     constexpr bool kSaveDebugImagesEveryFrame = false;
@@ -2491,7 +2513,7 @@ int main(int argc, char* argv[])
             .fy = 600.0,
             .cx = 728.0,
             .cy = 544.0,
-            .maxImageRadiusPx = 544
+            .maxImageRadiusPx = 728.0
         };
 
         const size_t totalCameras =

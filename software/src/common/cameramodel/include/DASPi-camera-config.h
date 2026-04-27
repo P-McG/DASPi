@@ -18,6 +18,9 @@ struct CameraConfig {
     // Physical camera pose: shared by all logical streams derived
     // from the same module-facing image.
     Eigen::Matrix3d Rcw{Eigen::Matrix3d::Identity()};
+    
+    // Extra local-axis roll correction around camera +Z.
+    double localRollDeg{0.0};
 
     // Which physical module produced this logical stream.
     int moduleIndex{-1};
