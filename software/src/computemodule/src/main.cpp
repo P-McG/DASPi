@@ -35,6 +35,7 @@
 #include "DASPi-mesh_topology.h"
 #include "DASPi-isocahedron_topology.h"
 #include "DASPi-camera_setup.h"
+#include "DASPi-flat_triangle_map.h"
 
 using namespace DASPi;
 
@@ -863,19 +864,187 @@ cv::Mat RenderCameraMaskDebug(const CameraView& cam,
 }
 
 [[maybe_unused]]
-cv::Mat WarpFlatMaskToCameraMask(const cv::Mat& flatMask,
-                                 const CameraView& cam,
-                                 const RigFace<3>& face,
-                                 const std::vector<Eigen::Vector3d>& vertices,
-                                 int cameraWidth,
-                                 int cameraHeight)
+bool Barycentric2D(const cv::Point2d& p,
+                   const cv::Point2d& a,
+                   const cv::Point2d& b,
+                   const cv::Point2d& c,
+                   Eigen::Vector3d& bary)
+{
+    const cv::Point2d v0 = b - a;
+    const cv::Point2d v1 = c - a;
+    const cv::Point2d v2 = p - a;
+
+    const double d00 = v0.dot(v0);
+    const double d01 = v0.dot(v1);
+    const double d11 = v1.dot(v1);
+    const double d20 = v2.dot(v0);
+    const double d21 = v2.dot(v1);
+
+    const double denom = d00 * d11 - d01 * d01;
+    if (std::abs(denom) <= 1e-12) {
+        return false;
+    }
+
+    const double v = (d11 * d20 - d01 * d21) / denom;
+    const double w = (d00 * d21 - d01 * d20) / denom;
+    const double u = 1.0 - v - w;
+
+    bary = Eigen::Vector3d(u, v, w);
+    return true;
+}
+
+bool BarycentricOnFace3D(const Eigen::Vector3d& rayWorld,
+                         const Eigen::Vector3d& a,
+                         const Eigen::Vector3d& b,
+                         const Eigen::Vector3d& c,
+                         Eigen::Vector3d& bary)
+{
+    const Eigen::Vector3d n = (b - a).cross(c - a);
+    const double denom = n.dot(rayWorld);
+
+    if (std::abs(denom) <= 1e-12) {
+        return false;
+    }
+
+    // Intersect ray from origin with the face plane.
+    const double t = n.dot(a) / denom;
+    if (t <= 0.0) {
+        return false;
+    }
+
+    const Eigen::Vector3d p = t * rayWorld;
+
+    const Eigen::Vector3d v0 = b - a;
+    const Eigen::Vector3d v1 = c - a;
+    const Eigen::Vector3d v2 = p - a;
+
+    const double d00 = v0.dot(v0);
+    const double d01 = v0.dot(v1);
+    const double d11 = v1.dot(v1);
+    const double d20 = v2.dot(v0);
+    const double d21 = v2.dot(v1);
+
+    const double denom2 = d00 * d11 - d01 * d01;
+    if (std::abs(denom2) <= 1e-12) {
+        return false;
+    }
+
+    const double v = (d11 * d20 - d01 * d21) / denom2;
+    const double w = (d00 * d21 - d01 * d20) / denom2;
+    const double u = 1.0 - v - w;
+
+    bary = Eigen::Vector3d(u, v, w);
+    return true;
+}
+
+FlatTriangleMap ExtractFlatTriangleMapFromMask(const cv::Mat& nonOverlapFlatMask)
+{
+    if (nonOverlapFlatMask.empty()) {
+        throw std::runtime_error("ExtractFlatTriangleMapFromMask: empty mask");
+    }
+
+    if (nonOverlapFlatMask.type() != CV_8UC1) {
+        throw std::runtime_error("ExtractFlatTriangleMapFromMask: mask must be CV_8UC1");
+    }
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(nonOverlapFlatMask.clone(),
+                     contours,
+                     cv::RETR_EXTERNAL,
+                     cv::CHAIN_APPROX_SIMPLE);
+
+    if (contours.empty()) {
+        throw std::runtime_error("ExtractFlatTriangleMapFromMask: no contours found");
+    }
+
+    auto largestIt = std::max_element(
+        contours.begin(),
+        contours.end(),
+        [](const auto& a, const auto& b) {
+            return cv::contourArea(a) < cv::contourArea(b);
+        });
+
+    std::vector<cv::Point> approx;
+    const double eps = 0.01 * cv::arcLength(*largestIt, true);
+    cv::approxPolyDP(*largestIt, approx, eps, true);
+
+    if (approx.size() != 3) {
+        throw std::runtime_error(
+            "ExtractFlatTriangleMapFromMask: expected 3 vertices, got " +
+            std::to_string(approx.size()));
+    }
+
+    std::array<cv::Point2d, 3> pts{};
+    for (std::size_t i = 0; i < 3; ++i) {
+        pts[i] = cv::Point2d(approx[i].x, approx[i].y);
+    }
+
+    // Current flat atlas shape:
+    //   one right/apex point
+    //   two left-side points: top-left and bottom-left
+    auto rightIt = std::max_element(
+        pts.begin(),
+        pts.end(),
+        [](const cv::Point2d& a, const cv::Point2d& b) {
+            return a.x < b.x;
+        });
+
+    const cv::Point2d rightApex = *rightIt;
+
+    std::vector<cv::Point2d> leftPts;
+    leftPts.reserve(2);
+
+    for (const cv::Point2d& p : pts) {
+        if (p != rightApex) {
+            leftPts.push_back(p);
+        }
+    }
+
+    if (leftPts.size() != 2) {
+        throw std::runtime_error("ExtractFlatTriangleMapFromMask: failed to split vertices");
+    }
+
+    const cv::Point2d leftTop =
+        (leftPts[0].y < leftPts[1].y) ? leftPts[0] : leftPts[1];
+
+    const cv::Point2d leftBottom =
+        (leftPts[0].y < leftPts[1].y) ? leftPts[1] : leftPts[0];
+
+    FlatTriangleMap map;
+
+    // Try this ordering first.
+    //
+    // This means:
+    //   bary.x -> leftTop
+    //   bary.y -> rightApex
+    //   bary.z -> leftBottom
+    map.p[0] = leftTop;
+    map.p[1] = rightApex;
+    map.p[2] = leftBottom;
+
+    std::cout << "[flat map ordered] "
+              << "p0=(" << map.p[0].x << "," << map.p[0].y << ") "
+              << "p1=(" << map.p[1].x << "," << map.p[1].y << ") "
+              << "p2=(" << map.p[2].x << "," << map.p[2].y << ")"
+              << '\n';
+
+    return map;
+}
+
+[[maybe_unused]]
+cv::Mat WarpFlatMaskToCameraMaskForward(const cv::Mat& flatMask,
+                                        const CameraView& cam,
+                                        const RigFace<3>& face,
+                                        const std::vector<Eigen::Vector3d>& vertices,
+                                        int cameraWidth,
+                                        int cameraHeight)
 {
     if (flatMask.empty()) {
         return {};
     }
 
     if (flatMask.type() != CV_8UC1) {
-        throw std::runtime_error("WarpFlatMaskToCameraMask: flatMask must be CV_8UC1");
+        throw std::runtime_error("WarpFlatMaskToCameraMaskForward: flatMask must be CV_8UC1");
     }
 
     cv::Mat cameraMask(cameraHeight, cameraWidth, CV_8UC1, cv::Scalar(0));
@@ -895,27 +1064,24 @@ cv::Mat WarpFlatMaskToCameraMask(const cv::Mat& flatMask,
                 continue;
             }
 
-            const double u = static_cast<double>(x) /
-                             static_cast<double>(std::max(1, flatMask.cols - 1));
-            const double v = static_cast<double>(y) /
-                             static_cast<double>(std::max(1, flatMask.rows - 1));
+            const double u =
+                static_cast<double>(x) /
+                static_cast<double>(std::max(1, flatMask.cols - 1));
 
-            // Convert flat mask pixel to barycentric-like triangle coordinate.
-            //
-            // This maps the rectangular flat mask area into the triangle:
-            // top/left style coordinates:
-            //   p = (1-u-v)*a + u*b + v*c
-            //
-            // Skip pixels outside the triangular domain.
-            if (u + v > 1.0) {
+            const double v =
+                static_cast<double>(y) /
+                static_cast<double>(std::max(1, flatMask.rows - 1));
+
+            const Eigen::Vector3d worldPoint =
+                (1.0 - u - v) * a + u * b + v * c;
+
+            const double n = worldPoint.norm();
+            if (n <= 1e-12) {
                 continue;
             }
 
-            const Eigen::Vector3d rayWorld =
-                ((1.0 - u - v) * a + u * b + v * c).normalized();
-
-            const Eigen::Vector3d rayCam =
-                cam.Rcw.transpose() * rayWorld;
+            const Eigen::Vector3d rayWorld = worldPoint / n;
+            const Eigen::Vector3d rayCam = cam.Rcw.transpose() * rayWorld;
 
             if (rayCam.z() <= 0.0) {
                 continue;
@@ -938,14 +1104,136 @@ cv::Mat WarpFlatMaskToCameraMask(const cv::Mat& flatMask,
         }
     }
 
-    // Forward projection can leave pinholes.
     cv::Mat dilated;
+    constexpr int kDilatePx = 2;
+    const int k = 2 * kDilatePx + 1;
+
     const cv::Mat kernel =
-        cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
+        cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(k, k));
+
     cv::dilate(cameraMask, dilated, kernel);
 
     return dilated;
 }
+
+[[maybe_unused]]
+cv::Mat WarpFlatMaskToCameraMaskInverse(const cv::Mat& flatMask,
+                                        const CameraView& cam,
+                                        const RigFace<3>& face,
+                                        const std::vector<Eigen::Vector3d>& vertices,
+                                        const FlatTriangleMap& flatMap,
+                                        int cameraWidth,
+                                        int cameraHeight)
+{
+    if (flatMask.empty()) {
+        return {};
+    }
+
+    if (flatMask.type() != CV_8UC1) {
+        throw std::runtime_error("WarpFlatMaskToCameraMaskInverse: flatMask must be CV_8UC1");
+    }
+
+    cv::Mat cameraMask(cameraHeight, cameraWidth, CV_8UC1, cv::Scalar(0));
+
+    const Eigen::Vector3d a =
+        vertices[static_cast<std::size_t>(face.indices[0])].normalized();
+    const Eigen::Vector3d b =
+        vertices[static_cast<std::size_t>(face.indices[1])].normalized();
+    const Eigen::Vector3d c =
+        vertices[static_cast<std::size_t>(face.indices[2])].normalized();
+
+    int unprojectFail = 0;
+    int baryFail = 0;
+    int outsideFlat = 0;
+    int flatMaskHit = 0;
+
+    for (int cy = 0; cy < cameraHeight; ++cy) {
+        for (int cx = 0; cx < cameraWidth; ++cx) {
+            Eigen::Vector3d rayCam;
+            if (!cam.model->unproject(cv::Point2d(cx, cy), rayCam)) {
+                ++unprojectFail;
+                continue;
+            }
+
+            if (rayCam.norm() <= 1e-12) {
+                ++unprojectFail;
+                continue;
+            }
+
+            rayCam.normalize();
+
+            // Camera ray -> world ray.
+            const Eigen::Vector3d rayWorld =
+                (cam.Rcw * rayCam).normalized();
+
+            Eigen::Vector3d bary;
+            if (!BarycentricOnFace3D(rayWorld, a, b, c, bary)) {
+                ++baryFail;
+                continue;
+            }
+
+            // Optional tolerance lets edge pixels survive numerical noise.
+            //constexpr double kBaryTol = 1e-4;
+            //if (bary.x() < -kBaryTol ||
+                //bary.y() < -kBaryTol ||
+                //bary.z() < -kBaryTol) {
+                //++outsideFlat;
+                //continue;
+            //}
+            constexpr double kMaxBaryAbs = 4.0;
+			if (std::abs(bary.x()) > kMaxBaryAbs ||
+			    std::abs(bary.y()) > kMaxBaryAbs ||
+			    std::abs(bary.z()) > kMaxBaryAbs) {
+			    ++outsideFlat;
+			    continue;
+			}
+
+            const cv::Point2d flatUv =
+                bary.x() * flatMap.p[0] +
+                bary.y() * flatMap.p[1] +
+                bary.z() * flatMap.p[2];
+
+            const int fx = static_cast<int>(std::round(flatUv.x));
+            const int fy = static_cast<int>(std::round(flatUv.y));
+
+            if (fx < 0 || fy < 0 ||
+                fx >= flatMask.cols || fy >= flatMask.rows) {
+                ++outsideFlat;
+                continue;
+            }
+
+            if (flatMask.at<std::uint8_t>(fy, fx) == 0) {
+                continue;
+            }
+
+            cameraMask.at<std::uint8_t>(cy, cx) = 255;
+            ++flatMaskHit;
+        }
+    }
+
+    // Small dilation only to cover sampling/rounding gaps.
+    cv::Mat dilated;
+    constexpr int kDilatePx = 2;
+    const int k = 2 * kDilatePx + 1;
+
+    const cv::Mat kernel =
+        cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(k, k));
+
+    cv::dilate(cameraMask, dilated, kernel);
+
+    std::cout << "[WarpFlatMaskToCameraMaskInverse] "
+              << "flatNZ=" << CountMaskNonZero(flatMask)
+              << " unprojectFail=" << unprojectFail
+              << " baryFail=" << baryFail
+              << " outsideFlat=" << outsideFlat
+              << " flatMaskHit=" << flatMaskHit
+              << " cameraMaskNZ=" << CountMaskNonZero(cameraMask)
+              << " dilatedNZ=" << CountMaskNonZero(dilated)
+              << '\n';
+
+    return dilated;
+}
+
 
 [[maybe_unused]]
 cv::Mat OverlayMaskOnImage(const cv::Mat& image, const cv::Mat& mask)
@@ -1112,7 +1400,8 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
                                         cfg.imageRotation);
 
         cam.faceIndex = cfg.faceIndex;
-        cam.sensorValidMask = cfg.sensorValidMask.clone();
+        //cam.sensorValidMask = cfg.sensorValidMask.clone();
+        cam.sensorValidMask = cv::Mat();
 
         cam.localStreamIndex  = cfg.localStreamIndex;
         cam.localEdgeIndex    = cfg.localEdgeIndex;
@@ -2002,6 +2291,7 @@ CameraSetup<N> makeCameraConfigs(int nApertureComputeModules)
     //}
 //}
 
+[[maybe_unused]]
 int CountNonZeroSafe(const cv::Mat& mask)
 {
     return mask.empty() ? 0 : cv::countNonZero(mask);
@@ -2009,26 +2299,46 @@ int CountNonZeroSafe(const cv::Mat& mask)
 
 void updateCameraImages(std::vector<CameraView>& cameras,
                         const std::vector<CameraConfig>& configs,
-                        std::vector<LiveCameraState>& liveCameras)
+                        std::vector<LiveCameraState>& liveCameras,
+                        const RigData<3>& rig)
 {
     if (cameras.size() != configs.size() ||
         cameras.size() != liveCameras.size()) {
         throw std::runtime_error("Camera/config/state size mismatch");
     }
 
+    static std::vector<bool> warpedMaskReady;
+    static std::vector<bool> savedRawFlatMask;
+    static std::vector<bool> flatMapReady;
+    static std::vector<FlatTriangleMap> flatMapsByModule;
+
+    if (warpedMaskReady.size() != cameras.size()) {
+        warpedMaskReady.assign(cameras.size(), false);
+    }
+
+    if (savedRawFlatMask.size() != cameras.size()) {
+        savedRawFlatMask.assign(cameras.size(), false);
+    }
+
+    std::size_t moduleCount = 0;
+    for (const CameraConfig& cfg : configs) {
+        if (cfg.moduleIndex >= 0) {
+            moduleCount =
+                std::max(moduleCount,
+                         static_cast<std::size_t>(cfg.moduleIndex + 1));
+        }
+    }
+
+    if (flatMapReady.size() != moduleCount) {
+        flatMapReady.assign(moduleCount, false);
+        flatMapsByModule.resize(moduleCount);
+    }
+
+    // First pass: update images and build flat triangle maps from stream 0.
     for (std::size_t i = 0; i < cameras.size(); ++i) {
         CameraView& cam = cameras[i];
         const CameraConfig& cfg = configs[i];
         LiveCameraState& live = liveCameras[i];
-
-        // Do NOT overwrite cam.maskNonOverlap or cam.maskOverlap here.
-        // Those masks should already be warped from flat facet space into
-        // camera-image space when the CameraView is created.
-        //
-        // If you still need a separate sensor-valid mask, keep it separate.
-        if (!live.validMask.empty()) {
-            cam.sensorValidMask = live.validMask.clone();
-        }
 
         cv::Mat latest;
         const bool haveFrame = tryGetLatestFrame(live.frame, latest);
@@ -2041,73 +2351,107 @@ void updateCameraImages(std::vector<CameraView>& cameras,
                       << " stream=" << cfg.localStreamIndex
                       << '\n';
         }
-    }
 
-    // Save debug overlays once, after camera images have arrived.
-    static bool wroteMaskDebug = false;
-    if (!wroteMaskDebug) {
-        bool wroteAny = false;
+        if (cfg.localStreamIndex == 0 &&
+            cfg.moduleIndex >= 0 &&
+            !live.validMask.empty()) {
+            const std::size_t moduleIndex =
+                static_cast<std::size_t>(cfg.moduleIndex);
 
-        for (std::size_t i = 0; i < cameras.size(); ++i) {
-            const CameraView& cam = cameras[i];
-            const CameraConfig& cfg = configs[i];
+            if (!flatMapReady[moduleIndex]) {
+                flatMapsByModule[moduleIndex] =
+                    ExtractFlatTriangleMapFromMask(live.validMask);
 
-            if (cam.image.empty()) {
-                continue;
+                flatMapReady[moduleIndex] = true;
+
+                std::cout << "[flat map] module=" << cfg.moduleIndex
+                          << " p0=(" << flatMapsByModule[moduleIndex].p[0].x
+                          << "," << flatMapsByModule[moduleIndex].p[0].y << ")"
+                          << " p1=(" << flatMapsByModule[moduleIndex].p[1].x
+                          << "," << flatMapsByModule[moduleIndex].p[1].y << ")"
+                          << " p2=(" << flatMapsByModule[moduleIndex].p[2].x
+                          << "," << flatMapsByModule[moduleIndex].p[2].y << ")"
+                          << '\n';
             }
-
-            if (!cam.maskOverlap.empty()) {
-                cv::imwrite("/tmp/" + cfg.name + "_overlap_overlay.png",
-                            OverlayMaskOnImage(cam.image, cam.maskOverlap));
-                wroteAny = true;
-            }
-
-            if (!cam.maskNonOverlap.empty()) {
-                cv::imwrite("/tmp/" + cfg.name + "_nonoverlap_overlay.png",
-                            OverlayMaskOnImage(cam.image, cam.maskNonOverlap));
-                wroteAny = true;
-            }
-        }
-
-        if (wroteAny) {
-            wroteMaskDebug = true;
         }
     }
 
-    static bool savedOnce = false;
-    if (!savedOnce && cameras.size() >= 8) {
-        cv::imwrite("/tmp/cam_0_nonoverlap.png", cameras[0].maskNonOverlap);
-        cv::imwrite("/tmp/cam_1_overlap.png",    cameras[1].maskOverlap);
-        cv::imwrite("/tmp/cam_2_overlap.png",    cameras[2].maskOverlap);
-        cv::imwrite("/tmp/cam_3_overlap.png",    cameras[3].maskOverlap);
+    // Second pass: warp masks once after flat maps are available.
+    for (std::size_t i = 0; i < cameras.size(); ++i) {
+        if (warpedMaskReady[i]) {
+            continue;
+        }
 
-        cv::imwrite("/tmp/cam_4_nonoverlap.png", cameras[4].maskNonOverlap);
-        cv::imwrite("/tmp/cam_5_overlap.png",    cameras[5].maskOverlap);
-        cv::imwrite("/tmp/cam_6_overlap.png",    cameras[6].maskOverlap);
-        cv::imwrite("/tmp/cam_7_overlap.png",    cameras[7].maskOverlap);
+        CameraView& cam = cameras[i];
+        const CameraConfig& cfg = configs[i];
+        LiveCameraState& live = liveCameras[i];
 
-        std::cout << "cam_0_nonoverlap NZ="
-                  << CountNonZeroSafe(cameras[0].maskNonOverlap) << '\n';
-        std::cout << "cam_1_overlap   NZ="
-                  << CountNonZeroSafe(cameras[1].maskOverlap) << '\n';
-        std::cout << "cam_2_overlap   NZ="
-                  << CountNonZeroSafe(cameras[2].maskOverlap) << '\n';
-        std::cout << "cam_3_overlap   NZ="
-                  << CountNonZeroSafe(cameras[3].maskOverlap) << '\n';
+        if (cfg.moduleIndex < 0 ||
+            static_cast<std::size_t>(cfg.moduleIndex) >= flatMapsByModule.size() ||
+            !flatMapReady[static_cast<std::size_t>(cfg.moduleIndex)]) {
+            continue;
+        }
 
-        std::cout << "cam_4_nonoverlap NZ="
-                  << CountNonZeroSafe(cameras[4].maskNonOverlap) << '\n';
-        std::cout << "cam_5_overlap   NZ="
-                  << CountNonZeroSafe(cameras[5].maskOverlap) << '\n';
-        std::cout << "cam_6_overlap   NZ="
-                  << CountNonZeroSafe(cameras[6].maskOverlap) << '\n';
-        std::cout << "cam_7_overlap   NZ="
-                  << CountNonZeroSafe(cameras[7].maskOverlap) << '\n';
+        if (live.validMask.empty()) {
+            continue;
+        }
 
-        savedOnce = true;
+        if (!savedRawFlatMask[i]) {
+            cv::imwrite("/tmp/raw_flat_" + cfg.name + ".png", live.validMask);
+            savedRawFlatMask[i] = true;
+
+            std::cout << "[raw flat mask] "
+                      << cfg.name
+                      << " stream=" << cfg.localStreamIndex
+                      << " nz=" << CountMaskNonZero(live.validMask)
+                      << '\n';
+        }
+
+        if (cfg.faceIndex < 0 ||
+            cfg.faceIndex >= static_cast<int>(rig.faces.size())) {
+            throw std::runtime_error(
+                "updateCameraImages: invalid faceIndex for " + cfg.name);
+        }
+
+        const RigFace<3>& face =
+            rig.faces[static_cast<std::size_t>(cfg.faceIndex)];
+
+        const FlatTriangleMap& flatMap =
+            flatMapsByModule[static_cast<std::size_t>(cfg.moduleIndex)];
+
+        cv::Mat warped =
+            WarpFlatMaskToCameraMaskInverse(live.validMask,
+                                            cam,
+                                            face,
+                                            rig.vertices,
+                                            flatMap,
+                                            kFrameWidth,
+                                            kFrameHeight);
+
+        cv::Mat zeroMask(kFrameHeight, kFrameWidth, CV_8UC1, cv::Scalar(0));
+
+        if (cfg.localStreamIndex == 0) {
+            cam.maskNonOverlap = std::move(warped);
+            cam.maskOverlap = zeroMask;
+        } else {
+            cam.maskNonOverlap = zeroMask;
+            cam.maskOverlap = std::move(warped);
+        }
+
+        // live.validMask is flat-space, so do not use it as sensorValidMask.
+        cam.sensorValidMask = cv::Mat();
+
+        warpedMaskReady[i] = true;
+
+        std::cout << "[mask warp inverse] "
+                  << cfg.name
+                  << " stream=" << cfg.localStreamIndex
+                  << " flatNZ=" << CountMaskNonZero(live.validMask)
+                  << " nonOverlapNZ=" << CountMaskNonZero(cam.maskNonOverlap)
+                  << " overlapNZ=" << CountMaskNonZero(cam.maskOverlap)
+                  << '\n';
     }
 }
-
 
 //void updateCameraImages(std::vector<CameraView>& cameras,
                         //const std::vector<CameraConfig>& configs,
@@ -2577,7 +2921,7 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
 
         const auto tHaveFrames = Clock::now();
 
-        updateCameraImages(cameras, configs, liveCameras);
+        updateCameraImages(cameras, configs, liveCameras, rig);
 
         const auto tUpdateDone = Clock::now();
 

@@ -39,6 +39,19 @@ public:
         };
 
         BuildTopologyAdjacency(topo);
+		
+		if (topo.edges.size() != 30) {
+			throw std::runtime_error("IcosahedronTopology expected 30 edges");
+		}
+		
+		for (std::size_t faceIndex = 0; faceIndex < topo.faceNeighborIndices.size(); ++faceIndex) {
+			for (int neighbor : topo.faceNeighborIndices[faceIndex]) {
+				if (neighbor < 0) {
+					throw std::runtime_error("IcosahedronTopology has boundary edge");
+				}
+			}
+		}
+		
         return topo;
     }
 

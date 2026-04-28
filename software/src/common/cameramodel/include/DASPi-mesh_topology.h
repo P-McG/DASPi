@@ -71,9 +71,10 @@ inline void BuildTopologyAdjacency(MeshTopology<N>& topo)
 
             auto it = edgeMap.find(key);
             if (it == edgeMap.end()) {
-                TopologyEdge topoEdge;
-                topoEdge.vertices = edge;
-                topoEdge.incidentFaces[0] = static_cast<int>(faceIndex);
+				TopologyEdge topoEdge;
+				topoEdge.vertices = edge;
+				topoEdge.incidentFaces[0] = static_cast<int>(faceIndex);
+				topoEdge.incidentLocalEdges[0] = static_cast<int>(localEdge);
 
                 const int edgeIndex = static_cast<int>(topo.edges.size());
                 topo.edges.push_back(topoEdge);
@@ -87,38 +88,66 @@ inline void BuildTopologyAdjacency(MeshTopology<N>& topo)
                     throw std::runtime_error("Non-manifold edge detected");
                 }
 
-                topoEdge.incidentFaces[1] = static_cast<int>(faceIndex);
-                topo.faceEdgeIndices[faceIndex][localEdge] = edgeIndex;
+				topoEdge.incidentFaces[1] = static_cast<int>(faceIndex);
+				topoEdge.incidentLocalEdges[1] = static_cast<int>(localEdge);
+				topo.faceEdgeIndices[faceIndex][localEdge] = edgeIndex;
             }
         }
     }
 
-    // Fill neighbors and adjacency records
-    for (std::size_t faceIndex = 0; faceIndex < topo.faces.size(); ++faceIndex) {
-        for (std::size_t localEdge = 0; localEdge < N; ++localEdge) {
-            const int edgeIndex = topo.faceEdgeIndices[faceIndex][localEdge];
-            if (edgeIndex < 0) {
-                throw std::runtime_error("Missing edge index while building adjacency");
-            }
-
-            const TopologyEdge& edge = topo.edges[static_cast<std::size_t>(edgeIndex)];
-            const int f0 = edge.incidentFaces[0];
-            const int f1 = edge.incidentFaces[1];
-
-            int neighbor = -1;
-            if (f0 == static_cast<int>(faceIndex)) {
-                neighbor = f1;
-            } else if (f1 == static_cast<int>(faceIndex)) {
-                neighbor = f0;
-            } else {
-                throw std::runtime_error("Edge incident face mismatch");
-            }
-
-            topo.faceNeighborIndices[faceIndex][localEdge] = neighbor;
-            topo.faceAdjacency[faceIndex][localEdge].neighborFaceIndex = neighbor;
-            topo.faceAdjacency[faceIndex][localEdge].edgeIndex = edgeIndex;
-        }
-    }
+	// Fill neighbors and adjacency records
+	for (std::size_t faceIndex = 0; faceIndex < topo.faces.size(); ++faceIndex) {
+		for (std::size_t localEdge = 0; localEdge < N; ++localEdge) {
+			const int edgeIndex = topo.faceEdgeIndices[faceIndex][localEdge];
+			if (edgeIndex < 0) {
+				throw std::runtime_error("Missing edge index while building adjacency");
+			}
+	
+			const TopologyEdge& edge =
+				topo.edges[static_cast<std::size_t>(edgeIndex)];
+	
+			const int f0 = edge.incidentFaces[0];
+			const int f1 = edge.incidentFaces[1];
+	
+			int neighbor = -1;
+			int neighborLocalEdge = -1;
+	
+			if (f0 == static_cast<int>(faceIndex)) {
+				neighbor = f1;
+				neighborLocalEdge = edge.incidentLocalEdges[1];
+			} else if (f1 == static_cast<int>(faceIndex)) {
+				neighbor = f0;
+				neighborLocalEdge = edge.incidentLocalEdges[0];
+			} else {
+				throw std::runtime_error("Edge incident face mismatch");
+			}
+	
+			topo.faceNeighborIndices[faceIndex][localEdge] = neighbor;
+	
+			auto& adjacency = topo.faceAdjacency[faceIndex][localEdge];
+			adjacency.neighborFaceIndex = neighbor;
+			adjacency.edgeIndex = edgeIndex;
+			adjacency.localEdgeIndex = static_cast<int>(localEdge);
+			adjacency.neighborLocalEdgeIndex = neighborLocalEdge;
+	
+			if (neighbor >= 0 && neighborLocalEdge >= 0) {
+				const auto& thisFace = topo.faces[faceIndex];
+				const auto& neighborFace =
+					topo.faces[static_cast<std::size_t>(neighbor)];
+	
+				const std::size_t thisA = thisFace[localEdge];
+				const std::size_t thisB = thisFace[(localEdge + 1) % N];
+	
+				const std::size_t neighborA =
+					neighborFace[static_cast<std::size_t>(neighborLocalEdge)];
+				const std::size_t neighborB =
+					neighborFace[(static_cast<std::size_t>(neighborLocalEdge) + 1) % N];
+	
+				adjacency.sameDirectionAsNeighbor =
+					(thisA == neighborA && thisB == neighborB);
+			}
+		}
+	}
 }
 
 } // namespace DASPi

@@ -85,6 +85,75 @@ Eigen::Vector2d WorldRayToEquirectPixel(const Eigen::Vector3d& ray,
     return Eigen::Vector2d(u * width, v * height);
 }
 
+int InferFlatOutsideEdgeForMask(const cv::Mat& mask,
+                                const FlatTriangleMap& flatMap)
+{
+    if (mask.empty()) {
+        return -1;
+    }
+
+    double sumU = 0.0;
+    double sumV = 0.0;
+    double sumW = 0.0;
+    int count = 0;
+
+    for (int y = 0; y < mask.rows; ++y) {
+        const auto* row = mask.ptr<std::uint8_t>(y);
+
+        for (int x = 0; x < mask.cols; ++x) {
+            if (row[x] == 0) {
+                continue;
+            }
+
+            Eigen::Vector3d bary;
+            if (!Barycentric2D(cv::Point2d(x, y),
+                               flatMap.p[0],
+                               flatMap.p[1],
+                               flatMap.p[2],
+                               bary)) {
+                continue;
+            }
+
+            sumU += bary.x();
+            sumV += bary.y();
+            sumW += bary.z();
+            ++count;
+        }
+    }
+
+    if (count == 0) {
+        return -1;
+    }
+
+    const double meanU = sumU / static_cast<double>(count);
+    const double meanV = sumV / static_cast<double>(count);
+    const double meanW = sumW / static_cast<double>(count);
+
+    int negativeIndex = 0;
+    double mostNegative = meanU;
+
+    if (meanV < mostNegative) {
+        mostNegative = meanV;
+        negativeIndex = 1;
+    }
+
+    if (meanW < mostNegative) {
+        mostNegative = meanW;
+        negativeIndex = 2;
+    }
+
+    // Negative barycentric coordinate tells which opposite edge the mask is beyond:
+    // negative z -> edge 0: p0 -> p1
+    // negative x -> edge 1: p1 -> p2
+    // negative y -> edge 2: p2 -> p0
+    switch (negativeIndex) {
+    case 2: return 0;
+    case 0: return 1;
+    case 1: return 2;
+    default: return -1;
+    }
+}
+
 //bool IsInsideImage(const cv::Mat& image, const cv::Point2d& uv)
 //{
     //return uv.x >= 0.0 && uv.x < static_cast<double>(image.cols) &&
@@ -585,34 +654,33 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
     // Blend mode:
     // 1) Use the owning face's non-overlap stream if the ray lands
     //    inside its non-overlap mask.
+    // No non-overlap hit. Try every overlap stream connected to the owning face.
     for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
         const CameraView& cam = cameras_[static_cast<std::size_t>(i)];
-
-        if (cam.faceIndex != owningFace) {
+    
+        if (cam.localStreamIndex <= 0) {
             continue;
         }
-
-        if (cam.localStreamIndex != 0) {
+    
+        const bool relatedToOwningFace =
+            cam.faceIndex == owningFace ||
+            cam.neighborFaceIndex == owningFace;
+    
+        if (!relatedToOwningFace) {
             continue;
         }
-
+    
         cv::Point2d uv;
         Eigen::Vector3d ray_cam;
-
+    
         if (!projectIfValid(cam, uv, ray_cam)) {
             continue;
         }
-
-        const bool inNonOverlap =
-            !cam.maskNonOverlap.empty() &&
-            IsInsideMask(cam.maskNonOverlap, uv);
-
-        if (!inNonOverlap) {
-            continue;
+    
+        if (!cam.maskOverlap.empty() &&
+            IsInsideMask(cam.maskOverlap, uv)) {
+            appendContribution(i, uv, ray_cam, false);
         }
-
-        appendContribution(i, uv, ray_cam, true);
-        return out;
     }
 
     // Debug blend mode:
