@@ -332,6 +332,8 @@ int SphereStitcher::FindOwningFace(const Eigen::Vector3f& ray_world_f) const
     return -1;
 }
 
+
+
 cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
 {
     cv::Mat out(config_.outputHeight,
@@ -347,22 +349,44 @@ cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
                                  cv::Scalar(0));
     }
 
+    static bool wroteContributionDebug = false;
+    cv::Mat contributionDebug;
+    if (!wroteContributionDebug) {
+        contributionDebug = cv::Mat(config_.outputHeight,
+                                    config_.outputWidth,
+                                    CV_8UC1,
+                                    cv::Scalar(0));
+    }
+
     for (int y = 0; y < config_.outputHeight; ++y) {
         for (int x = 0; x < config_.outputWidth; ++x) {
             const Eigen::Vector3f& ray_world = worldRays_[rayIndex(x, y)];
-            const std::vector<Contribution> contributions = gatherContributions(ray_world);
-    
+            const std::vector<Contribution> contributions =
+                gatherContributions(ray_world);
+
+            if (!wroteContributionDebug) {
+                contributionDebug.at<std::uint8_t>(y, x) =
+                    static_cast<std::uint8_t>(
+                        std::min<int>(255,
+                                      static_cast<int>(contributions.size()) * 80));
+            }
+
             if (contributions.empty()) {
                 out.at<cv::Vec3b>(y, x) = config_.backgroundColor;
                 continue;
             }
-    
+
             if (validMask != nullptr) {
                 localValidMask.at<std::uint8_t>(y, x) = 255;
             }
-    
+
             out.at<cv::Vec3b>(y, x) = resolvePixel(contributions);
         }
+    }
+
+    if (!wroteContributionDebug) {
+        cv::imwrite("/tmp/contribution_debug.png", contributionDebug);
+        wroteContributionDebug = true;
     }
 
     if (validMask != nullptr) {
@@ -525,6 +549,8 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
         out.push_back(std::move(c));
     };
 
+    // Projection-only:
+    // Use the owning face's mapped non-overlap stream directly.
     if (config_.mode == StitchMode::ProjectionOnly) {
         if (owningFace >= static_cast<int>(faceToCameraIndex_.size())) {
             return out;
@@ -589,36 +615,14 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
         return out;
     }
 
-    // 2) No non-overlap hit. Find which local seam edge of the owning
-    //    face this ray belongs to.
-    const int seamLocalEdge = FindSeamLocalEdgeForRay(ray_world, owningFace);
-    if (seamLocalEdge < 0) {
-        return out;
-    }
-
-    // 3) Find the owning face seam stream. This gives us the global
-    //    edgeIndex and the neighbor face. The global edgeIndex is the
-    //    reliable way to pair the two sides of the same physical seam.
-    int seamNeighborFace = -1;
-    int seamEdgeIndex = -1;
-
-    for (const CameraView& cam : cameras_) {
-        if (cam.faceIndex == owningFace &&
-            cam.localStreamIndex > 0 &&
-            cam.localEdgeIndex == seamLocalEdge) {
-            seamNeighborFace = cam.neighborFaceIndex;
-            seamEdgeIndex = cam.edgeIndex;
-            break;
-        }
-    }
-
-    if (seamNeighborFace < 0 || seamEdgeIndex < 0) {
-        return out;
-    }
-
-    // 4) Collect the two overlap streams that share the same global edge:
-    //    - owning face side
-    //    - neighbor face side
+    // Debug blend mode:
+    // No non-overlap hit. Try every overlap stream connected to the owning face.
+    //
+    // This intentionally bypasses FindSeamLocalEdgeForRay() and edgeIndex pairing.
+    // If this removes the black gaps in contribution_debug.png, the strict seam
+    // edge selection is too restrictive or choosing the wrong edge.
+    //
+    // If the gaps remain, the overlap masks do not cover those projected UVs.
     for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
         const CameraView& cam = cameras_[static_cast<std::size_t>(i)];
 
@@ -626,16 +630,11 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
             continue;
         }
 
-        const bool isOwningFaceSeamStream =
-            cam.faceIndex == owningFace &&
-            cam.edgeIndex == seamEdgeIndex;
+        const bool relatedToOwningFace =
+            cam.faceIndex == owningFace ||
+            cam.neighborFaceIndex == owningFace;
 
-        const bool isNeighborMatchingSeamStream =
-            cam.faceIndex == seamNeighborFace &&
-            cam.neighborFaceIndex == owningFace &&
-            cam.edgeIndex == seamEdgeIndex;
-
-        if (!isOwningFaceSeamStream && !isNeighborMatchingSeamStream) {
+        if (!relatedToOwningFace) {
             continue;
         }
 
@@ -1020,39 +1019,88 @@ int SphereStitcher::FindSeamLocalEdgeForRay(const Eigen::Vector3d& ray_world,
         return -1;
     }
 
-    const RigFace<3>& face = rig_.faces[static_cast<std::size_t>(faceIndex)];
+    const RigFace<3>& face =
+        rig_.faces[static_cast<std::size_t>(faceIndex)];
+
+    const Eigen::Vector3d ray = ray_world.normalized();
 
     double bestAbsDot = std::numeric_limits<double>::infinity();
     int bestLocalEdge = -1;
 
-    for (int i = 0; i < 3; ++i) {
-        const int j = (i + 1) % 3;
+    for (int localEdge = 0; localEdge < 3; ++localEdge) {
+        const std::size_t i0 =
+            face.indices[static_cast<std::size_t>(localEdge)];
 
-        const Eigen::Vector3d& a =
-            rig_.vertices[face.indices[static_cast<std::size_t>(i)]];
-        const Eigen::Vector3d& b =
-            rig_.vertices[face.indices[static_cast<std::size_t>(j)]];
+        const std::size_t i1 =
+            face.indices[static_cast<std::size_t>((localEdge + 1) % 3)];
+
+        const Eigen::Vector3d a =
+            rig_.vertices[static_cast<std::size_t>(i0)].normalized();
+
+        const Eigen::Vector3d b =
+            rig_.vertices[static_cast<std::size_t>(i1)].normalized();
 
         Eigen::Vector3d edgePlaneNormal = a.cross(b);
-        const double norm = edgePlaneNormal.norm();
-        if (norm < 1e-12) {
+
+        const double n = edgePlaneNormal.norm();
+        if (n <= 1e-12) {
             continue;
         }
-        edgePlaneNormal /= norm;
 
-        if (edgePlaneNormal.dot(face.lookDir) < 0.0) {
-            edgePlaneNormal = -edgePlaneNormal;
-        }
+        edgePlaneNormal /= n;
 
-        const double absD = std::abs(edgePlaneNormal.dot(ray_world));
-        if (absD < bestAbsDot) {
-            bestAbsDot = absD;
-            bestLocalEdge = i;
+        const double absDot = std::abs(edgePlaneNormal.dot(ray));
+
+        if (absDot < bestAbsDot) {
+            bestAbsDot = absDot;
+            bestLocalEdge = localEdge;
         }
     }
 
     return bestLocalEdge;
 }
+
+//int SphereStitcher::FindSeamLocalEdgeForRay(const Eigen::Vector3d& ray_world,
+                                            //int faceIndex) const
+//{
+    //if (faceIndex < 0 ||
+        //faceIndex >= static_cast<int>(rig_.faces.size())) {
+        //return -1;
+    //}
+
+    //const RigFace<3>& face = rig_.faces[static_cast<std::size_t>(faceIndex)];
+
+    //double bestAbsDot = std::numeric_limits<double>::infinity();
+    //int bestLocalEdge = -1;
+
+    //for (int i = 0; i < 3; ++i) {
+        //const int j = (i + 1) % 3;
+
+        //const Eigen::Vector3d& a =
+            //rig_.vertices[face.indices[static_cast<std::size_t>(i)]];
+        //const Eigen::Vector3d& b =
+            //rig_.vertices[face.indices[static_cast<std::size_t>(j)]];
+
+        //Eigen::Vector3d edgePlaneNormal = a.cross(b);
+        //const double norm = edgePlaneNormal.norm();
+        //if (norm < 1e-12) {
+            //continue;
+        //}
+        //edgePlaneNormal /= norm;
+
+        //if (edgePlaneNormal.dot(face.lookDir) < 0.0) {
+            //edgePlaneNormal = -edgePlaneNormal;
+        //}
+
+        //const double absD = std::abs(edgePlaneNormal.dot(ray_world));
+        //if (absD < bestAbsDot) {
+            //bestAbsDot = absD;
+            //bestLocalEdge = i;
+        //}
+    //}
+
+    //return bestLocalEdge;
+//}
 
 void SphereStitcher::setCameras(const std::vector<CameraView>& cameras)
 {

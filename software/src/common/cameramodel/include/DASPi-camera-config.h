@@ -48,7 +48,9 @@ struct CameraConfig {
     // Global topology edge index for the seam associated with this overlap stream.
     // For non-overlap, keep -1.
     int edgeIndex{-1};
-
+   
+    bool seamDirectionReversed{false};
+    
     bool IsNonOverlap() const
     {
         return localEdgeIndex < 0;

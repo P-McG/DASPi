@@ -452,6 +452,11 @@ std::shared_ptr<ICameraModel> makeFisheyeModelForRotation(ImageRotation /*rotati
     //return Rcw * Rlocal;
 //}
 
+int CountMaskNonZero(const cv::Mat& mask)
+{
+    return mask.empty() ? 0 : cv::countNonZero(mask);
+}
+
 CameraView makeCameraView(const cv::Mat& image,
                           const cv::Mat& maskNonOverlap,
                           const cv::Mat& maskOverlap,
@@ -459,6 +464,8 @@ CameraView makeCameraView(const cv::Mat& image,
                           const Eigen::Matrix3d& Rcw,
                           ImageRotation imageRotation)
 {
+	(void)imageRotation;
+	
     CameraView cam;
 
     // ✅ NO ROTATION
@@ -469,11 +476,11 @@ CameraView makeCameraView(const cv::Mat& image,
     cam.model = model;
     cam.Rcw = Rcw;
     
-    std::cout << "[makeCameraView] "
-          << "image=" << image.cols << "x" << image.rows
-          << " nonOverlap=" << cv::countNonZero(maskNonOverlap)
-          << " overlap=" << cv::countNonZero(maskOverlap)
-          << '\n';
+	std::cout << "[makeCameraView] "
+	          << "image=" << image.cols << "x" << image.rows
+	          << " nonOverlap=" << CountMaskNonZero(maskNonOverlap)
+	          << " overlap=" << CountMaskNonZero(maskOverlap)
+	          << '\n';
 
     return cam;
 }
@@ -822,6 +829,7 @@ cv::Mat RenderCameraFootprintDebug(const CameraView& cam,
     return out;
 }
 
+[[maybe_unused]]
 cv::Mat RenderCameraMaskDebug(const CameraView& cam,
                               int width,
                               int height)
@@ -853,15 +861,115 @@ cv::Mat RenderCameraMaskDebug(const CameraView& cam,
     return out;
 }
 
+cv::Mat WarpFlatMaskToCameraMask(const cv::Mat& flatMask,
+                                 const CameraView& cam,
+                                 const RigFace<3>& face,
+                                 const std::vector<Eigen::Vector3d>& vertices,
+                                 int cameraWidth,
+                                 int cameraHeight)
+{
+    if (flatMask.empty()) {
+        return {};
+    }
+
+    if (flatMask.type() != CV_8UC1) {
+        throw std::runtime_error("WarpFlatMaskToCameraMask: flatMask must be CV_8UC1");
+    }
+
+    cv::Mat cameraMask(cameraHeight, cameraWidth, CV_8UC1, cv::Scalar(0));
+
+    const Eigen::Vector3d a =
+        vertices[static_cast<std::size_t>(face.indices[0])].normalized();
+    const Eigen::Vector3d b =
+        vertices[static_cast<std::size_t>(face.indices[1])].normalized();
+    const Eigen::Vector3d c =
+        vertices[static_cast<std::size_t>(face.indices[2])].normalized();
+
+    for (int y = 0; y < flatMask.rows; ++y) {
+        const auto* row = flatMask.ptr<std::uint8_t>(y);
+
+        for (int x = 0; x < flatMask.cols; ++x) {
+            if (row[x] == 0) {
+                continue;
+            }
+
+            const double u = static_cast<double>(x) /
+                             static_cast<double>(std::max(1, flatMask.cols - 1));
+            const double v = static_cast<double>(y) /
+                             static_cast<double>(std::max(1, flatMask.rows - 1));
+
+            // Convert flat mask pixel to barycentric-like triangle coordinate.
+            //
+            // This maps the rectangular flat mask area into the triangle:
+            // top/left style coordinates:
+            //   p = (1-u-v)*a + u*b + v*c
+            //
+            // Skip pixels outside the triangular domain.
+            if (u + v > 1.0) {
+                continue;
+            }
+
+            const Eigen::Vector3d rayWorld =
+                ((1.0 - u - v) * a + u * b + v * c).normalized();
+
+            const Eigen::Vector3d rayCam =
+                cam.Rcw.transpose() * rayWorld;
+
+            if (rayCam.z() <= 0.0) {
+                continue;
+            }
+
+            const ProjectionResult proj = cam.model->project(rayCam);
+            if (!proj.valid) {
+                continue;
+            }
+
+            const int cx = static_cast<int>(std::round(proj.uv.x));
+            const int cy = static_cast<int>(std::round(proj.uv.y));
+
+            if (cx < 0 || cy < 0 ||
+                cx >= cameraMask.cols || cy >= cameraMask.rows) {
+                continue;
+            }
+
+            cameraMask.at<std::uint8_t>(cy, cx) = 255;
+        }
+    }
+
+    // Forward projection can leave pinholes.
+    cv::Mat dilated;
+    const cv::Mat kernel =
+        cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
+    cv::dilate(cameraMask, dilated, kernel);
+
+    return dilated;
+}
+
+[[maybe_unused]]
 cv::Mat OverlayMaskOnImage(const cv::Mat& image, const cv::Mat& mask)
 {
+    if (image.empty()) {
+        return {};
+    }
+
+    if (mask.empty()) {
+        return image.clone();
+    }
+
+    if (mask.rows != image.rows || mask.cols != image.cols || mask.type() != CV_8UC1) {
+        throw std::runtime_error("OverlayMaskOnImage: mask must be CV_8UC1 and same size as image");
+    }
+
     cv::Mat out = image.clone();
 
     for (int y = 0; y < out.rows; ++y) {
         for (int x = 0; x < out.cols; ++x) {
             if (mask.at<std::uint8_t>(y, x) != 0) {
-                out.at<cv::Vec3b>(y, x) =
-                    0.5 * out.at<cv::Vec3b>(y, x) + 0.5 * cv::Vec3b(0, 255, 255);
+                cv::Vec3b& px = out.at<cv::Vec3b>(y, x);
+                px = cv::Vec3b(
+                    static_cast<std::uint8_t>(0.5 * px[0] + 0.5 * 0),
+                    static_cast<std::uint8_t>(0.5 * px[1] + 0.5 * 255),
+                    static_cast<std::uint8_t>(0.5 * px[2] + 0.5 * 255));
             }
         }
     }
@@ -979,12 +1087,22 @@ void DebugCameraPose(const CameraView& cam, const std::string& name)
 }
 
 std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& configs,
-                                          const FisheyeParams& fisheyeParams)
+                                          const FisheyeParams& fisheyeParams,
+                                          const IcosahedronRig<3>& rig,
+                                          const std::vector<cv::Mat>& flatNonOverlapMasks,
+                                          const std::vector<cv::Mat>& flatOverlapMasks)
 {
+    if (configs.size() != flatNonOverlapMasks.size() ||
+        configs.size() != flatOverlapMasks.size()) {
+        throw std::runtime_error("CreateCameraViews: config/mask size mismatch");
+    }
+
     std::vector<CameraView> cameras;
     cameras.reserve(configs.size());
 
-    for (const auto& cfg : configs) {
+    for (std::size_t i = 0; i < configs.size(); ++i) {
+        const CameraConfig& cfg = configs[i];
+
         cv::Mat emptyImage(kFrameHeight, kFrameWidth, CV_8UC3, cv::Scalar(0, 0, 0));
         cv::Mat emptyMask(kFrameHeight, kFrameWidth, CV_8UC1, cv::Scalar(0));
 
@@ -998,7 +1116,6 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
                                         emptyMask,
                                         model,
                                         cfg.Rcw,
-                                        //cfg.localRollDeg,
                                         cfg.imageRotation);
 
         cam.faceIndex = cfg.faceIndex;
@@ -1008,7 +1125,37 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
         cam.localEdgeIndex    = cfg.localEdgeIndex;
         cam.neighborFaceIndex = cfg.neighborFaceIndex;
         cam.edgeIndex         = cfg.edgeIndex;
-        cam.moduleIndex = cfg.moduleIndex;
+        cam.moduleIndex       = cfg.moduleIndex;
+
+        if (cfg.faceIndex < 0 ||
+            cfg.faceIndex >= static_cast<int>(rig.faces.size())) {
+            throw std::runtime_error("CreateCameraViews: invalid faceIndex");
+        }
+
+        const RigFace<3>& face =
+            rig.faces[static_cast<std::size_t>(cfg.faceIndex)];
+
+        if (cfg.localStreamIndex == 0) {
+            cam.maskNonOverlap =
+                WarpFlatMaskToCameraMask(flatNonOverlapMasks[i],
+                                         cam,
+                                         face,
+                                         rig.vertices,
+                                         kFrameWidth,
+                                         kFrameHeight);
+
+            cam.maskOverlap = cv::Mat(kFrameHeight, kFrameWidth, CV_8UC1, cv::Scalar(0));
+        } else {
+            cam.maskNonOverlap = cv::Mat(kFrameHeight, kFrameWidth, CV_8UC1, cv::Scalar(0));
+
+            cam.maskOverlap =
+                WarpFlatMaskToCameraMask(flatOverlapMasks[i],
+                                         cam,
+                                         face,
+                                         rig.vertices,
+                                         kFrameWidth,
+                                         kFrameHeight);
+        }
 
         cameras.push_back(std::move(cam));
     }
@@ -1389,6 +1536,59 @@ double CameraLocalRollDegForModule(int module)
     }
 }
 
+template <std::size_t N>
+bool IsLocalEdgeReversedRelativeToTopology(const MeshTopology<N>& topo,
+                                           int faceIndex,
+                                           int localEdgeIndex,
+                                           int edgeIndex)
+{
+    if (faceIndex < 0 ||
+        faceIndex >= static_cast<int>(topo.faces.size())) {
+        throw std::runtime_error("faceIndex out of range");
+    }
+
+    if (localEdgeIndex < 0 ||
+        localEdgeIndex >= static_cast<int>(N)) {
+        throw std::runtime_error("localEdgeIndex out of range");
+    }
+
+    if (edgeIndex < 0 ||
+        edgeIndex >= static_cast<int>(topo.edges.size())) {
+        throw std::runtime_error("edgeIndex out of range");
+    }
+
+    const auto& faceVerts =
+        topo.faces[static_cast<std::size_t>(faceIndex)];
+
+    const std::size_t localV0 =
+        faceVerts[static_cast<std::size_t>(localEdgeIndex)];
+
+    const std::size_t localV1 =
+        faceVerts[(static_cast<std::size_t>(localEdgeIndex) + 1) % N];
+
+    const auto& edge =
+        topo.edges[static_cast<std::size_t>(edgeIndex)];
+
+    const std::size_t edgeV0 = edge.vertices[0];
+    const std::size_t edgeV1 = edge.vertices[1];
+
+    if (localV0 == edgeV0 && localV1 == edgeV1) {
+        return false;
+    }
+
+    if (localV0 == edgeV1 && localV1 == edgeV0) {
+        return true;
+    }
+
+    throw std::runtime_error("Local edge vertices do not match topology edge");
+}
+
+[[maybe_unused]]
+double SeamTForCamera(const CameraConfig& cfg, double t)
+{
+    return cfg.seamDirectionReversed ? (1.0 - t) : t;
+}
+
 template<std::size_t N>
 std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
 {
@@ -1499,11 +1699,6 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
     constexpr std::size_t kFaceEdgeCount = N;
     static_assert(kCamerasPerModule == kFaceEdgeCount + 1,
                   "Expected one non-overlap stream plus one overlap stream per face edge");
-                  
-	constexpr std::array<std::array<int, 3>, 2> kOverlapLocalEdgeByModule = {{
-	    {{0, 1, 2}},  // module 0: stream 1,2,3 -> localEdge 0,1,2
-	    {{0, 1, 2}}   // module 1: stream 1,2,3 -> localEdge 0,1,2
-	}};
 
     for (int module = 0; module < nApertureComputeModules; ++module) {
         const int faceIndex = moduleFaceIndices[static_cast<std::size_t>(module)];
@@ -1564,91 +1759,97 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
             cfg.localEdgeIndex = -1;
             cfg.neighborFaceIndex = -1;
             cfg.edgeIndex = -1;
+            cfg.seamDirectionReversed = false;
 
             configs.push_back(std::move(cfg));
         }
 
-        // Streams 1..N = overlap regions, one per local face edge
-        for (std::size_t localEdge = 0; localEdge < kFaceEdgeCount; ++localEdge) {
-            const int neighborFaceIndex =
-                topo.faceNeighborIndices[static_cast<std::size_t>(faceIndex)][localEdge];
+		// Streams 1..N = overlap regions, one per local face edge
+		for (std::size_t localEdge = 0; localEdge < kFaceEdgeCount; ++localEdge) {
+		    constexpr int kOverlapLocalEdgeOffset = 0; // try +1, then -1 if wrong
 
-            const int edgeIndex =
-                topo.faceEdgeIndices[static_cast<std::size_t>(faceIndex)][localEdge];
-
-            if (neighborFaceIndex < 0) {
-                throw std::runtime_error(
-                    "Missing neighborFaceIndex for face " + std::to_string(faceIndex) +
-                    " localEdge " + std::to_string(localEdge));
-            }
-
-            if (edgeIndex < 0) {
-                throw std::runtime_error(
-                    "Missing edgeIndex for face " + std::to_string(faceIndex) +
-                    " localEdge " + std::to_string(localEdge));
-            }
-
-            CameraConfig cfg;
-            cfg.name = "module_" + std::to_string(module) + "_cam_" +
-                       std::to_string(static_cast<int>(localEdge) + 1);
-            cfg.device = "";
-            cfg.sourceName = "";
-            cfg.imageRotation = imageRotation;
-            cfg.Rcw = Rfinal;          // same physical pose
-            cfg.moduleIndex = module;
-            cfg.sensorValidMask = cv::Mat();
-            cfg.faceIndex = faceIndex; // owning face remains the module face
-
-			const int streamLocalEdgeIndex =
-			    kOverlapLocalEdgeByModule[static_cast<std::size_t>(module)]
-			                             [static_cast<std::size_t>(localEdge)];
+			const int maskSlot = static_cast<int>(localEdge);
+			const int edgeCount = static_cast<int>(kFaceEdgeCount);
 			
-			const int streamNeighborFaceIndex =
-			    topo.faceNeighborIndices[static_cast<std::size_t>(faceIndex)]
-			                            [static_cast<std::size_t>(streamLocalEdgeIndex)];
-			
-			const int streamEdgeIndex =
-			    topo.faceEdgeIndices[static_cast<std::size_t>(faceIndex)]
-			                        [static_cast<std::size_t>(streamLocalEdgeIndex)];
-			
-			if (streamNeighborFaceIndex < 0) {
-			    throw std::runtime_error(
-			        "Missing neighborFaceIndex for face " + std::to_string(faceIndex) +
-			        " streamLocalEdgeIndex " + std::to_string(streamLocalEdgeIndex));
-			}
-			
-			if (streamEdgeIndex < 0) {
-			    throw std::runtime_error(
-			        "Missing edgeIndex for face " + std::to_string(faceIndex) +
-			        " streamLocalEdgeIndex " + std::to_string(streamLocalEdgeIndex));
-			}
-			
-			cfg.localStreamIndex = static_cast<int>(localEdge) + 1;
-			cfg.localEdgeIndex = streamLocalEdgeIndex;
-			cfg.neighborFaceIndex = streamNeighborFaceIndex;
-			cfg.edgeIndex = streamEdgeIndex;
-
-			const auto& faceVerts = topo.faces[static_cast<std::size_t>(faceIndex)];
-			
-			const std::size_t v0 =
-			    faceVerts[static_cast<std::size_t>(cfg.localEdgeIndex)];
-			
-			const std::size_t v1 =
-			    faceVerts[(static_cast<std::size_t>(cfg.localEdgeIndex) + 1) % N];
-			
-			std::cout << "[overlap edge vertices] "
+			const int localEdgeIndex =
+			    (maskSlot + kOverlapLocalEdgeOffset + edgeCount) % edgeCount;
+		
+		    const int neighborFaceIndex =
+		        topo.faceNeighborIndices[static_cast<std::size_t>(faceIndex)]
+		                                [static_cast<std::size_t>(localEdgeIndex)];
+		
+		    const int edgeIndex =
+		        topo.faceEdgeIndices[static_cast<std::size_t>(faceIndex)]
+		                            [static_cast<std::size_t>(localEdgeIndex)];
+		
+		    if (neighborFaceIndex < 0) {
+		        throw std::runtime_error(
+		            "Missing neighborFaceIndex for face " + std::to_string(faceIndex) +
+		            " localEdge " + std::to_string(localEdgeIndex));
+		    }
+		
+		    if (edgeIndex < 0) {
+		        throw std::runtime_error(
+		            "Missing edgeIndex for face " + std::to_string(faceIndex) +
+		            " localEdge " + std::to_string(localEdgeIndex));
+		    }
+		
+		    const bool seamDirectionReversed =
+		        IsLocalEdgeReversedRelativeToTopology<N>(
+		            topo,
+		            faceIndex,
+		            localEdgeIndex,
+		            edgeIndex);
+		
+		    const auto& faceVerts =
+		        topo.faces[static_cast<std::size_t>(faceIndex)];
+		
+		    const std::size_t localV0 =
+		        faceVerts[static_cast<std::size_t>(localEdgeIndex)];
+		
+		    const std::size_t localV1 =
+		        faceVerts[(static_cast<std::size_t>(localEdgeIndex) + 1) % N];
+		
+		    const auto& topoEdge =
+		        topo.edges[static_cast<std::size_t>(edgeIndex)];
+		
+		    CameraConfig cfg;
+		    cfg.name = "module_" + std::to_string(module) + "_cam_" +
+		               std::to_string(static_cast<int>(localEdge) + 1);
+		
+		    cfg.device = "";
+		    cfg.sourceName = "";
+		    cfg.imageRotation = imageRotation;
+		    cfg.Rcw = Rfinal;
+		    cfg.moduleIndex = module;
+		    cfg.sensorValidMask = cv::Mat();
+		    cfg.faceIndex = faceIndex;
+		
+			cfg.localStreamIndex = maskSlot + 1;
+			cfg.localEdgeIndex = localEdgeIndex;
+			cfg.neighborFaceIndex = neighborFaceIndex;
+			cfg.edgeIndex = edgeIndex;
+		    cfg.seamDirectionReversed = seamDirectionReversed;
+		
+			std::cout << "[camera config overlap] "
 			          << "cfg.name=" << cfg.name
 			          << " module=" << cfg.moduleIndex
 			          << " faceIndex=" << cfg.faceIndex
 			          << " localStreamIndex=" << cfg.localStreamIndex
-			          << " localEdgeIndex=" << cfg.localEdgeIndex
-			          << " globalEdge=(" << v0 << " -> " << v1 << ")"
+			          << " maskSlot=" << maskSlot
+			          << " edgeOffset=" << kOverlapLocalEdgeOffset
+			          << " mappedLocalEdgeIndex=" << cfg.localEdgeIndex
+			          << " localEdge=(" << localV0 << " -> " << localV1 << ")"
+			          << " topologyEdge=(" << topoEdge.vertices[0]
+			          << " -> " << topoEdge.vertices[1] << ")"
+			          << " seamDirectionReversed="
+			          << (cfg.seamDirectionReversed ? "true" : "false")
 			          << " neighborFaceIndex=" << cfg.neighborFaceIndex
 			          << " edgeIndex=" << cfg.edgeIndex
 			          << '\n';
-
-            configs.push_back(std::move(cfg));
-        }
+		
+		    configs.push_back(std::move(cfg));
+		}
     }
 
     return configs;
@@ -1829,6 +2030,11 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
     //}
 //}
 
+int CountNonZeroSafe(const cv::Mat& mask)
+{
+    return mask.empty() ? 0 : cv::countNonZero(mask);
+}
+
 void updateCameraImages(std::vector<CameraView>& cameras,
                         const std::vector<CameraConfig>& configs,
                         std::vector<LiveCameraState>& liveCameras)
@@ -1838,59 +2044,62 @@ void updateCameraImages(std::vector<CameraView>& cameras,
         throw std::runtime_error("Camera/config/state size mismatch");
     }
 
-    for (size_t i = 0; i < cameras.size(); ++i) {
+    for (std::size_t i = 0; i < cameras.size(); ++i) {
         CameraView& cam = cameras[i];
         const CameraConfig& cfg = configs[i];
         const LiveCameraState& live = liveCameras[i];
 
-        //std::cout << "[pre-frame] cam=" << i
-                  //<< " module=" << cam.moduleIndex
-                  //<< " stream=" << cfg.localStreamIndex
-                  //<< " liveValidNZ=" << cv::countNonZero(live.validMask)
-                  //<< '\n';
-
-        // Always update masks from live state, even if no frame arrived yet.
-        cv::Mat zeroMask;
+        // Do NOT overwrite cam.maskNonOverlap or cam.maskOverlap here.
+        // Those masks should already be warped from flat facet space into
+        // camera-image space when the CameraView is created.
+        //
+        // If you still need a separate sensor-valid mask, keep it separate.
         if (!live.validMask.empty()) {
-            zeroMask = cv::Mat::zeros(live.validMask.rows, live.validMask.cols, CV_8UC1);
             cam.sensorValidMask = live.validMask.clone();
-
-            if (cfg.localStreamIndex == 0) {
-                cam.maskNonOverlap = live.validMask.clone();
-                cam.maskOverlap = zeroMask;
-            } else {
-                cam.maskNonOverlap = zeroMask;
-                cam.maskOverlap = live.validMask.clone();
-            }
         }
 
         cv::Mat latest;
-        const bool haveFrame = tryGetLatestFrame(liveCameras[i].frame, latest);
-
-        //std::cout << "[frame] cam=" << i
-                  //<< " module=" << cam.moduleIndex
-                  //<< " stream=" << cfg.localStreamIndex
-                  //<< " haveFrame=" << haveFrame
-                  //<< '\n';
+        const bool haveFrame = tryGetLatestFrame(live.frame, latest);
 
         if (haveFrame) {
             cam.image = latest;
+        } else {
+            std::cout << "[WARN] Missing frame for cam=" << i
+                      << " module=" << cam.moduleIndex
+                      << " stream=" << cfg.localStreamIndex
+                      << '\n';
         }
-        else {
-		    std::cout << "[WARN] Missing frame for cam=" << i
-		              << " module=" << cam.moduleIndex
-		              << " stream=" << cfg.localStreamIndex << '\n';
-		}
+    }
 
-        //std::cout << "[updateCameraImages] cam=" << i
-                  //<< " module=" << cam.moduleIndex
-                  //<< " face=" << cam.faceIndex
-                  //<< " stream=" << cfg.localStreamIndex
-                  //<< " localEdge=" << cfg.localEdgeIndex
-                  //<< " neighborFace=" << cfg.neighborFaceIndex
-                  //<< " nonOverlapNZ=" << cv::countNonZero(cam.maskNonOverlap)
-                  //<< " overlapNZ=" << cv::countNonZero(cam.maskOverlap)
-                  //<< '\n';
+    // Save debug overlays once, after camera images have arrived.
+    static bool wroteMaskDebug = false;
+    if (!wroteMaskDebug) {
+        bool wroteAny = false;
+
+        for (std::size_t i = 0; i < cameras.size(); ++i) {
+            const CameraView& cam = cameras[i];
+            const CameraConfig& cfg = configs[i];
+
+            if (cam.image.empty()) {
+                continue;
+            }
+
+            if (!cam.maskOverlap.empty()) {
+                cv::imwrite("/tmp/" + cfg.name + "_overlap_overlay.png",
+                            OverlayMaskOnImage(cam.image, cam.maskOverlap));
+                wroteAny = true;
+            }
+
+            if (!cam.maskNonOverlap.empty()) {
+                cv::imwrite("/tmp/" + cfg.name + "_nonoverlap_overlay.png",
+                            OverlayMaskOnImage(cam.image, cam.maskNonOverlap));
+                wroteAny = true;
+            }
+        }
+
+        if (wroteAny) {
+            wroteMaskDebug = true;
+        }
     }
 
     static bool savedOnce = false;
@@ -1904,19 +2113,24 @@ void updateCameraImages(std::vector<CameraView>& cameras,
         cv::imwrite("/tmp/cam_5_overlap.png",    cameras[5].maskOverlap);
         cv::imwrite("/tmp/cam_6_overlap.png",    cameras[6].maskOverlap);
         cv::imwrite("/tmp/cam_7_overlap.png",    cameras[7].maskOverlap);
-        
-        cv::imwrite("/tmp/cam_1_overlap_overlay.png",
-            OverlayMaskOnImage(cam.image, cam.maskOverlap));
 
-        std::cout << "cam_0_nonoverlap NZ=" << cv::countNonZero(cameras[0].maskNonOverlap) << '\n';
-        std::cout << "cam_1_overlap   NZ=" << cv::countNonZero(cameras[1].maskOverlap) << '\n';
-        std::cout << "cam_2_overlap   NZ=" << cv::countNonZero(cameras[2].maskOverlap) << '\n';
-        std::cout << "cam_3_overlap   NZ=" << cv::countNonZero(cameras[3].maskOverlap) << '\n';
+        std::cout << "cam_0_nonoverlap NZ="
+                  << CountNonZeroSafe(cameras[0].maskNonOverlap) << '\n';
+        std::cout << "cam_1_overlap   NZ="
+                  << CountNonZeroSafe(cameras[1].maskOverlap) << '\n';
+        std::cout << "cam_2_overlap   NZ="
+                  << CountNonZeroSafe(cameras[2].maskOverlap) << '\n';
+        std::cout << "cam_3_overlap   NZ="
+                  << CountNonZeroSafe(cameras[3].maskOverlap) << '\n';
 
-        std::cout << "cam_4_nonoverlap NZ=" << cv::countNonZero(cameras[4].maskNonOverlap) << '\n';
-        std::cout << "cam_5_overlap   NZ=" << cv::countNonZero(cameras[5].maskOverlap) << '\n';
-        std::cout << "cam_6_overlap   NZ=" << cv::countNonZero(cameras[6].maskOverlap) << '\n';
-        std::cout << "cam_7_overlap   NZ=" << cv::countNonZero(cameras[7].maskOverlap) << '\n';
+        std::cout << "cam_4_nonoverlap NZ="
+                  << CountNonZeroSafe(cameras[4].maskNonOverlap) << '\n';
+        std::cout << "cam_5_overlap   NZ="
+                  << CountNonZeroSafe(cameras[5].maskOverlap) << '\n';
+        std::cout << "cam_6_overlap   NZ="
+                  << CountNonZeroSafe(cameras[6].maskOverlap) << '\n';
+        std::cout << "cam_7_overlap   NZ="
+                  << CountNonZeroSafe(cameras[7].maskOverlap) << '\n';
 
         savedOnce = true;
     }
