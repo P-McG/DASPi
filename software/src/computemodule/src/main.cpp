@@ -468,6 +468,12 @@ CameraView makeCameraView(const cv::Mat& image,
 
     cam.model = model;
     cam.Rcw = Rcw;
+    
+    std::cout << "[makeCameraView] "
+          << "image=" << image.cols << "x" << image.rows
+          << " nonOverlap=" << cv::countNonZero(maskNonOverlap)
+          << " overlap=" << cv::countNonZero(maskOverlap)
+          << '\n';
 
     return cam;
 }
@@ -816,33 +822,52 @@ cv::Mat RenderCameraFootprintDebug(const CameraView& cam,
     return out;
 }
 
-//cv::Mat RenderCameraMaskDebug(const CameraView& cam,
-                              //int width,
-                              //int height)
-//{
-    //cv::Mat out(height, width, CV_8UC1, cv::Scalar(0));
+cv::Mat RenderCameraMaskDebug(const CameraView& cam,
+                              int width,
+                              int height)
+{
+    cv::Mat out(height, width, CV_8UC1, cv::Scalar(0));
 
-    //for (int y = 0; y < height; ++y) {
-        //for (int x = 0; x < width; ++x) {
-            //const Eigen::Vector3d ray_world =
-                //spherical::EquirectPixelToRay(x, y, width, height);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const Eigen::Vector3d ray_world =
+                spherical::EquirectPixelToRay(x, y, width, height);
 
-            //ProjectionResult proj;
-            //if (!CameraProjectsToValidUv(cam, ray_world, proj)) {
-                //continue;
-            //}
+            ProjectionResult proj;
+            if (!CameraProjectsToValidUv(cam, ray_world, proj)) {
+                continue;
+            }
 
-            //const bool inNonOverlap = SphereStitcher::IsInsideMask(cam.maskNonOverlap, proj.uv);
-            //const bool inOverlap    = SphereStitcher::IsInsideMask(cam.maskOverlap, proj.uv);
+            const bool inNonOverlap =
+                SphereStitcher::IsInsideMask(cam.maskNonOverlap, proj.uv);
 
-            //if (inNonOverlap || inOverlap) {
-                //out.at<std::uint8_t>(y, x) = 255;
-            //}
-        //}
-    //}
+            const bool inOverlap =
+                SphereStitcher::IsInsideMask(cam.maskOverlap, proj.uv);
 
-    //return out;
-//}
+            if (inNonOverlap || inOverlap) {
+                out.at<std::uint8_t>(y, x) = 255;
+            }
+        }
+    }
+
+    return out;
+}
+
+cv::Mat OverlayMaskOnImage(const cv::Mat& image, const cv::Mat& mask)
+{
+    cv::Mat out = image.clone();
+
+    for (int y = 0; y < out.rows; ++y) {
+        for (int x = 0; x < out.cols; ++x) {
+            if (mask.at<std::uint8_t>(y, x) != 0) {
+                out.at<cv::Vec3b>(y, x) =
+                    0.5 * out.at<cv::Vec3b>(y, x) + 0.5 * cv::Vec3b(0, 255, 255);
+            }
+        }
+    }
+
+    return out;
+}
 
 //cv::Mat RenderCameraIntersectionDebug(const CameraView& cam,
                                       //int width,
@@ -1474,6 +1499,11 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
     constexpr std::size_t kFaceEdgeCount = N;
     static_assert(kCamerasPerModule == kFaceEdgeCount + 1,
                   "Expected one non-overlap stream plus one overlap stream per face edge");
+                  
+	constexpr std::array<std::array<int, 3>, 2> kOverlapLocalEdgeByModule = {{
+	    {{0, 1, 2}},  // module 0: stream 1,2,3 -> localEdge 0,1,2
+	    {{0, 1, 2}}   // module 1: stream 1,2,3 -> localEdge 0,1,2
+	}};
 
     for (int module = 0; module < nApertureComputeModules; ++module) {
         const int faceIndex = moduleFaceIndices[static_cast<std::size_t>(module)];
@@ -1569,18 +1599,53 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
             cfg.sensorValidMask = cv::Mat();
             cfg.faceIndex = faceIndex; // owning face remains the module face
 
-            cfg.localStreamIndex = static_cast<int>(localEdge) + 1;
-            cfg.localEdgeIndex = static_cast<int>(localEdge);
-            cfg.neighborFaceIndex = neighborFaceIndex;
-            cfg.edgeIndex = edgeIndex;
+			const int streamLocalEdgeIndex =
+			    kOverlapLocalEdgeByModule[static_cast<std::size_t>(module)]
+			                             [static_cast<std::size_t>(localEdge)];
+			
+			const int streamNeighborFaceIndex =
+			    topo.faceNeighborIndices[static_cast<std::size_t>(faceIndex)]
+			                            [static_cast<std::size_t>(streamLocalEdgeIndex)];
+			
+			const int streamEdgeIndex =
+			    topo.faceEdgeIndices[static_cast<std::size_t>(faceIndex)]
+			                        [static_cast<std::size_t>(streamLocalEdgeIndex)];
+			
+			if (streamNeighborFaceIndex < 0) {
+			    throw std::runtime_error(
+			        "Missing neighborFaceIndex for face " + std::to_string(faceIndex) +
+			        " streamLocalEdgeIndex " + std::to_string(streamLocalEdgeIndex));
+			}
+			
+			if (streamEdgeIndex < 0) {
+			    throw std::runtime_error(
+			        "Missing edgeIndex for face " + std::to_string(faceIndex) +
+			        " streamLocalEdgeIndex " + std::to_string(streamLocalEdgeIndex));
+			}
+			
+			cfg.localStreamIndex = static_cast<int>(localEdge) + 1;
+			cfg.localEdgeIndex = streamLocalEdgeIndex;
+			cfg.neighborFaceIndex = streamNeighborFaceIndex;
+			cfg.edgeIndex = streamEdgeIndex;
 
-            std::cout << "  [overlap stream] module=" << module
-                      << " localStream=" << cfg.localStreamIndex
-                      << " owningFace=" << faceIndex
-                      << " localEdge=" << cfg.localEdgeIndex
-                      << " neighborFace=" << neighborFaceIndex
-                      << " edgeIndex=" << edgeIndex
-                      << '\n';
+			const auto& faceVerts = topo.faces[static_cast<std::size_t>(faceIndex)];
+			
+			const std::size_t v0 =
+			    faceVerts[static_cast<std::size_t>(cfg.localEdgeIndex)];
+			
+			const std::size_t v1 =
+			    faceVerts[(static_cast<std::size_t>(cfg.localEdgeIndex) + 1) % N];
+			
+			std::cout << "[overlap edge vertices] "
+			          << "cfg.name=" << cfg.name
+			          << " module=" << cfg.moduleIndex
+			          << " faceIndex=" << cfg.faceIndex
+			          << " localStreamIndex=" << cfg.localStreamIndex
+			          << " localEdgeIndex=" << cfg.localEdgeIndex
+			          << " globalEdge=(" << v0 << " -> " << v1 << ")"
+			          << " neighborFaceIndex=" << cfg.neighborFaceIndex
+			          << " edgeIndex=" << cfg.edgeIndex
+			          << '\n';
 
             configs.push_back(std::move(cfg));
         }
@@ -1839,6 +1904,9 @@ void updateCameraImages(std::vector<CameraView>& cameras,
         cv::imwrite("/tmp/cam_5_overlap.png",    cameras[5].maskOverlap);
         cv::imwrite("/tmp/cam_6_overlap.png",    cameras[6].maskOverlap);
         cv::imwrite("/tmp/cam_7_overlap.png",    cameras[7].maskOverlap);
+        
+        cv::imwrite("/tmp/cam_1_overlap_overlay.png",
+            OverlayMaskOnImage(cam.image, cam.maskOverlap));
 
         std::cout << "cam_0_nonoverlap NZ=" << cv::countNonZero(cameras[0].maskNonOverlap) << '\n';
         std::cout << "cam_1_overlap   NZ=" << cv::countNonZero(cameras[1].maskOverlap) << '\n';
