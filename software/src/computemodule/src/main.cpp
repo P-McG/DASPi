@@ -34,6 +34,7 @@
 #include "DASPi-rig-geometry.h"
 #include "DASPi-mesh_topology.h"
 #include "DASPi-isocahedron_topology.h"
+#include "DASPi-camera_setup.h"
 
 using namespace DASPi;
 
@@ -861,6 +862,7 @@ cv::Mat RenderCameraMaskDebug(const CameraView& cam,
     return out;
 }
 
+[[maybe_unused]]
 cv::Mat WarpFlatMaskToCameraMask(const cv::Mat& flatMask,
                                  const CameraView& cam,
                                  const RigFace<3>& face,
@@ -1088,21 +1090,12 @@ void DebugCameraPose(const CameraView& cam, const std::string& name)
 
 std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& configs,
                                           const FisheyeParams& fisheyeParams,
-                                          const IcosahedronRig<3>& rig,
-                                          const std::vector<cv::Mat>& flatNonOverlapMasks,
-                                          const std::vector<cv::Mat>& flatOverlapMasks)
+                                          const RigData<3>& rig)
 {
-    if (configs.size() != flatNonOverlapMasks.size() ||
-        configs.size() != flatOverlapMasks.size()) {
-        throw std::runtime_error("CreateCameraViews: config/mask size mismatch");
-    }
-
     std::vector<CameraView> cameras;
     cameras.reserve(configs.size());
 
-    for (std::size_t i = 0; i < configs.size(); ++i) {
-        const CameraConfig& cfg = configs[i];
-
+    for (const auto& cfg : configs) {
         cv::Mat emptyImage(kFrameHeight, kFrameWidth, CV_8UC3, cv::Scalar(0, 0, 0));
         cv::Mat emptyMask(kFrameHeight, kFrameWidth, CV_8UC1, cv::Scalar(0));
 
@@ -1127,34 +1120,9 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
         cam.edgeIndex         = cfg.edgeIndex;
         cam.moduleIndex       = cfg.moduleIndex;
 
-        if (cfg.faceIndex < 0 ||
-            cfg.faceIndex >= static_cast<int>(rig.faces.size())) {
+        if (cam.faceIndex < 0 ||
+            cam.faceIndex >= static_cast<int>(rig.faces.size())) {
             throw std::runtime_error("CreateCameraViews: invalid faceIndex");
-        }
-
-        const RigFace<3>& face =
-            rig.faces[static_cast<std::size_t>(cfg.faceIndex)];
-
-        if (cfg.localStreamIndex == 0) {
-            cam.maskNonOverlap =
-                WarpFlatMaskToCameraMask(flatNonOverlapMasks[i],
-                                         cam,
-                                         face,
-                                         rig.vertices,
-                                         kFrameWidth,
-                                         kFrameHeight);
-
-            cam.maskOverlap = cv::Mat(kFrameHeight, kFrameWidth, CV_8UC1, cv::Scalar(0));
-        } else {
-            cam.maskNonOverlap = cv::Mat(kFrameHeight, kFrameWidth, CV_8UC1, cv::Scalar(0));
-
-            cam.maskOverlap =
-                WarpFlatMaskToCameraMask(flatOverlapMasks[i],
-                                         cam,
-                                         face,
-                                         rig.vertices,
-                                         kFrameWidth,
-                                         kFrameHeight);
         }
 
         cameras.push_back(std::move(cam));
@@ -1589,8 +1557,9 @@ double SeamTForCamera(const CameraConfig& cfg, double t)
     return cfg.seamDirectionReversed ? (1.0 - t) : t;
 }
 
+
 template<std::size_t N>
-std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
+CameraSetup<N> makeCameraConfigs(int nApertureComputeModules)
 {
     if (nApertureComputeModules <= 0) {
         throw std::runtime_error("nApertureComputeModules must be > 0");
@@ -1852,7 +1821,10 @@ std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
 		}
     }
 
-    return configs;
+    CameraSetup<N> setup;
+	setup.configs = std::move(configs);
+	setup.rig = rig;
+	return setup;
 }
 
 //std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
@@ -2047,7 +2019,7 @@ void updateCameraImages(std::vector<CameraView>& cameras,
     for (std::size_t i = 0; i < cameras.size(); ++i) {
         CameraView& cam = cameras[i];
         const CameraConfig& cfg = configs[i];
-        const LiveCameraState& live = liveCameras[i];
+        LiveCameraState& live = liveCameras[i];
 
         // Do NOT overwrite cam.maskNonOverlap or cam.maskOverlap here.
         // Those masks should already be warped from flat facet space into
@@ -2806,7 +2778,14 @@ int main(int argc, char* argv[])
         IcosahedronTopology topologyBuilder;
         const MeshTopology<3> topo = topologyBuilder.Make();
 
-        const RigData<3> rig = MakeRigData<3>(topo);
+ 		CameraSetup<3> cameraSetup =
+		    makeCameraConfigs<3>(options.nApertureComputeModules);
+		
+		const std::vector<CameraConfig>& configs = cameraSetup.configs;
+		const RigData<3>& rig = cameraSetup.rig;
+		
+		auto cameras = CreateCameraViews(configs, fisheyeParams, rig);
+       //const RigData<3> rig = MakeRigData<3>(topo);
         const auto& faces = rig.faces;
         const auto& vertices = rig.vertices;
 
@@ -2825,10 +2804,7 @@ int main(int argc, char* argv[])
 
         PrintRigAssignment(faces, moduleFaceIndices);
 
-        const std::vector<CameraConfig> configs =
-            makeCameraConfigs<3>(options.nApertureComputeModules);
 
-        auto cameras = CreateCameraViews(configs, fisheyeParams);
 
         if (configs.size() != totalCameras || cameras.size() != totalCameras) {
             throw std::runtime_error("Logical camera count mismatch during initialization");
