@@ -85,6 +85,7 @@ Eigen::Vector2d WorldRayToEquirectPixel(const Eigen::Vector3d& ray,
     return Eigen::Vector2d(u * width, v * height);
 }
 
+#if 0 // Disabled: unused helper depends on computemodule-only FlatTriangleMap/Barycentric2D.
 int InferFlatOutsideEdgeForMask(const cv::Mat& mask,
                                 const FlatTriangleMap& flatMap)
 {
@@ -153,6 +154,8 @@ int InferFlatOutsideEdgeForMask(const cv::Mat& mask,
     default: return -1;
     }
 }
+#endif
+
 
 //bool IsInsideImage(const cv::Mat& image, const cv::Point2d& uv)
 //{

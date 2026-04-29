@@ -15,6 +15,7 @@ public:
     {
         MeshTopology<3> topo;
 
+		// phi approx. 1.618033988749
         const double phi = (1.0 + std::sqrt(5.0)) * 0.5;
 
         topo.vertices = {

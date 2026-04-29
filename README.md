@@ -35,6 +35,7 @@ System starts automatically via systemd
 - [Camera Pipeline](docs/pipeline.md)
 - [UDP Protocol](docs/udp.md)
 - [PXE's node first time bring up checklist](docs/pxe_node_first_time_bring_up_checklist.md)
+- [Aperture rigs](docs/rigs.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## Quick Debug
