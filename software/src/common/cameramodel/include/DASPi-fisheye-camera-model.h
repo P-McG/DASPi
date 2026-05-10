@@ -8,6 +8,7 @@
 #include "DASPi-i-camera-model.h"
 #include "DASPi-projection-result.h"
 
+namespace DASPi{
 class FisheyeCameraModel : public ICameraModel {
 public:
     FisheyeCameraModel(double fx,
@@ -181,3 +182,4 @@ private:
     double maxImageRadiusPx_;
     cv::Size size_;
 };
+}//DASPi

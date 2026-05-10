@@ -7,6 +7,7 @@
 #include <Eigen/Dense>
 #include "DASPi-stitch_mode.h"
 
+namespace DASPi{
 struct SphereStitchConfig {
     int outputWidth = 4096;
     int outputHeight = 2048;
@@ -15,3 +16,4 @@ struct SphereStitchConfig {
     
     StitchMode mode = StitchMode::Blend;
 };
+}//DASPi

@@ -15,6 +15,7 @@
 #include "DASPi-contribution.h"
 #include "DASPi-rig-data.h"
 
+namespace DASPi{
 class SphereStitcher {
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -69,3 +70,4 @@ private:
 
     std::vector<ProjectionMapEntry> projectionOnlyMap_;
 };
+}//DASPi

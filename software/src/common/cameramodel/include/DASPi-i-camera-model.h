@@ -4,6 +4,7 @@
 #include <opencv2/core.hpp>
 #include "DASPi-projection-result.h"
 
+namespace DASPi{
 class ICameraModel {
 public:
     virtual ~ICameraModel() = default;
@@ -12,3 +13,4 @@ public:
 	virtual ProjectionResult project(const Eigen::Vector3d& ray) const = 0;
 	virtual cv::Size imageSize() const = 0;
 };
+}//DASPi

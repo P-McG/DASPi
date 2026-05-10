@@ -33,11 +33,12 @@
 #include "DASPi-rig-data.h"
 #include "DASPi-rig-geometry.h"
 #include "DASPi-mesh_topology.h"
-#include "DASPi-isocahedron_topology.h"
+#include "DASPi-icosahedron_topology.h"
 #include "DASPi-camera_setup.h"
 #include "DASPi-flat_triangle_map.h"
 
 using namespace DASPi;
+using namespace DASPi::spherical;
 
 namespace {
 

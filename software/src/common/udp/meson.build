@@ -1,7 +1,7 @@
 common_inc = include_directories('../include')
 udp_inc = include_directories('include')
 logger_inc = include_directories('../logger/include')
-shapefunction_inc = include_directories('../shapefunction/include')
+shapefunction_inc = include_directories('../topology/shapefunction/include')
 
 udp_lib = static_library(
   'udp',

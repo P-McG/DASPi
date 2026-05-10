@@ -15,15 +15,15 @@
 
 namespace DASPi{
 	
-	template<size_t n>
-	AperturePeer<n>::AperturePeer(in_addr_t clntAddr,
+	template<unsigned int FacetIndex>
+	AperturePeer<FacetIndex>::AperturePeer(in_addr_t clntAddr,
 										 int clntFramePort,
 										 int clntControlPort,
 										 in_addr_t srvAddr,
 										 int srvFramePort,
 										 int srvControlPort)
-		: sf_(),
-		  sfdp_(this->sf_),
+		: tpgy_(),
+		  tpgydp_(this->tpgy_),
 		  frameClnt_(clntAddr, clntFramePort, srvAddr, srvFramePort),
 		  controlClnt_(clntAddr, clntControlPort, srvAddr, srvControlPort)
 	{
@@ -31,7 +31,7 @@ namespace DASPi{
 		             " srvFramePort=" + std::to_string(srvFramePort) +
 		             " clntFramePort=" + std::to_string(clntFramePort);
 
-		for (size_t i = 0; i < n + 1; ++i) {
+		for (size_t i = 0; i < verticesPerFaceN_ + 1; ++i) {
 			std::string name = "output-" +  inAddrTToString(srvAddr) + "_" + std::to_string(i) + ".bayer";
 			files_[i] = std::make_unique<std::ofstream>(name, std::ios::binary);
 			if (!files_[i] || !files_[i]->is_open()) {
@@ -42,8 +42,8 @@ namespace DASPi{
 
 	//template<size_t n>
 	//AperturePeer<n>::AperturePeer(const in_addr_t clntAddr, const int port, const in_addr_t srvAddr)
-	    //:sf_{sf_t()},
-	    //sfdp_{sfdp_t(sf_)},
+	    //:tpgy_{tpgy_t()},
+	    //tpgydp_{tpgydp_t(tpgy_)},
 	    //udpClnt_{UDPClnt(clntAddr, port, srvAddr)}
 	//{
 	    //log_verbose("[AperturePeer]");
@@ -61,8 +61,8 @@ namespace DASPi{
 	     //log_verbose("~AperturePeer");
 	//}
 	
-	template<size_t n>
-	std::string AperturePeer<n>::inAddrTToString(in_addr_t ip) {
+	template<unsigned int FacetIndex>
+	std::string AperturePeer<FacetIndex>::inAddrTToString(in_addr_t ip) {
 	    char ipStr[INET_ADDRSTRLEN];
 	    struct in_addr addr;
 	    addr.s_addr = ip;
@@ -84,8 +84,8 @@ namespace DASPi{
 	    //return true;
 	//}        
 	     
-template<size_t n>
-bool AperturePeer<n>::RunFrameLoop()
+template<unsigned int FacetIndex>
+bool AperturePeer<FacetIndex>::RunFrameLoop()
 {
     constexpr bool kVerboseRunFrameLoopTiming = true;
     constexpr bool kWriteBuffersToFile = false;
@@ -208,17 +208,17 @@ bool AperturePeer<n>::RunFrameLoop()
      * This code is skipped while kRxOnlyBenchmark=true.
      */
 
-    this->sfdp_.ResetValidSizes();
+    this->tpgydp_.ResetValidSizes();
 
     size_t offset = 0;
 
     for (size_t i = 0; i < NUM_REGIONS; ++i) {
         const size_t count = frameHeader.regionSizes_[i];
 
-        if (count > this->sfdp_[i].size()) {
+        if (count > this->tpgydp_[i].size()) {
             std::cerr << "[RunFrameLoop] region overflow: i=" << i
                       << " count=" << count
-                      << " capacity=" << this->sfdp_[i].size()
+                      << " capacity=" << this->tpgydp_[i].size()
                       << '\n';
             ++rxStats_.rxFail;
             MaybePrintRxSummary();
@@ -237,12 +237,12 @@ bool AperturePeer<n>::RunFrameLoop()
         }
 
         if (count != 0) {
-            std::memcpy(this->sfdp_[i].data(),
+            std::memcpy(this->tpgydp_[i].data(),
                         maskedBuffer.data() + offset,
                         count * sizeof(uint16_t));
         }
 
-        this->sfdp_.SetRegionValidSize(i, count);
+        this->tpgydp_.SetRegionValidSize(i, count);
         offset += count;
     }
 
@@ -258,10 +258,10 @@ bool AperturePeer<n>::RunFrameLoop()
 
     const auto tUnpackDone = Clock::now();
 
-    std::array<std::vector<uint16_t>, n + 1> newBuffers;
+    std::array<std::vector<uint16_t>, verticesPerFaceN_ + 1> newBuffers;
 
     auto unmasked0 =
-        this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(this->sfdp_[0]);
+        this->tpgy_.tpgy_t::Space_t::SubSpace_t<FacetIndex>::SubSpace_t::FrameBufferUnmask(this->tpgydp_[0]);
 
     newBuffers[0].resize(unmasked0.size());
 
@@ -271,18 +271,30 @@ bool AperturePeer<n>::RunFrameLoop()
                     unmasked0.size() * sizeof(uint16_t));
     }
 
-    for (size_t i = 0; i < n_; ++i) {
-        auto unmasked =
-            this->sf_.FrameBufferUnmask(this->sfdp_[i + 1], i);
-
-        newBuffers[i + 1].resize(unmasked.size());
-
-        if (!unmasked.empty()) {
-            std::memcpy(newBuffers[i + 1].data(),
-                        unmasked.data(),
-                        unmasked.size() * sizeof(uint16_t));
-        }
-    }
+	using SphereSpace_t = typename tpgy_t::Space_t;
+	
+	using IcosahedronSpace_t =
+		typename SphereSpace_t::template FacetSpace_t<FacetIndex>;
+	
+	using OverlapSpace_t =
+		typename SphereSpace_t::template SubSpace_t<FacetIndex>;
+	
+	for (std::size_t i = 0; i < verticesPerFaceN_; ++i) {
+		auto unmasked =
+			IcosahedronTopology<IcosahedronSpace_t>
+				::template OverlapTopology<OverlapSpace_t>
+				::FrameBufferUnmask(this->tpgydp_[i + 1], i);
+	
+		newBuffers[i + 1].resize(unmasked.size());
+	
+		if (!unmasked.empty()) {
+			std::memcpy(
+				newBuffers[i + 1].data(),
+				unmasked.data(),
+				unmasked.size() * sizeof(uint16_t)
+			);
+		}
+	}
 
     const auto tUnmaskDone = Clock::now();
 
@@ -378,8 +390,8 @@ bool AperturePeer<n>::RunFrameLoop()
     return true;
 }
 	
-	template<size_t n>
-	bool AperturePeer<n>::BufferToFile()
+	template<unsigned int FacetIndex>
+	bool AperturePeer<FacetIndex>::BufferToFile()
 	{
 		log_verbose("[AperturePeer::BufferToFile]");
 		
@@ -387,7 +399,7 @@ bool AperturePeer<n>::RunFrameLoop()
 		++bufferToFileCount_;
 		const bool shouldLogBuffer = ((bufferToFileCount_ % 30) == 0);
 
-		for (size_t i = 0; i < n_ + 1; ++i) {
+		for (size_t i = 0; i < verticesPerFaceN_ + 1; ++i) {
 			log_verbose("Writing file:" + std::to_string(i));
 	
 			if (shouldLogBuffer) {
@@ -450,15 +462,15 @@ bool AperturePeer<n>::RunFrameLoop()
 		return true;
 	}
 	
-	template<size_t n>
-	bool AperturePeer<n>::CopyBuffer(size_t index, std::vector<uint16_t>& out) const
+	template<unsigned int FacetIndex>
+	bool AperturePeer<FacetIndex>::CopyBuffer(size_t index, std::vector<uint16_t>& out) const
 	{
 		constexpr bool kVerboseCopyBufferFailures = false;
 	
-		if (index >= n_ + 1) {
+		if (index >= verticesPerFaceN_ + 1) {
 			if constexpr (kVerboseCopyBufferFailures) {
 				std::cerr << "[CopyBuffer] index out of range: " << index
-						  << " (max valid: " << n_ << ")\n";
+						  << " (max valid: " << verticesPerFaceN_ << ")\n";
 			}
 			return false;
 		}
@@ -476,13 +488,13 @@ bool AperturePeer<n>::RunFrameLoop()
 		return true;
 	}
 	
-	template<size_t n>
-	int AperturePeer<n>::GetFramePort() {
+	template<unsigned int FacetIndex>
+	int AperturePeer<FacetIndex>::GetFramePort() {
 		return frameClnt_.clntPort_;
 	}
 	
-	template<size_t n>
-	int AperturePeer<n>::GetControlPort() {
+	template<unsigned int FacetIndex>
+	int AperturePeer<FacetIndex>::GetControlPort() {
 		return controlClnt_.clntPort_;
 	}
 	
@@ -586,14 +598,14 @@ bool AperturePeer<n>::RunFrameLoop()
 	//template<size_t n>
 	//inline void Aperture<n>::ApplyWhiteBalanceToMosaic_RGGB(
 		//size_t region,
-		//const sf_t& sf,
+		//const tpgy_t& tpgy,
 		//std::span<uint16_t> data,
 		//const GainMsg& gainMsg
 	//){
 		//log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_RGGB]");
 	
-		//const size_t elems = (region == 0) ? sf_.sf_t::nonOverlapFacet_t::size()
-										   //: sf.size(region - 1);
+		//const size_t elems = (region == 0) ? tpgy_.tpgy_t::nonOverlapFacet_t::size()
+										   //: tpgy.size(region - 1);
 		//if (data.size() != elems) {
 			//std::cerr << "[WB] size mismatch: data=" << data.size()
 					  //<< " expected=" << elems << "\n";
@@ -617,18 +629,18 @@ bool AperturePeer<n>::RunFrameLoop()
 		//};
 	
 		//const size_t maskedSize = (region == 0)
-			//? sf_.sf_t::nonOverlapFacet_t::size()
-			//: sf.indexLinearMaxs_[region - 1]->size();
+			//? tpgy_.tpgy_t::nonOverlapFacet_t::size()
+			//: tpgy.indexLinearMaxs_[region - 1]->size();
 	
 		//for (size_t i = 0; i < maskedSize; ++i) {
-			//typename sf_t::GlobalLinearShapeFunction_t::Index globalIndex{
+			//typename tpgy_t::GlobalLinearShapeFunction_t::Index globalIndex{
 				//(region == 0)
-					//? (*sf_.sf_t::nonOverlapFacet_t::indexLinearMax_)[i].value()
-					//: (*sf.indexLinearMaxs_[region - 1])[i].value()
+					//? (*tpgy_.tpgy_t::nonOverlapFacet_t::indexLinearMax_)[i].value()
+					//: (*tpgy.indexLinearMaxs_[region - 1])[i].value()
 			//};
 	
-			//typename sf_t::GlobalLinearShapeFunction_t::Point globalPt{
-				//sf_t::GlobalLinearShapeFunction_t::Transform(globalIndex)
+			//typename tpgy_t::GlobalLinearShapeFunction_t::Point globalPt{
+				//tpgy_t::GlobalLinearShapeFunction_t::Trantpgyorm(globalIndex)
 			//};
 	
 			//const bool evenRow = (globalPt.y_ & 1) == 0;
@@ -657,14 +669,14 @@ bool AperturePeer<n>::RunFrameLoop()
 	        //const size_t total = input.size();      // total number of output pixels
 	        //const size_t chunk = total / processingThreads_;
 	        
-	        //std::cout << "[Aperture::FrameBufferTransformation2] Branching threads" << std::endl;
+	        //std::cout << "[Aperture::FrameBufferTrantpgyormation2] Branching threads" << std::endl;
 	        //for (size_t i = 0; i < size_t(processingThreads_); ++i) {
 	            //size_t start = i * chunk;
 	            //size_t end = (i == size_t(processingThreads_) - 1) ? total : (i + 1) * chunk;
 	        
-	            //std::cout << "[Aperture::FrameBufferTransformation2] Starting Brighten thread" << std::endl;
+	            //std::cout << "[Aperture::FrameBufferTrantpgyormation2] Starting Brighten thread" << std::endl;
 	            //workers.emplace_back([&, i, start, end]() {
-	                //std::cout << "[Aperture::FrameBufferTransformation2] Setting Brighten thread affinity" << std::endl;
+	                //std::cout << "[Aperture::FrameBufferTrantpgyormation2] Setting Brighten thread affinity" << std::endl;
 	                
 	                //cpu_set_t cpuset;
 	                //CPU_ZERO(&cpuset);
@@ -772,8 +784,8 @@ bool AperturePeer<n>::RunFrameLoop()
 	//}
 //#endif
 	
-	template<size_t n>
-	float AperturePeer<n>::ComputeRequestedGain(const GainMsg& msg)
+	template<unsigned int FacetIndex>
+	float AperturePeer<FacetIndex>::ComputeRequestedGain(const GainMsg& msg)
 	{
 		if (msg.mean_brightness <= 1.0e-6f) {
 			return 1.0f;
@@ -783,8 +795,8 @@ bool AperturePeer<n>::RunFrameLoop()
 		return std::clamp(gain, 1.0f, 16.0f);
 	}
 	
-	template<size_t n>
-	bool AperturePeer<n>::RunControlLoop()
+	template<unsigned int FacetIndex>
+	bool AperturePeer<FacetIndex>::RunControlLoop()
 	{
 		GainMsg msg{};
 	
@@ -809,8 +821,8 @@ bool AperturePeer<n>::RunFrameLoop()
 		return true;
 	}
 	
-	template<size_t n>
-	bool AperturePeer<n>::SendGainReply(const GainReply& reply)
+	template<unsigned int FacetIndex>
+	bool AperturePeer<FacetIndex>::SendGainReply(const GainReply& reply)
 	{
 		GainReply copy = reply;
 	
@@ -824,8 +836,8 @@ bool AperturePeer<n>::RunFrameLoop()
 		return sent == sizeof(copy);
 	}
 	
-	template<size_t n>
-	void AperturePeer<n>::HandleGainMsg(const GainMsg& msg)
+	template<unsigned int FacetIndex>
+	void AperturePeer<FacetIndex>::HandleGainMsg(const GainMsg& msg)
 	{
 		GainReply reply{};
 		reply.camera_id = msg.camera_id;
@@ -869,8 +881,8 @@ bool AperturePeer<n>::RunFrameLoop()
 	//template<size_t n> bool AperturePeer<n>::receivePeerFrame(AperturePeer<N>& peer, std::vector<std::uint16_t>& outBayer){
 	//}
 	
-	template<size_t n>
-	bool AperturePeer<n>::StitchWithPeer(AperturePeer<n>& other,
+	template<unsigned int FacetIndex>
+	bool AperturePeer<FacetIndex>::StitchWithPeer(AperturePeer<FacetIndex>& other,
 										 size_t sharedSideThis,
 										 size_t sharedSideOther,
 										 std::vector<uint16_t>& out,
@@ -879,7 +891,16 @@ bool AperturePeer<n>::RunFrameLoop()
 		log_verbose("[AperturePeer::StitchWithPeer]");
 	
 		// --- Determine global output size ---
-		const auto* nonOverlapMap = sf_.sf_t::nonOverlapFacet_t::indexLinearMax_.get();
+		using SphereSpace_t = typename tpgy_t::Space_t;
+	
+		//using IcosahedronSpace_t =
+			//typename SphereSpace_t::template FacetSpace_t<FacetIndex>;
+		
+		using OverlapSpace_t =
+			typename SphereSpace_t::template SubSpace_t<FacetIndex>;
+		
+		
+		const auto* nonOverlapMap = OverlapSpace_t::nonOverlapFacet_t::indexLinearMax_.get();
 		if (!nonOverlapMap) {
 			std::cerr << "StitchWithPeer: null nonOverlap map\n";
 			return false;
@@ -894,38 +915,38 @@ bool AperturePeer<n>::RunFrameLoop()
 		}
 	
 		// --- 1. Scatter THIS non-overlap ---
-		sf_.sf_t::nonOverlapFacet_t::FrameBufferScatterTo(
-			sfdp_[0],
+		OverlapSpace_t::nonOverlapFacet_t::FrameBufferScatterTo(
+			tpgydp_[0],
 			nonOverlapMap,
 			out.data(),
 			out.size());
 	
 		// --- 2. Scatter OTHER non-overlap ---
 		const auto* otherMap =
-			other.sf_.sf_t::nonOverlapFacet_t::indexLinearMax_.get();
+			other.tpgy_.OverlapSpace_t::nonOverlapFacet_t::indexLinearMax_.get();
 	
 		if (!otherMap) {
 			std::cerr << "StitchWithPeer: other nonOverlap map null\n";
 			return false;
 		}
 	
-		other.sf_.sf_t::nonOverlapFacet_t::FrameBufferScatterTo(
-			other.sfdp_[0],
+		other.tpgy_.OverlapSpace_t::nonOverlapFacet_t::FrameBufferScatterTo(
+			other.tpgydp_[0],
 			otherMap,
 			out.data(),
 			out.size());
 	
 		// --- 3. Blend ONLY the shared overlap side ---
-		const auto& blockA = sfdp_[sharedSideThis + 1];
-		const auto& blockB = other.sfdp_[sharedSideOther + 1];
+		const auto& blockA = tpgydp_[sharedSideThis + 1];
+		const auto& blockB = other.tpgydp_[sharedSideOther + 1];
 	
 		if (blockA.size() != blockB.size()) {
 			std::cerr << "StitchWithPeer: overlap size mismatch\n";
 			return false;
 		}
 	
-		const auto* mapA = sf_.indexLinearMaxs_[sharedSideThis].get();
-		const auto* mapB = other.sf_.indexLinearMaxs_[sharedSideOther].get();
+		const auto* mapA = tpgy_.OverlapSpace_t::indexLinearMaxs_[sharedSideThis].get();
+		const auto* mapB = other.tpgy_.OverlapSpace_t::indexLinearMaxs_[sharedSideOther].get();
 	
 		if (!mapA || !mapB) {
 			std::cerr << "StitchWithPeer: null overlap maps\n";
@@ -964,10 +985,16 @@ bool AperturePeer<n>::RunFrameLoop()
 		return true;
 	}
 	
-template<size_t n>
-cv::Mat AperturePeer<n>::BuildValidMask(size_t regionIndex)
+template<unsigned int FacetIndex>
+cv::Mat AperturePeer<FacetIndex>::BuildValidMask(size_t regionIndex)
 {
-    if (regionIndex >= n + 1) {
+	
+	using SphereSpace_t = typename tpgy_t::Space_t;
+
+	using OverlapSpace_t =
+		typename SphereSpace_t::template SubSpace_t<FacetIndex>;
+			
+    if (regionIndex >= verticesPerFaceN_ + 1) {
         throw std::out_of_range("BuildValidMask regionIndex out of range");
     }
 
@@ -975,18 +1002,19 @@ cv::Mat AperturePeer<n>::BuildValidMask(size_t regionIndex)
 
     if (regionIndex == 0) {
         std::vector<uint16_t> compact(
-            this->sf_.sf_t::nonOverlapFacet_t::size(),
+            this->tpgy_.OverlapSpace_t::nonOverlapFacet_t::size(),
             static_cast<uint16_t>(1));
 
-        unmasked = this->sf_.sf_t::nonOverlapFacet_t::FrameBufferUnmask(compact);
+
+        unmasked = this->tpgy_.OverlapSpace_t::nonOverlapFacet_t::FrameBufferUnmask(compact);
     } else {
         const size_t overlapIdx = regionIndex - 1;
 
         std::vector<uint16_t> compact(
-            this->sf_.size(overlapIdx),
+            this->tpgy_.OverlapSpace_t::size(overlapIdx),
             static_cast<uint16_t>(1));
 
-        unmasked = this->sf_.FrameBufferUnmask(compact, overlapIdx);
+        unmasked = this->tpgy_.OverlapSpace_t::FrameBufferUnmask(compact, overlapIdx);
     }
 
     if (unmasked.size() != sensorWidthValue_ * sensorHeightValue_) {
@@ -1007,10 +1035,10 @@ cv::Mat AperturePeer<n>::BuildValidMask(size_t regionIndex)
     return mask;
 }
 
-template<size_t n>
-bool AperturePeer<n>::CopyValidMask(size_t regionIndex, cv::Mat& out)
+template<unsigned int FacetIndex>
+bool AperturePeer<FacetIndex>::CopyValidMask(size_t regionIndex, cv::Mat& out)
 {
-    if (regionIndex >= n + 1) {
+    if (regionIndex >= verticesPerFaceN_ + 1) {
         return false;
     }
 
@@ -1061,8 +1089,8 @@ bool AperturePeer<n>::CopyValidMask(size_t regionIndex, cv::Mat& out)
     //rxStats_.lastPrint = now;
 //}
 		
-template<size_t n>
-void AperturePeer<n>::MaybePrintRxSummary()
+template<unsigned int FacetIndex>
+void AperturePeer<FacetIndex>::MaybePrintRxSummary()
 {
     const auto now = std::chrono::steady_clock::now();
     const auto elapsed = now - rxStats_.lastPrint;

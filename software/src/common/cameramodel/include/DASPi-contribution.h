@@ -4,6 +4,7 @@
 #include <opencv2/opencv.hpp>
 #include <Eigen/Dense>
 
+namespace DASPi{
 struct Contribution {
     int cameraIndex = -1;
     cv::Point2d uv;
@@ -11,3 +12,4 @@ struct Contribution {
     double weight = 0.0;
     bool fromNonOverlap = false;
 };
+}//DASPi

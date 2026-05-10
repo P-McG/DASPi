@@ -7,7 +7,7 @@
 #include <Eigen/Dense>
 
 #include "DASPi-i-camera-model.h"
-
+namespace DASPi{
 struct CameraView {
     cv::Mat image;
 
@@ -27,3 +27,4 @@ struct CameraView {
     
     cv::Mat sensorValidMask;         // keep if you're using it
 };
+}//DASPi

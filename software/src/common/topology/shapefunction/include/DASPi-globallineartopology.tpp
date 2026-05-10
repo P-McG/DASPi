@@ -19,19 +19,21 @@
 
 #include "DASPi-logger.h"
 #include "DASPi-boundingbox.h"
-#include "DASPi-localcoordinates.h"
-//#include "DASPi-globallinearshapefunction.h"
+#include "DASPi-pointdata2di.h"
+#include "DASPi-maskorientationdata.h"
+#include "DASPi-sensororientationdata.h"
+#include "DASPi-indexdata.h"
 
 namespace DASPi{
   
     //ShapeDefiningPoints
-    template<PointData center, DirectionData direction>
-	typename GlobalLinearShapeFunction<center, direction>::ShapeDefiningPoints 
-	GlobalLinearShapeFunction<center, direction>::DefineShapeDefiningPoints(){
+    template<class Space>
+	typename GlobalLinearTopology<Space>::ShapeDefiningPoints 
+	GlobalLinearTopology<Space>::DefineShapeDefiningPoints(){
 		
-	    using Point = typename GlobalLinearShapeFunction<center, direction>::Point;
+	    using Point = typename GlobalLinearTopology<Space>::Point;
 
-		log_verbose("[GlobalLinearShapeFunction::DefineShapeDefiningPoints]");
+		log_verbose("[GlobalLinearTopology::DefineShapeDefiningPoints]");
 
 		return { 
 			Point{0, 0}, 
@@ -42,10 +44,10 @@ namespace DASPi{
 	}
 
 	//Mask
-	template<PointData center, DirectionData direction>
+	template<class Space>
 	constexpr uint16_t 
-	GlobalLinearShapeFunction<center, direction>::Mask(
-		const typename GlobalLinearShapeFunction<center, direction>::Point &p
+	GlobalLinearTopology<Space>::Mask(
+		const typename GlobalLinearTopology<Space>::Point &p
 	){
 		return (p.x() < sensorWidthValue_ && p.y() < sensorHeightValue_) ? 0xFF : 0x00;
 	}
@@ -53,21 +55,21 @@ namespace DASPi{
 
 	// GenerateIndexMap
 	/*
-	 * Builds a matrix that maps GlobalLinearShapeFunction Points to there Local Indexes(e.g. EquilateralTriangularShapeFunction).
+	 * Builds a matrix that maps GlobalLinearTopology Points to there Local Indexes(e.g. EquilateralTriangularTopology).
 	 */
-	 template<PointData center, DirectionData direction>
+	 template<class Space>
 	template<typename localIndex_t>
-	constexpr std::unique_ptr<typename GlobalLinearShapeFunction<center, direction>::template IndexMap<localIndex_t> > 
-	GlobalLinearShapeFunction<center, direction>::GenerateIndexMap(
-		const std::function<uint16_t(const typename GlobalLinearShapeFunction<center, direction>::Point&)> &maskFunc
+	constexpr std::unique_ptr<typename GlobalLinearTopology<Space>::template IndexMap<localIndex_t> > 
+	GlobalLinearTopology<Space>::GenerateIndexMap(
+		const std::function<uint16_t(const typename GlobalLinearTopology<Space>::Point&)> &maskFunc
 	){
-		using G = GlobalLinearShapeFunction<center, direction>;
+		using G = GlobalLinearTopology<Space>;
 	    using Point = typename G::Point;
 	    using IndexMap = typename G::template IndexMap<localIndex_t>;
 
-		log_verbose("[GlobalLinearShapeFunction::GenerateIndexMap]");
+		log_verbose("[GlobalLinearTopology::GenerateIndexMap]");
 		
-		// Scan through the GlobalLinearShapeFunction points and any within the mask mark as one.
+		// Scan through the GlobalLinearTopology points and any within the mask mark as one.
 		// Outside the mask mark as zero.
 		auto indexMap = std::make_unique<IndexMap>();
 		for (size_t i = 0; i < sensorHeightValue_; i++) {
@@ -76,7 +78,7 @@ namespace DASPi{
 			}
 		}
 	
-		// Once again scan through the GlobalLinearShapeFunction points and accumulate the ones
+		// Once again scan through the GlobalLinearTopology points and accumulate the ones
 		// so they become the local Indexes.
 		size_t accumulation{0};
 		for (size_t i = 0; i < sensorHeightValue_; i++) {
@@ -91,22 +93,22 @@ namespace DASPi{
 
 	// GenerateIndexLinear
 	/*
-	 * Creates an array of GlobalLinearIndexes, arranged by corresponding local indexes ( e.g. EquilateralTriangularShapeFunction)
+	 * Creates an array of GlobalLinearIndexes, arranged by corresponding local indexes ( e.g. EquilateralTriangularTopology)
 	 * Because the local indexes are array indexes there is no coorsponding local type in the assigned array.
 	 */       
-	template<PointData center, DirectionData direction>
+	template<class Space>
 	template<typename localIndex_t>
-	constexpr std::unique_ptr<typename GlobalLinearShapeFunction<center, direction>::IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index/*index_t*/>> 
-	GlobalLinearShapeFunction<center, direction>::GenerateIndexLinear(
+	constexpr std::unique_ptr<typename GlobalLinearTopology<Space>::IndexLinearMax<typename GlobalLinearTopology<Space>::Index/*index_t*/>> 
+	GlobalLinearTopology<Space>::GenerateIndexLinear(
 		const IndexMap<localIndex_t> *indexMap
 	){
 
-	    using G = GlobalLinearShapeFunction<center, direction>;
+	    using G = GlobalLinearTopology<Space>;
 	    using Point = typename G::Point;
 	    using Index = typename G::Index;
 	    using IndexLinearMax = typename G::template IndexLinearMax<Index/*index_t*/>;
 
-		log_verbose("[GlobalLinearShapeFunction::GenerateIndexLinear]");
+		log_verbose("[GlobalLinearTopology::GenerateIndexLinear]");
 		
 		log_verbose("initialize to zero");
 		auto indexLinearMax = std::make_unique<IndexLinearMax>();
@@ -118,8 +120,8 @@ namespace DASPi{
 			for (size_t j = 0; j < sensorWidthValue_; j++) {
 				localIndex_t im = (*indexMap)[i][j];
 				if (prev != im.value()) {
-					// taking a Transform function that inputs a GlobalLinearShapeFunction Point and
-	                // returns a GlobalLinearShapeFunction Index
+					// taking a Transform function that inputs a GlobalLinearTopology Point and
+	                // returns a GlobalLinearTopology Index
 					// That inturn gets stored in an array in local index order.
 					(*indexLinearMax)[im.value()] = Transform(Point{j, i});
 					
@@ -134,42 +136,42 @@ namespace DASPi{
 	}
 	
 	//transform
-	template<PointData center, DirectionData direction>
-	constexpr typename GlobalLinearShapeFunction<center, direction>::Point 
-	GlobalLinearShapeFunction<center, direction>::Transform(
-		GlobalLinearShapeFunction<center, direction>::Index index
+	template<class Space>
+	constexpr typename GlobalLinearTopology<Space>::Point 
+	GlobalLinearTopology<Space>::Transform(
+		GlobalLinearTopology<Space>::Index index
 	){
-	    using Point = typename GlobalLinearShapeFunction<center, direction>::Point;
+	    using Point = typename GlobalLinearTopology<Space>::Point;
 		return Point{index.value() % sensorWidthValue_, index.value() / sensorWidthValue_};
 	}
 
 	//Transform
 	/*
 	 */
-	template<PointData center, DirectionData direction>
-	constexpr typename GlobalLinearShapeFunction<center, direction>::Index 
-	GlobalLinearShapeFunction<center, direction>::Transform(
+	template<class Space>
+	constexpr typename GlobalLinearTopology<Space>::Index 
+	GlobalLinearTopology<Space>::Transform(
 		const Point &p
 	){
 		
-	    using G = GlobalLinearShapeFunction<center, direction>;
+	    using G = GlobalLinearTopology<Space>;
 		using Index = typename G::Index;
 		
 		return Index{p.y() * sensorWidthValue_ + p.x()};
 	}
 
-	//GlobalLinearShapeFunction
+	//GlobalLinearTopology
 	/*
 	 */
-	template<PointData center, DirectionData direction>
-	GlobalLinearShapeFunction<center, direction>::GlobalLinearShapeFunction()
+	template<class Space>
+	GlobalLinearTopology<Space>::GlobalLinearTopology()
 	{
 
-	    using G = GlobalLinearShapeFunction<center, direction>;
+	    using G = GlobalLinearTopology<Space>;
 	    using Point = typename G::Point;
 	    using Index = typename G::Index;
 
-		log_verbose("[GlobalLinearShapeFunction::constructor]");
+		log_verbose("[GlobalLinearTopology::constructor]");
 
 		shapeDefiningPoints_ = DefineShapeDefiningPoints();
 		indexMap_ = GenerateIndexMap<Index>([this](const Point p){return Mask(p);});
@@ -181,17 +183,17 @@ namespace DASPi{
     //Size
     /*
      */
-	template<PointData center, DirectionData direction>
-	size_t GlobalLinearShapeFunction<center, direction>::size() {
+	template<class Space>
+	size_t GlobalLinearTopology<Space>::size() {
 		return (*indexMap_)[sensorHeightValue_ - 1][sensorWidthValue_ - 1].value() + 1;
 	}
 
     //FrameBufferMask
-	template<PointData center, DirectionData direction>
+	template<class Space>
 	template<typename T0>
-	std::vector<uint16_t> GlobalLinearShapeFunction<center, direction>::FrameBufferMask(
+	std::vector<uint16_t> GlobalLinearTopology<Space>::FrameBufferMask(
 		const T0 &frameBuffer, 
-		const IndexLinearMax</*GlobalLinearShapeFunction::*/Index> *indexLinearMax, 
+		const IndexLinearMax<typename GlobalLinearTopology_t::Index> *indexLinearMax, 
 		size_t indexLinearSize
 	){
 		std::vector<uint16_t> outputData(indexLinearSize);
@@ -202,12 +204,12 @@ namespace DASPi{
 	}
 
     //FrameBufferMaskChunked
-	template<PointData center, DirectionData direction>
-	void GlobalLinearShapeFunction<center, direction>::FrameBufferMaskChunked(std::span<uint16_t> input,
-									 IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>::iterator indexBegin,
-									 IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>::iterator indexEnd,
+	template<class Space>
+	void GlobalLinearTopology<Space>::FrameBufferMaskChunked(std::span<uint16_t> input,
+									 IndexLinearMax<typename GlobalLinearTopology_t::Index>::iterator indexBegin,
+									 IndexLinearMax<typename GlobalLinearTopology_t::Index>::iterator indexEnd,
 									 uint16_t* outputBuffer) {
-		//log_verbose("[GlobalLinearShapeFunction::FrameBufferMaskedChunked]");
+		//log_verbose("[GlobalLinearTopology::FrameBufferMaskedChunked]");
 		if (indexBegin >= indexEnd) {
 			std::cerr << "Invalid range: indexBegin >= indexEnd" << std::endl;
 			return;
@@ -224,13 +226,13 @@ namespace DASPi{
 	}
   
 	//FrameBufferUnmask
-	template<PointData center, DirectionData direction>
+	template<class Space>
 	template<typename T0>
-	std::vector<uint16_t> GlobalLinearShapeFunction<center, direction>::FrameBufferUnmask(
+	std::vector<uint16_t> GlobalLinearTopology<Space>::FrameBufferUnmask(
 	    const T0& frameBuffer,
-	    const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax)
+	    const IndexLinearMax<typename GlobalLinearTopology_t::Index>* indexLinearMax)
 	{
-	    //log_verbose("[GlobalLinearShapeFunction::FrameBufferUnmask]");
+	    //log_verbose("[GlobalLinearTopology::FrameBufferUnmask]");
 	
 	    if (!indexLinearMax || frameBuffer.size() > indexLinearMax->size()) {
 	        throw std::runtime_error("FrameBufferUnmask: invalid index map or size mismatch.");
@@ -240,15 +242,16 @@ namespace DASPi{
 	    FrameBufferScatterTo(frameBuffer, indexLinearMax, outputData.data(), outputData.size());
 	    return outputData;
 	}	
+	
 	//SaveArrayToFile
-	template<PointData center, DirectionData direction>
+	template<class Space>
    template<typename index_t>  
    void 
-   GlobalLinearShapeFunction<center, direction>::SaveArrayToFile(
+   GlobalLinearTopology<Space>::SaveArrayToFile(
 	   const IndexLinearMax<index_t> *data, 
 	   const std::string& filename
    ){
-		log_verbose("[GlobalLinearShapeFunction::SaveArrayToFile]");
+		log_verbose("[GlobalLinearTopology::SaveArrayToFile]");
 		std::ofstream out(filename);
 		if (!out) {
 			std::cerr << "Failed to open file: " << filename << std::endl;
@@ -264,14 +267,14 @@ namespace DASPi{
 	}
 	
 	//SaveArrayToFile
-	template<PointData center, DirectionData direction>
+	template<class Space>
 	template<typename index_t>
 	void 
-	GlobalLinearShapeFunction<center, direction>::SaveArrayToFile(
-		const typename GlobalLinearShapeFunction<center, direction>::IndexMap<index_t> *data,
+	GlobalLinearTopology<Space>::SaveArrayToFile(
+		const IndexMap<index_t> *data,
 		const std::string& filename
 	){
-		log_verbose("[GlobalLinearShapeFunction::SaveArrayToFile]");
+		log_verbose("[GlobalLinearTopology::SaveArrayToFile]");
 		std::ofstream out(filename);
 		if (!out) {
 			std::cerr << "Failed to open file: " << filename << std::endl;
@@ -290,15 +293,15 @@ namespace DASPi{
 		std::cout << "Saved 1536x864 grid to " << filename << std::endl;
 	}
 	
-	template<PointData center, DirectionData direction>
+	template<class Space>
 	template<typename SrcT, typename DstT>
-	void GlobalLinearShapeFunction<center, direction>::FrameBufferScatterTo(
+	void GlobalLinearTopology<Space>::FrameBufferScatterTo(
 	    const SrcT& frameBuffer,
-	    const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax,
+	    const IndexLinearMax<typename GlobalLinearTopology<Space>::Index>* indexLinearMax,
 	    DstT* dst,
 	    size_t dstSize)
 	{
-	    //log_verbose("[GlobalLinearShapeFunction::FrameBufferScatterTo]");
+	    //log_verbose("[GlobalLinearTopology::FrameBufferScatterTo]");
 	
 	    if (!indexLinearMax) {
 	        throw std::runtime_error("FrameBufferScatterTo: null index map.");
@@ -319,15 +322,15 @@ namespace DASPi{
 	    }
 	}
 	
-	template<PointData center, DirectionData direction>
+	template<class Space>
 	template<typename SrcT, typename DstT>
-	void GlobalLinearShapeFunction<center, direction>::FrameBufferScatterAccumulateTo(
+	void GlobalLinearTopology<Space>::FrameBufferScatterAccumulateTo(
 	    const SrcT& frameBuffer,
-	    const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax,
+	    const IndexLinearMax<typename GlobalLinearTopology<Space>::Index>* indexLinearMax,
 	    DstT* dst,
 	    size_t dstSize)
 	{
-	    log_verbose("[GlobalLinearShapeFunction::FrameBufferScatterAccumulateTo]");
+	    log_verbose("[GlobalLinearTopology::FrameBufferScatterAccumulateTo]");
 	
 	    if (!indexLinearMax) {
 	        throw std::runtime_error("FrameBufferScatterAccumulateTo: null index map.");
@@ -348,11 +351,11 @@ namespace DASPi{
 	    }
 	}
 	
-	template<PointData center, DirectionData direction>
+	template<class Space>
 	template<typename SrcT>
-	void GlobalLinearShapeFunction<center, direction>::FrameBufferScatterToSpan(
+	void GlobalLinearTopology<Space>::FrameBufferScatterToSpan(
 	    const SrcT& frameBuffer,
-	    const IndexLinearMax<typename GlobalLinearShapeFunction<center, direction>::Index>* indexLinearMax,
+	    const IndexLinearMax<typename GlobalLinearTopology<Space>::Index>* indexLinearMax,
 	    std::span<uint16_t> dst)
 	{
 	    FrameBufferScatterTo(frameBuffer, indexLinearMax, dst.data(), dst.size());

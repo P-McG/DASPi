@@ -7,17 +7,20 @@
 #include <stdexcept>
 
 #include "DASPi-logger.h"
-#include "DASPi-overlapshapefunction.h"
+#include "DASPi-overlaptopology.h"
 
 namespace DASPi {
 
-template<size_t n, PointData center, DirectionData direction, double nonOverlapScale>
-class ShapeFunctionDataPacket {
+template<class Space>
+class TopologyDataPacket {
 public:
-    using value_type = OverlapShapeFunction<n, center, direction, nonOverlapScale>;
+    using SubSpace_t = typename Space::SubSpace_t;
+    using value_type = OverlapTopology<SubSpace_t>;
 
 private:
-    static constexpr size_t n_ = n;
+
+
+    static constexpr size_t n_ = Space::SubSpace_t::n_;
 	static constexpr size_t NUM_REGIONS = n_ + 1;
 	
     std::vector<uint16_t> contiguousMemory_;
@@ -26,12 +29,12 @@ private:
     std::array<size_t, n_ + 1> validSizes_{};
 
 public:
-    ShapeFunctionDataPacket(const OverlapShapeFunction<n, center, direction, nonOverlapScale>& sf)
+    TopologyDataPacket(const OverlapTopology<Space>& sf)
     {
-        //log_verbose("[ShapeFunctonDataPacket::ShapeFunctionDataPacket]");
+        //log_verbose("[ShapeFunctonDataPacket::TopologyDataPacket]");
 
-        capacities_[0] = sf.RegularPolygonalShapeFunction<n, center, direction>::size();
-        for (size_t i = 0; i < n; ++i) {
+        capacities_[0] = sf.RegularPolygonalTopology<RegularPolygonalSpace<Space::n_, Space::center_, Space::orientation_>>::size();
+        for (size_t i = 0; i < n_; ++i) {
             capacities_[i + 1] = sf.size(i);
         }
 
@@ -42,7 +45,7 @@ public:
         regions_[0] = std::span<uint16_t>(contiguousMemory_.data(), capacities_[0]);
 
         size_t offset = capacities_[0];
-        for (size_t i = 0; i < n; ++i) {
+        for (size_t i = 0; i < n_; ++i) {
             regions_[i + 1] = std::span<uint16_t>(contiguousMemory_.data() + offset, capacities_[i + 1]);
             offset += capacities_[i + 1];
         }

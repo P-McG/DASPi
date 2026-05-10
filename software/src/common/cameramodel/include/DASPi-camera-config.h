@@ -7,7 +7,7 @@
 #include <Eigen/Dense>
 
 #include "DASPi-image-rotation.h"
-
+namespace DASPi{
 struct CameraConfig {
     std::string name;
     std::string device = "";
@@ -61,3 +61,4 @@ struct CameraConfig {
         return localEdgeIndex >= 0;
     }
 };
+}//DASPi

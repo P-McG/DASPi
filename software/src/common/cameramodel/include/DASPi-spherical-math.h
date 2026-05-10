@@ -6,7 +6,7 @@
 
 #include "DASPi-rig-face.h"
 
-namespace spherical {
+namespace DASPi::spherical {
 
 // Equirectangular pixel -> unit world ray
 //inline Eigen::Vector3d EquirectPixelToWorldRay(
@@ -44,5 +44,5 @@ bool IsRayInsideSphericalFace(const Eigen::Vector3d& ray,
                               const RigFace<N>& face,
                               const std::vector<Eigen::Vector3d>& vertices);
 
-} // namespace spherical
+} // namespace DASPi::spherical
 #include "DASPi-spherical-math.tpp"

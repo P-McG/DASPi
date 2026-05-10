@@ -8,7 +8,7 @@
 #include "DASPi-sphere-stitcher.h"
 //#include "DASPi-spherical-math.h"
 //#include "DASPi-rig-utils.h"
-
+namespace DASPi{ 
 namespace {
 
 //void LogCenterDebugIfNeeded(int x,
@@ -1319,3 +1319,4 @@ cv::Mat SphereStitcher::stitchProjectionOnlyFast(cv::Mat* validMask) const
 
     return out;
 }
+}//DASPi

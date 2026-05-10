@@ -3,8 +3,20 @@
 <p align="center">
   <img src="images/Platonic_Solids_Transparent.svg" alt="Platonic solids" width="400"/>
 </p>
-## Isocahedron
+
+## Space
+```
+SphericalSpace
+    ↓
+IcosahedronSpace<FacetIndex>
+    ↓
+RegularPolygonalSpace<3>
+    ↓
+GlobalLinearSpace / pixel space
+```
+
+## Icosahedron
 
 <p align="center">
-  <img src="images/icosahedron-vertices-faces.png" alt="Isocahedral vertices and faces" width="600"/>
+  <img src="images/icosahedron-vertices-faces.png" alt="Icosahedral vertices and faces" width="600"/>
 </p>

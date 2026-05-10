@@ -13,27 +13,29 @@
 #include "DASPi-shape-config.h"
 #include "DASPi-udp-clnt.h"
 #include "DASPi-messages.h"
-#include "DASPi-overlapshapefunction.h"
-#include "DASPi-shapefunctiondatapacket.h"
+#include "DASPi-overlaptopology.h"
+#include "DASPi-topologydatapacket.h"
 #include "DASPi-fps-counter.h"
 #include "DASPi-rx_stats.h"
+#include "DASPi-icosahedronspace.h"
 
 
 namespace DASPi {
 
-template<size_t n>
+template<unsigned int FacetIndex>
 class AperturePeer {
     
-    using sf_t   = DASPi::sf_t<n>;
-    using sfdp_t = DASPi::sfdp_t<n>;
+    using tpgy_t   = DASPi::tpgy_t;
+    using tpgydp_t = DASPi::tpgydp_t<FacetIndex>;
 
-    static constexpr size_t n_ = n;
+    static constexpr unsigned int facetIndex_ = FacetIndex;
+    static constexpr size_t verticesPerFaceN_{tpgy_t::Space_t::verticesPerFaceN_};
 
-    std::array<std::vector<uint16_t>, n+1> buffer_;
-    std::array<std::unique_ptr<std::ofstream>, n+1> files_;
+    std::array<std::vector<uint16_t>, verticesPerFaceN_ + 1> buffer_;
+    std::array<std::unique_ptr<std::ofstream>, verticesPerFaceN_ + 1> files_;
 
-    sf_t sf_;
-    sfdp_t sfdp_;
+    tpgy_t tpgy_;
+    tpgydp_t tpgydp_;
 
     // 🔥 Dual sockets
     UDPClnt frameClnt_;
@@ -80,7 +82,7 @@ public:
     bool ReceiveApertureCapture();
     bool CopyBuffer(size_t index, std::vector<uint16_t>& out) const;
     //template<size_t N>bool receivePeerFrame(AperturePeer<N>& peer, std::vector<std::uint16_t>& outBayer);
-    bool StitchWithPeer(AperturePeer<n>& other,
+    bool StitchWithPeer(AperturePeer<FacetIndex>& other,
                         size_t sharedSideThis,
                         size_t sharedSideOther,
                         std::vector<uint16_t>& out,

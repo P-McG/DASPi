@@ -17,7 +17,7 @@ add_project_arguments(
 subdir('common')
 subdir('common/logger')
 subdir('common/scopedtimer')
-subdir('common/shapefunction')
+subdir('common/topology/shapefunction')
 subdir('common/udp')
 
 

@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include "DASPi-spherical-math.h"
 
+namespace DASPi{
 class EquirectangularProjection {
 public:
     EquirectangularProjection(int width, int height)
@@ -30,3 +31,4 @@ private:
     int width_;
     int height_;
 };
+}//DASPi

@@ -5,7 +5,7 @@
 
 #include "DASPi-spherical-math.h"
 
-namespace spherical {
+namespace DASPi::spherical {
     
 template <std::size_t N>
 bool IsRayInsideSphericalFace(const Eigen::Vector3d& ray,

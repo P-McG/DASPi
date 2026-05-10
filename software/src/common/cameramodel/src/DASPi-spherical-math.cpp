@@ -5,7 +5,7 @@
 
 #include "DASPi-spherical-math.h"
 
-namespace spherical {
+namespace DASPi::spherical {
 
 Eigen::Vector3d EquirectPixelToRay(int x, int y, int width, int height)
 {
