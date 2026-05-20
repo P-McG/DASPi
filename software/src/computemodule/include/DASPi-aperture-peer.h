@@ -18,18 +18,20 @@
 #include "DASPi-fps-counter.h"
 #include "DASPi-rx_stats.h"
 #include "DASPi-icosahedronspace.h"
+#include "DASPi-aperturepeerbase.h"
 
 
 namespace DASPi {
 
 template<unsigned int FacetIndex>
-class AperturePeer {
+class AperturePeer : public AperturePeerBase
+{
     
     using tpgy_t   = DASPi::tpgy_t;
     using tpgydp_t = DASPi::tpgydp_t<FacetIndex>;
 
     static constexpr unsigned int facetIndex_ = FacetIndex;
-    static constexpr size_t verticesPerFaceN_{tpgy_t::Space_t::verticesPerFaceN_};
+    static constexpr size_t verticesPerFaceN_{tpgy_t::FacetSpace_t<FacetIndex>::verticesPerFaceN_};
 
     std::array<std::vector<uint16_t>, verticesPerFaceN_ + 1> buffer_;
     std::array<std::unique_ptr<std::ofstream>, verticesPerFaceN_ + 1> files_;
@@ -88,9 +90,10 @@ public:
                         std::vector<uint16_t>& out,
                         bool reverseOther = false);
     cv::Mat BuildValidMask(size_t regionIndex);
-    bool CopyValidMask(size_t regionIndex, cv::Mat& out);
+    bool CopyValidMask( std::size_t localCameraIndex, cv::Mat& dst) const override;
     void MaybePrintRxSummary();
     //void MaybePrintRxSummary(size_t peerIndex, size_t moduleIndex);
+    bool TryCopyLatestFrame(std::size_t localCameraIndex, std::vector<uint16_t>& dst) const;
     
 private:
     const int processingThreads_{4};

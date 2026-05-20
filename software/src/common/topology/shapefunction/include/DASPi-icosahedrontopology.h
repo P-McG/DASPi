@@ -15,7 +15,9 @@
 namespace DASPi {
 
 template<IcosahedronSpace_t Space>
-class IcosahedronTopology {
+class IcosahedronTopology
+    : public OverlapTopology<typename Space::SubSpace_t>
+{
 public:
     
     static inline constexpr double kPi{std::numbers::pi};

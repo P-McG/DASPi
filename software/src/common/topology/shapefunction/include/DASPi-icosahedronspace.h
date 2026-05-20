@@ -227,7 +227,8 @@ facetDirections_{
 } // namespace detail
 
 template<unsigned int FacetIndex>
-class IcosahedronSpace : public SphericalSpace<FacetIndex>
+class IcosahedronSpace 
+    : public SphericalSpace<FacetIndex>
 {
 public:
     using SubSpace_t = OverlapSpace< detail::IcosahedronTables::verticesPerFaceN_, detail::IcosahedronTables::maskOrientations_[FacetIndex], detail::IcosahedronTables::sensorOrientations_[FacetIndex]>;

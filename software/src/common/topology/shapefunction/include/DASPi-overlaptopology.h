@@ -27,28 +27,28 @@
 
 namespace DASPi{
     
-    template<class Space>
-    using coverageSpace = RegularPolygonalSpace<Space::n_, Space::maskOrientation_, Space::sensorOrientation_>;
+    //template<class Space>
+    //using coverageSpace = RegularPolygonalSpace<Space::n_, Space::maskOrientation_, Space::sensorOrientation_>;
     
         
-    template<class Space>
-    using NonOverlapSpace = RegularPolygonalSpace<
-        Space::n_, 
-        MaskOrientationData{ 
-            Space::nonOverlapScale_ * Space::maskOrientation_.radius_, 
-            Space::maskOrientation_.cosValue_,
-            Space::maskOrientation_.sinValue_
-        },
-        Space::sensorOrientation_
-    >;
+    //template<class Space>
+    //using NonOverlapSpace = RegularPolygonalSpace<
+        //Space::n_, 
+        //MaskOrientationData{ 
+            //Space::nonOverlapScale_ * Space::maskOrientation_.radius_, 
+            //Space::maskOrientation_.cosValue_,
+            //Space::maskOrientation_.sinValue_
+        //},
+        //Space::sensorOrientation_
+    //>;
     
 	// OverlapTopology
 	/*
 	 */
 	template<OverlapSpace_t Space>
 	class OverlapTopology: //overlap
-		public RegularPolygonalTopology<coverageSpace<Space>>,//Facet
-		public RegularPolygonalTopology<NonOverlapSpace<Space>>//nonOverlapFacet
+		public RegularPolygonalTopology<typename Space::SubSpaceCoverage_t>,//Facet
+		public RegularPolygonalTopology<typename Space::SubSpaceNonOverlap_t>//nonOverlapFacet
 	{
 			
     public:
@@ -77,7 +77,7 @@ namespace DASPi{
                 //static_cast<long>(Space::nonOverlapScale_ * Space::orientation_.deltaY_)
             //}
         //>;
-        using NonOverlapFacet_t = RegularPolygonalTopology<NonOverlapSpace<Space>>;
+        using NonOverlapFacetTopology_t = RegularPolygonalTopology<typename Space::SubSpaceNonOverlap_t>;
 
         using Index = OverlapTopology::Index;
         using IndexMap = typename GlobalLinearTopology_t::IndexMap<Index>;//index is a local index.

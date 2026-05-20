@@ -72,8 +72,8 @@ namespace DASPi{
         using ShapeDefiningPoints = std::array<typename GlobalLinearTopology_t::Point, Space::n_>;
         
 		// Common member variables
-		GlobalLinearTopology_t::Point center_{typename GlobalLinearTopology_t::Point(Space::center_)};
-		GlobalLinearTopology_t::Orientation orientation_{typename GlobalLinearTopology_t::Orientation(Space::orientation_)};
+		GlobalLinearTopology_t::Point sensorCenter_{typename GlobalLinearTopology_t::Point(Space::sensorCenter_)};
+		GlobalLinearTopology_t::SensorOrientation sensorOrientation_{typename GlobalLinearTopology_t::SensorOrientation(Space::sensorOrientation_)};
         ShapeDefiningPoints shapeDefiningPoints_;
         std::unique_ptr<IndexMap> indexMap_;
         std::unique_ptr<IndexLinearMax> indexLinearMax_;

@@ -37,13 +37,26 @@ namespace DASPi {
 template<std::size_t n, MaskOrientationData maskOrientation, SensorOrientationData sensorOrientation>
 struct OverlapSpace
 {
-	using SubSpace_t = RegularPolygonalSpace<n, maskOrientation, sensorOrientation>;
-	
+	//using SubSpace_t = RegularPolygonalSpace<n, maskOrientation, sensorOrientation>;
+	    //template<class Space>
+	    
+
     static constexpr std::size_t n_{n};
     static constexpr MaskOrientationData maskOrientation_{maskOrientation};
     static constexpr SensorOrientationData sensorOrientation_{sensorOrientation};
     static constexpr double nonOverlapScale_ {0.75};
     static constexpr Matrix3dData ImageTransformMatrix = IdentityMatrix3d();
+    
+	using SubSpaceCoverage_t = RegularPolygonalSpace<n_, maskOrientation_, sensorOrientation_>;
+    using SubSpaceNonOverlap_t = RegularPolygonalSpace<
+        n_, 
+        MaskOrientationData{ 
+            nonOverlapScale_ * maskOrientation_.radius_, 
+            maskOrientation_.cosValue_,
+            maskOrientation_.sinValue_
+        },
+        sensorOrientation_
+    >;
 };
 
 template<class Space>

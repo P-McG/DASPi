@@ -193,7 +193,7 @@ namespace DASPi{
 	template<typename T0>
 	std::vector<uint16_t> GlobalLinearTopology<Space>::FrameBufferMask(
 		const T0 &frameBuffer, 
-		const IndexLinearMax<typename GlobalLinearTopology_t::Index> *indexLinearMax, 
+		const IndexLinearMax<typename GlobalLinearTopology<Space>::Index>* indexLinearMax, 
 		size_t indexLinearSize
 	){
 		std::vector<uint16_t> outputData(indexLinearSize);
@@ -206,8 +206,12 @@ namespace DASPi{
     //FrameBufferMaskChunked
 	template<class Space>
 	void GlobalLinearTopology<Space>::FrameBufferMaskChunked(std::span<uint16_t> input,
-									 IndexLinearMax<typename GlobalLinearTopology_t::Index>::iterator indexBegin,
-									 IndexLinearMax<typename GlobalLinearTopology_t::Index>::iterator indexEnd,
+									 typename GlobalLinearTopology<Space>::template IndexLinearMax<
+											typename GlobalLinearTopology<Space>::Index
+										>::iterator indexBegin,
+									 typename GlobalLinearTopology<Space>::template IndexLinearMax<
+											typename GlobalLinearTopology<Space>::Index
+										>::iterator indexEnd,
 									 uint16_t* outputBuffer) {
 		//log_verbose("[GlobalLinearTopology::FrameBufferMaskedChunked]");
 		if (indexBegin >= indexEnd) {
@@ -230,7 +234,7 @@ namespace DASPi{
 	template<typename T0>
 	std::vector<uint16_t> GlobalLinearTopology<Space>::FrameBufferUnmask(
 	    const T0& frameBuffer,
-	    const IndexLinearMax<typename GlobalLinearTopology_t::Index>* indexLinearMax)
+	    const IndexLinearMax<typename GlobalLinearTopology<Space>::Index>* indexLinearMax)
 	{
 	    //log_verbose("[GlobalLinearTopology::FrameBufferUnmask]");
 	

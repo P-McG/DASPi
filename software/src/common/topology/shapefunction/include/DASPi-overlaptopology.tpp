@@ -169,7 +169,7 @@ namespace DASPi{
 			};
 			return overlapRegionMask
 				& coverage_t::Mask(p) 
-				& static_cast<uint16_t>(~NonOverlapFacet_t::Mask(p));
+				& static_cast<uint16_t>(~NonOverlapFacetTopology_t::Mask(p));
 		};
 
         template<OverlapSpace_t Space>

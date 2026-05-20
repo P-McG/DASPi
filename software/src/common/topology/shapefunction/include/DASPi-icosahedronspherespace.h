@@ -16,36 +16,60 @@ template<
 >
 struct SphereSpaceImpl;
 
+// SphereSpaceImpl
+/*
+ * the full sphere remains simple:
+
+using IcosahedronSphereSpace =
+    SphereSpaceImpl<
+        IcosahedronSpace,
+        detail::IcosahedronTables::facetsN_,
+        std::make_index_sequence<detail::IcosahedronTables::facetsN_>
+    >;
+
+And a compute-module-owned subset can be expressed like this:
+
+using IcosahedronModule0SphereSpace =
+    SphereSpaceImpl<
+        IcosahedronSpace,
+        detail::IcosahedronTables::facetsN_,
+        std::index_sequence<0, 1, 2, 3, 4>
+    >;
+ */
 template<
     template<unsigned int> class FacetSpace,
-    std::size_t FacetsN,
-    std::size_t... FacetIndices
+    std::size_t TotalFacetsN,
+    std::size_t... ModuleFaceIndices
 >
 struct SphereSpaceImpl<
     FacetSpace,
-    FacetsN,
-    std::index_sequence<FacetIndices...>
+    TotalFacetsN,
+    std::index_sequence<ModuleFaceIndices...>
 >
 {
     static_assert(
-        FacetsN > 0,
-        "SphereSpaceImpl requires at least one facet."
+        TotalFacetsN > 0,
+        "SphereSpaceImpl requires at least one total facet."
     );
 
     static_assert(
-        sizeof...(FacetIndices) == FacetsN,
-        "Facet index sequence size must match FacetsN."
+        sizeof...(ModuleFaceIndices) > 0,
+        "SphereSpaceImpl requires at least one module face."
     );
 
     static_assert(
-        ((FacetIndices < FacetsN) && ...),
-        "Facet index sequence contains an out-of-range facet index."
+        ((ModuleFaceIndices < TotalFacetsN) && ...),
+        "Module face index sequence contains an out-of-range facet index."
     );
 
-    static constexpr std::size_t facetsN_{FacetsN};
+    static constexpr std::size_t totalFacetsN_{TotalFacetsN};
+    static constexpr std::size_t moduleFacesN_{sizeof...(ModuleFaceIndices)};
 
-    using facet_index_sequence_t =
-        std::index_sequence<FacetIndices...>;
+    using ModuleFaceIndices_t =
+        std::index_sequence<ModuleFaceIndices...>;
+    
+    using module_face_index_sequence_t =
+        std::index_sequence<ModuleFaceIndices...>;
 
     template<std::size_t FacetIndex>
     using FacetSpace_t =
@@ -63,17 +87,31 @@ struct SphereSpaceImpl<
         FacetSpace_t<0>::dim_
     };
 
-    static inline constexpr std::array<std::size_t, facetsN_>
-    facetIndices_{{
-        FacetIndices...
+    static inline constexpr std::array<std::size_t, moduleFacesN_>
+    moduleFaceIndices_{{
+        ModuleFaceIndices...
     }};
 
     template<std::size_t FacetIndex>
     static consteval bool IsValidFacetIndex()
     {
-        return FacetIndex < facetsN_;
+        return FacetIndex < totalFacetsN_;
+    }
+
+    template<std::size_t FacetIndex>
+    static consteval bool ContainsModuleFaceIndex()
+    {
+        return ((FacetIndex == ModuleFaceIndices) || ...);
     }
 };
+
+template<std::size_t... ModuleFaceIndices>
+using IcosahedronModuleSphereSpace =
+    SphereSpaceImpl<
+        IcosahedronSpace,
+        detail::IcosahedronTables::facetsN_,
+        std::index_sequence<ModuleFaceIndices...>
+    >;
 
 using IcosahedronSphereSpace =
     SphereSpaceImpl<
@@ -85,18 +123,22 @@ using IcosahedronSphereSpace =
 template<class Space>
 concept IcosahedronSphereSpace_t =
     requires {
-        { Space::facetsN_ } -> std::convertible_to<std::size_t>;
+        { Space::totalFacetsN_ } -> std::convertible_to<std::size_t>;
+        { Space::moduleFacesN_ } -> std::convertible_to<std::size_t>;
         { Space::verticesPerFaceN_ } -> std::convertible_to<std::size_t>;
         { Space::dim_ } -> std::convertible_to<std::size_t>;
 
-        typename Space::facet_index_sequence_t;
+        typename Space::module_face_index_sequence_t;
 
         typename Space::template FacetSpace_t<0>;
         typename Space::template SubSpace_t<0>;
 
-        { Space::facetIndices_ } -> std::convertible_to<
-            const std::array<std::size_t, Space::facetsN_>&
+        { Space::moduleFaceIndices_ } -> std::convertible_to<
+            const std::array<std::size_t, Space::moduleFacesN_>&
         >;
-    };
+    }
+    && (Space::totalFacetsN_ > 0)
+    && (Space::moduleFacesN_ > 0)
+    && (Space::moduleFacesN_ <= Space::totalFacetsN_);
 
 } // namespace DASPi

@@ -30,111 +30,151 @@
 
 namespace DASPi {
         
-    template<class Space>
-    class GlobalLinearTopology
-    {
-    public:
-         using Space_t = Space;
-    
-        //Local Coordinates structures
-        struct Point : public PointData2dI {
-            using PointData2dI::PointData2dI; // inherit constructor
-            using PointData2dI::operator==;
-            constexpr Point(const PointData2dI& pd) : PointData2dI(pd) {};
-        };
-        struct SensorOrientation : public SensorOrientationData {
-            using SensorOrientationData::SensorOrientationData; // inherit constructor
-            using SensorOrientationData::operator==;
-            constexpr SensorOrientation(const SensorOrientationData& dd) : SensorOrientationData(dd) {};
-        };
-        struct Index : public IndexData {
-            using IndexData::IndexData; // inherit constructor
-            using IndexData::operator==;
-            
-            //// Add conversion from EquilateralTriangularTopology::Index
-            //Index(const EquilateralTriangularTopology::Index& other)
-                //: IndexData(other.value()) {}
-        };
-    
-        static constexpr Index sensorWidth() { return Index{sensorWidthValue_}; }
-        static constexpr Index sensorHeight() { return Index{sensorHeightValue_}; }
-    
-        template<typename localIndex_t>
-        using IndexMap = std::array<std::array<localIndex_t, sensorWidthValue_>, sensorHeightValue_>;
-        template<typename globalIndex_t>
-        using IndexLinearMax = std::array<globalIndex_t, sensorWidthValue_ * sensorHeightValue_>;
-        
-        using GlobalLinearTopology_t = GlobalLinearTopology<MakeGlobalLinearSpace<typename Space::sensorOrientation_>>;
-        using ShapeDefiningPoints = std::array<typename GlobalLinearTopology_t::Point, 4>;
-    
-        static constexpr Point center_{Space::center_};
-        static constexpr SensorOrientation sensorOrientation_{Space::sensorOrientation_};
-        ShapeDefiningPoints shapeDefiningPoints_;
-        
-        std::unique_ptr<IndexMap<Index>> indexMap_; // Index in this case is a local Index.
-        std::unique_ptr<IndexLinearMax<Index>> indexLinearMax_;
-    
-        static ShapeDefiningPoints 
-        DefineShapeDefiningPoints();
-        
-        static constexpr uint16_t
-        Mask(const Point &p);
-    
-        template<typename localIndex_t>
-        static constexpr std::unique_ptr<IndexMap<localIndex_t>> 
-        GenerateIndexMap(
-	        const std::function<uint16_t(const Point&)> &maskFunc
-        );     
-        
-        template<typename localIndex_t>
-        static constexpr std::unique_ptr<IndexLinearMax<Index/*index_t*/>> 
-        GenerateIndexLinear(const IndexMap<localIndex_t> *indexMap);
+template<class Space>
+class GlobalLinearTopology
+{
+public:
+    static_assert(GlobalLinearSpace_t<Space>);
 
-        static constexpr /*GlobalLinearTopology::*/Point Transform(/*GlobalLinearTopology::*/Index index);
-    
-        static constexpr Index Transform(const Point &p);
-    
-        GlobalLinearTopology();
-    
-        size_t size();
-    
-        template<typename T0>
-        std::vector<uint16_t> FrameBufferMask(const T0 &frameBuffer, const IndexLinearMax<typename GlobalLinearTopology_t::Index> *indexLinearMax, size_t indexLinearSize);
-  
-        static void FrameBufferMaskChunked(std::span<uint16_t> input,
-                                         IndexLinearMax<typename GlobalLinearTopology_t::Index>::iterator indexBegin,
-                                         IndexLinearMax<typename GlobalLinearTopology_t::Index>::iterator indexEnd,
-                                         uint16_t* outputBuffer);
-      
-        template<typename T0>
-        static std::vector<uint16_t> FrameBufferUnmask(const T0 &frameBuffer, const IndexLinearMax<typename GlobalLinearTopology_t::Index> *indexLinearMax);
-        
-        template<typename index_t>  
-        static void SaveArrayToFile(const IndexLinearMax<index_t> *data, const std::string& filename);
-       
-        template<typename index_t>
-        static void SaveArrayToFile(const IndexMap<index_t> *data, const std::string& filename);
-        
-        template<typename SrcT, typename DstT>
-        static void FrameBufferScatterTo(
-            const SrcT& frameBuffer,
-            const IndexLinearMax<typename GlobalLinearTopology<Space>::Index>* indexLinearMax,
-            DstT* dst,
-            size_t dstSize);
-    
-        template<typename SrcT, typename DstT>
-        static void FrameBufferScatterAccumulateTo(
-            const SrcT& frameBuffer,
-            const IndexLinearMax<typename GlobalLinearTopology<Space>::Index>* indexLinearMax,
-            DstT* dst,
-            size_t dstSize);
-    
-        template<typename SrcT>
-        static void FrameBufferScatterToSpan(
-            const SrcT& frameBuffer,
-            const IndexLinearMax<typename GlobalLinearTopology<Space>::Index>* indexLinearMax,
-            std::span<uint16_t> dst);
+    using Space_t = Space;
+
+    struct Point : public PointData2dI {
+        using PointData2dI::PointData2dI;
+        using PointData2dI::operator==;
+
+        constexpr Point(const PointData2dI& pd)
+            : PointData2dI(pd)
+        {}
     };
+
+    struct SensorOrientation : public SensorOrientationData {
+        using SensorOrientationData::SensorOrientationData;
+        using SensorOrientationData::operator==;
+
+        constexpr SensorOrientation(const SensorOrientationData& sd)
+            : SensorOrientationData(sd)
+        {}
+    };
+
+    struct Index : public IndexData {
+        using IndexData::IndexData;
+        using IndexData::operator==;
+    };
+
+    static constexpr Index sensorWidth()
+    {
+        return Index{sensorWidthValue_};
+    }
+
+    static constexpr Index sensorHeight()
+    {
+        return Index{sensorHeightValue_};
+    }
+
+    template<typename localIndex_t>
+    using IndexMap =
+        std::array<std::array<localIndex_t, sensorWidthValue_>, sensorHeightValue_>;
+
+    template<typename globalIndex_t>
+    using IndexLinearMax =
+        std::array<globalIndex_t, sensorWidthValue_ * sensorHeightValue_>;
+
+    using CanonicalSpace =
+        MakeGlobalLinearSpace<Space>;
+
+    using ShapeDefiningPoints =
+        std::array<Point, 4>;
+
+    static constexpr Point sensorCenter_{
+        Space::sensorCenter_
+    };
+
+    static constexpr SensorOrientation sensorOrientation_{
+        Space::sensorOrientation_
+    };
+
+    ShapeDefiningPoints shapeDefiningPoints_;
+
+    std::unique_ptr<IndexMap<Index>> indexMap_;
+    std::unique_ptr<IndexLinearMax<Index>> indexLinearMax_;
+
+    static ShapeDefiningPoints DefineShapeDefiningPoints();
+
+    static constexpr uint16_t Mask(const Point& p);
+
+    template<typename localIndex_t>
+    static constexpr std::unique_ptr<IndexMap<localIndex_t>>
+    GenerateIndexMap(
+        const std::function<uint16_t(const Point&)>& maskFunc
+    );
+
+    template<typename localIndex_t>
+    static constexpr std::unique_ptr<IndexLinearMax<Index>>
+    GenerateIndexLinear(const IndexMap<localIndex_t>* indexMap);
+
+    static constexpr Point Transform(Index index);
+
+    static constexpr Index Transform(const Point& p);
+
+    GlobalLinearTopology();
+
+    size_t size();
+
+    template<typename T0>
+    std::vector<uint16_t> FrameBufferMask(
+        const T0& frameBuffer,
+        const IndexLinearMax<Index>* indexLinearMax,
+        size_t indexLinearSize
+    );
+
+    static void FrameBufferMaskChunked(
+        std::span<uint16_t> input,
+        typename IndexLinearMax<Index>::iterator indexBegin,
+        typename IndexLinearMax<Index>::iterator indexEnd,
+        uint16_t* outputBuffer
+    );
+
+    template<typename T0>
+    static std::vector<uint16_t> FrameBufferUnmask(
+        const T0& frameBuffer,
+        const IndexLinearMax<Index>* indexLinearMax
+    );
+
+    template<typename index_t>
+    static void SaveArrayToFile(
+        const IndexLinearMax<index_t>* data,
+        const std::string& filename
+    );
+
+    template<typename index_t>
+    static void SaveArrayToFile(
+        const IndexMap<index_t>* data,
+        const std::string& filename
+    );
+
+    template<typename SrcT, typename DstT>
+    static void FrameBufferScatterTo(
+        const SrcT& frameBuffer,
+        const IndexLinearMax<Index>* indexLinearMax,
+        DstT* dst,
+        size_t dstSize
+    );
+
+    template<typename SrcT, typename DstT>
+    static void FrameBufferScatterAccumulateTo(
+        const SrcT& frameBuffer,
+        const IndexLinearMax<Index>* indexLinearMax,
+        DstT* dst,
+        size_t dstSize
+    );
+
+    template<typename SrcT>
+    static void FrameBufferScatterToSpan(
+        const SrcT& frameBuffer,
+        const IndexLinearMax<Index>* indexLinearMax,
+        std::span<uint16_t> dst
+    );
+};
     
     //inline GlobalLinearTopology<
         //PointData2dI{

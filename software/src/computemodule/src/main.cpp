@@ -33,9 +33,12 @@
 #include "DASPi-rig-data.h"
 #include "DASPi-rig-geometry.h"
 #include "DASPi-mesh_topology.h"
-#include "DASPi-icosahedron_topology.h"
+#include "DASPi-icosahedrontopology.h"
+#include "DASPi-regularpolygonaltopology.h"
 #include "DASPi-camera_setup.h"
 #include "DASPi-flat_triangle_map.h"
+#include "DASPi-networkaddressplan.h"
+#include "DASPi-programoptions.h"
 
 using namespace DASPi;
 using namespace DASPi::spherical;
@@ -60,18 +63,9 @@ constexpr auto kNoFrameDelay = std::chrono::milliseconds(20);
 constexpr auto kStitchDelay  = std::chrono::milliseconds(30);
 constexpr std::uint64_t kSignatureLogEvery = 10;
 
-struct ProgramOptions {
-    int nApertureComputeModules{0};
-    std::string usbBaseIp;
-    int framePort{0};
-    bool reverseModuleOrder{false};
-    std::vector<std::string> serverIps;
-};
 
-struct NetworkAddressPlan {
-    in_addr_t client{};
-    std::vector<in_addr_t> servers;
-};
+
+
 
 
 
@@ -112,13 +106,13 @@ size_t TotalCameraCount(int nApertureComputeModules)
     return static_cast<size_t>(nApertureComputeModules) * kCamerasPerModule;
 }
 
-template <size_t N>
-bool tryCopyLatestFrameFromPeer(AperturePeer<N>& peer,
-                                size_t localCameraIndex,
-                                std::vector<std::uint16_t>& outBayer)
-{
-    return peer.CopyBuffer(localCameraIndex, outBayer);
-}
+//template <unsigned int N>
+//bool tryCopyLatestFrameFromPeer(AperturePeer<N>& peer,
+                                //size_t& localCameraIndex,
+                                //std::vector<std::uint16_t>& outBayer)
+//{
+    //return peer.CopyBuffer(localCameraIndex, outBayer);
+//}
 
 in_addr_t StringToInAddrT(const std::string& ipStr)
 {
@@ -357,39 +351,94 @@ void PrintProgramOptions(const ProgramOptions& options)
     }
 }
 
-template <size_t N>
-std::vector<std::unique_ptr<AperturePeer<N>>> CreateAperturePeers(
+
+
+
+template<std::size_t FaceIndex>
+std::unique_ptr<AperturePeerBase> CreateOneAperturePeer(
+    const ProgramOptions& options,
+    const NetworkAddressPlan& addressPlan,
+    std::size_t moduleIndex)
+{
+    const int clntFramePort =
+        options.framePort + static_cast<int>(moduleIndex) * kModulePortStride;
+
+    const int clntControlPort = clntFramePort + 1;
+    const int srvFramePort = clntFramePort;
+    const int srvControlPort = clntControlPort;
+
+    std::cout << "[main] Creating AperturePeer module=" << moduleIndex
+              << ", facet=" << FaceIndex
+              << ", clntFramePort=" << clntFramePort
+              << ", clntControlPort=" << clntControlPort
+              << ", srvFramePort=" << srvFramePort
+              << ", srvControlPort=" << srvControlPort
+              << ", clntAddr=" << InAddrTToString(addressPlan.client)
+              << ", srvAddr=" << InAddrTToString(addressPlan.servers[moduleIndex])
+              << '\n';
+
+    return std::make_unique<AperturePeer<static_cast<unsigned int>(FaceIndex)>>(
+        addressPlan.client,
+        clntFramePort,
+        clntControlPort,
+        addressPlan.servers[moduleIndex],
+        srvFramePort,
+        srvControlPort
+    );
+}
+
+template<class SphereSpaceType, std::size_t... FaceIndices>
+std::vector<std::unique_ptr<AperturePeerBase>> CreateAperturePeersImpl(
+    const ProgramOptions& options,
+    const NetworkAddressPlan& addressPlan,
+    std::integer_sequence<std::size_t, FaceIndices...>)
+{
+    constexpr std::size_t kModuleCount = sizeof...(FaceIndices);
+
+    if (addressPlan.servers.size() != kModuleCount) {
+        throw std::runtime_error(
+            "addressPlan.servers.size() does not match SphereSpaceType::moduleFacesN_"
+        );
+    }
+
+    std::vector<std::unique_ptr<AperturePeerBase>> aperturePeers;
+    aperturePeers.reserve(kModuleCount);
+
+    std::cout << "[main] Setting up AperturePeers\n";
+
+    std::size_t moduleIndex = 0;
+
+    (
+        aperturePeers.push_back(
+            CreateOneAperturePeer<FaceIndices>(
+                options,
+                addressPlan,
+                moduleIndex++
+            )
+        ),
+        ...
+    );
+
+    return aperturePeers;
+}
+
+template<class SphereSpaceType>
+std::vector<std::unique_ptr<AperturePeerBase>> CreateAperturePeers(
     const ProgramOptions& options,
     const NetworkAddressPlan& addressPlan)
 {
-    std::vector<std::unique_ptr<AperturePeer<N>>> aperturePeers(addressPlan.servers.size());
+    static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
 
-    std::cout << "[main] Setting up AperturePeers\n";
-    for (size_t i = 0; i < aperturePeers.size(); ++i) {
-        const int clntFramePort = options.framePort + static_cast<int>(i) * kModulePortStride;
-        const int clntControlPort = clntFramePort + 1;
-		const int srvFramePort = clntFramePort;
-		const int srvControlPort = clntControlPort;
-
-        std::cout << "[main] Creating AperturePeer " << i
-                  << ", clntFramePort=" << clntFramePort
-                  << ", clntControlPort=" << clntControlPort
-                  << ", srvFramePort=" << srvFramePort
-                  << ", srvControlPort=" << srvControlPort
-                  << ", clntAddr=" << InAddrTToString(addressPlan.client)
-                  << ", srvAddr=" << InAddrTToString(addressPlan.servers[i])
-                  << '\n';
-
-        aperturePeers[i] = std::make_unique<AperturePeer<N>>(
-            addressPlan.client,
-            clntFramePort,
-            clntControlPort,
-            addressPlan.servers[i],
-            srvFramePort,
-            srvControlPort);
-    }
-
-    return aperturePeers;
+    static_assert(
+        SphereSpaceType::moduleFacesN_ > 0,
+        "SphereSpaceType must own at least one module face"
+    );
+    
+   return CreateAperturePeersImpl<SphereSpaceType>(
+        options,
+        addressPlan,
+        typename SphereSpaceType::ModuleFaceIndices_t{}
+    );
 }
 
 //cv::Mat applyImageRotation(const cv::Mat& image, ImageRotation rotation)
@@ -612,47 +661,47 @@ RigData<N> BuildRigDataFromTopology(const MeshTopology<N>& topo)
     return rig;
 }
 
-template <std::size_t N>
-RigData<N> MakeRigData(const MeshTopology<N>& topo)
-{
-    return BuildRigDataFromTopology(topo);
-}
+//template <std::size_t N>
+//RigData<N> MakeRigData(const MeshTopology<N>& topo)
+//{
+    //return BuildRigDataFromTopology(topo);
+//}
 
-template <std::size_t N>
-bool FacesAreNeighbors(const RigFace<N>& a, const RigFace<N>& b)
-{
-    std::size_t shared = 0;
+//template <std::size_t N>
+//bool FacesAreNeighbors(const RigFace<N>& a, const RigFace<N>& b)
+//{
+    //std::size_t shared = 0;
 
-    for (std::size_t va : a.indices) {
-        for (std::size_t vb : b.indices) {
-            if (va == vb) {
-                ++shared;
-                if (shared >= 2) {
-                    return true; // early exit (faster)
-                }
-            }
-        }
-    }
+    //for (std::size_t va : a.indices) {
+        //for (std::size_t vb : b.indices) {
+            //if (va == vb) {
+                //++shared;
+                //if (shared >= 2) {
+                    //return true; // early exit (faster)
+                //}
+            //}
+        //}
+    //}
 
-    return false;
-}
+    //return false;
+//}
 
-template<std::size_t N>
-std::vector<std::vector<int>> BuildFaceNeighborGraph(const std::vector<RigFace<N>>& faces)
-{
-    std::vector<std::vector<int>> graph(faces.size());
+//template<std::size_t N>
+//std::vector<std::vector<int>> BuildFaceNeighborGraph(const std::vector<RigFace<N>>& faces)
+//{
+    //std::vector<std::vector<int>> graph(faces.size());
 
-    for (std::size_t i = 0; i < faces.size(); ++i) {
-        for (std::size_t j = i + 1; j < faces.size(); ++j) {
-            if (FacesAreNeighbors(faces[i], faces[j])) {
-                graph[i].push_back(static_cast<int>(j));
-                graph[j].push_back(static_cast<int>(i));
-            }
-        }
-    }
+    //for (std::size_t i = 0; i < faces.size(); ++i) {
+        //for (std::size_t j = i + 1; j < faces.size(); ++j) {
+            //if (FacesAreNeighbors(faces[i], faces[j])) {
+                //graph[i].push_back(static_cast<int>(j));
+                //graph[j].push_back(static_cast<int>(i));
+            //}
+        //}
+    //}
 
-    return graph;
-}
+    //return graph;
+//}
 
 bool CameraProjectsToValidUv(const CameraView& cam,
                              const Eigen::Vector3d& ray_world,
@@ -1847,58 +1896,270 @@ double SeamTForCamera(const CameraConfig& cfg, double t)
     return cfg.seamDirectionReversed ? (1.0 - t) : t;
 }
 
-
-template<std::size_t N>
-CameraSetup<N> makeCameraConfigs(int nApertureComputeModules)
+template<class IcosahedronSphereSpace, std::size_t FacetIndex>
+struct CameraSpaceChain
 {
+    static_assert(DASPi::IcosahedronSphereSpace_t<IcosahedronSphereSpace>);
+    static_assert(FacetIndex < IcosahedronSphereSpace::totalFacetsN_);
+
+    using IcosahedronSpaceType = typename IcosahedronSphereSpace::template FacetSpace_t<FacetIndex>;
+    using OverlapSpaceType = typename IcosahedronSpaceType::SubSpace_t;
+    using RegularPolygonalSpaceType = typename OverlapSpaceType::SubSpaceCoverage_t;
+    using GlobalLinearSpaceType = typename RegularPolygonalSpaceType::SubSpace_t;
+
+    static_assert(DASPi::IcosahedronSpace_t<IcosahedronSpaceType>);
+    static_assert(DASPi::OverlapSpace_t<OverlapSpaceType>);
+    static_assert(DASPi::RegularPolygonalSpace_t<RegularPolygonalSpaceType>);
+
+
+    /*
+     * Leave this disabled until DASPi-globallinearspace.h checks
+     * sensorOrientation_ instead of SensorOrientation_.
+     */
+    // static_assert(DASPi::GlobalLinearSpace_t<GlobalLinearSpaceType>);
+};
+
+Eigen::Matrix3d ToEigenMatrix3d(const Matrix3dData& m)
+{
+    Eigen::Matrix3d out;
+
+    for (std::size_t row = 0; row < 3; ++row) {
+        for (std::size_t col = 0; col < 3; ++col) {
+            out(
+                static_cast<Eigen::Index>(row),
+                static_cast<Eigen::Index>(col)
+            ) = m[row][col];
+        }
+    }
+
+    return out;
+}
+
+template<class SphereSpace, std::size_t N>
+MeshTopology<N> MakeMeshTopologyFromSphereSpace()
+{
+    static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpace>);
+
+    static_assert(
+        N == SphereSpace::verticesPerFaceN_,
+        "N must match SphereSpace::verticesPerFaceN_"
+    );
+
+    using Facet0SpaceType =
+        typename SphereSpace::template FacetSpace_t<0>;
+
+    using Tables = DASPi::detail::IcosahedronTables;
+
+    static_assert(
+        SphereSpace::totalFacetsN_ == Tables::facetsN_,
+        "SphereSpace total face count must match IcosahedronTables"
+    );
+
+    static_assert(
+        Facet0SpaceType::verticesN_ == Tables::verticesN_,
+        "Facet0SpaceType vertex count must match IcosahedronTables"
+    );
+
+    static_assert(
+        Facet0SpaceType::edgesN_ == Tables::edgesN_,
+        "Facet0SpaceType edge count must match IcosahedronTables"
+    );
+
+    MeshTopology<N> topo;
+
+    const Eigen::Matrix3d Rspace =
+        ToEigenMatrix3d(Facet0SpaceType::ImageTransformMatrix);
+
+    topo.vertices.reserve(Tables::verticesN_);
+
+    for (const auto& vertex : Tables::vertices_) {
+        const Eigen::Vector3d v(vertex.x_, vertex.y_, vertex.z_);
+        topo.vertices.push_back(Rspace * v);
+    }
+
+    topo.faces.reserve(Tables::facetsN_);
+
+    for (const auto& sourceFace : Tables::facets_) {
+        std::array<std::size_t, N> face{};
+
+        for (std::size_t i = 0; i < N; ++i) {
+            face[i] = sourceFace[i];
+        }
+
+        topo.faces.push_back(face);
+    }
+
+    BuildTopologyAdjacency(topo);
+
+    if (topo.edges.size() != Facet0SpaceType::edgesN_) {
+        throw std::runtime_error(
+            "MakeMeshTopologyFromSphereSpace expected " +
+            std::to_string(Facet0SpaceType::edgesN_) +
+            " edges, got " +
+            std::to_string(topo.edges.size())
+        );
+    }
+
+    for (std::size_t faceIndex = 0;
+         faceIndex < topo.faceNeighborIndices.size();
+         ++faceIndex) {
+        for (int neighbor : topo.faceNeighborIndices[faceIndex]) {
+            if (neighbor < 0) {
+                throw std::runtime_error(
+                    "MakeMeshTopologyFromSphereSpace has boundary edge"
+                );
+            }
+        }
+    }
+
+    return topo;
+}
+
+template<class SphereSpace>
+std::vector<int> DefaultModuleOwningFacesFromSphereSpace(
+    int nApertureComputeModules)
+{
+    static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpace>);
+
     if (nApertureComputeModules <= 0) {
         throw std::runtime_error("nApertureComputeModules must be > 0");
     }
 
-    constexpr RigGeometry kRigGeometry = RigGeometry::Icosahedron;
+    /*
+     * Keep the same current physical assignment behavior:
+     *
+     * module 0 -> face 0
+     * module 1 -> face 1
+     *
+     * This can later become a compile-time table in IcosahedronSphereSpace.
+     */
+    static constexpr std::array<int, 2> kDefaultOwningFaces{{
+        0,
+        1
+    }};
 
-    MeshTopology<N> topo;
-    std::vector<int> moduleFaceIndices;
+    if (nApertureComputeModules >
+        static_cast<int>(kDefaultOwningFaces.size())) {
+        throw std::runtime_error(
+            "Requested more modules than hardcoded sphere face assignments"
+        );
+    }
 
-    switch (kRigGeometry) {
-    case RigGeometry::Icosahedron: {
-        if constexpr (N != 3) {
-            throw std::runtime_error("Icosahedron topology requires N=3");
-        } else {
-            IcosahedronTopology topologyBuilder;
-            topo = topologyBuilder.Make();
-            moduleFaceIndices =
-                topologyBuilder.DefaultModuleOwningFaces(nApertureComputeModules);
+    std::vector<int> owningFaces;
+    owningFaces.reserve(static_cast<std::size_t>(nApertureComputeModules));
+
+    for (int module = 0; module < nApertureComputeModules; ++module) {
+        const int faceIndex =
+            kDefaultOwningFaces[static_cast<std::size_t>(module)];
+
+        if (faceIndex < 0 ||
+            faceIndex >= static_cast<int>(SphereSpace::facetsN_)) {
+            throw std::runtime_error(
+                "Default owning face is outside IcosahedronSphereSpace"
+            );
         }
-        break;
-    }
-    default:
-        throw std::runtime_error("Unsupported rig geometry");
+
+        owningFaces.push_back(faceIndex);
     }
 
-    const RigData<N> rig = BuildRigDataFromTopology(topo);
-    const auto& faces = rig.faces;
-    const auto& vertices = rig.vertices;
+    return owningFaces;
+}
 
-    static bool printedFaces = false;
-    if (!printedFaces) {
-        DebugPrintRigFaces(faces);
-        DebugPrintRigAdjacency(faces);
-        printedFaces = true;
+template<std::size_t N, class SphereSpaceType = DASPi::IcosahedronSphereSpace>
+CameraSetup<N> makeCameraConfigs()
+{
+    static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
+
+    static_assert(
+        N == SphereSpaceType::verticesPerFaceN_,
+        "makeCameraConfigs<N, SphereSpaceType>() N must match "
+        "SphereSpaceType::verticesPerFaceN_"
+    );
+
+    static_assert(
+        SphereSpaceType::moduleFacesN_ > 0,
+        "SphereSpaceType must own at least one module face."
+    );
+
+    static_assert(
+        SphereSpaceType::moduleFacesN_ <= SphereSpaceType::totalFacetsN_,
+        "SphereSpaceType::moduleFacesN_ cannot exceed totalFacetsN_."
+    );
+
+    constexpr std::size_t kModuleCount =
+        SphereSpaceType::moduleFacesN_;
+
+    constexpr std::size_t kRepresentativeFaceIndex =
+        SphereSpaceType::moduleFaceIndices_[0];
+
+    using Chain0 =
+        CameraSpaceChain<SphereSpaceType, kRepresentativeFaceIndex>;
+
+    using Icosahedron0SpaceType =
+        typename Chain0::IcosahedronSpaceType;
+
+    using Overlap0SpaceType =
+        typename Chain0::OverlapSpaceType;
+
+    using RegularPolygonal0SpaceType =
+        typename Chain0::RegularPolygonalSpaceType;
+
+    using GlobalLinear0SpaceType =
+        typename Chain0::GlobalLinearSpaceType;
+
+    static_assert(DASPi::IcosahedronSpace_t<Icosahedron0SpaceType>);
+    static_assert(DASPi::OverlapSpace_t<Overlap0SpaceType>);
+    static_assert(DASPi::RegularPolygonalSpace_t<RegularPolygonal0SpaceType>);
+
+    /*
+     * Force instantiation down the full type chain:
+     *
+     * SphereSpaceType
+     *   -> IcosahedronSpace
+     *     -> OverlapSpace
+     *       -> RegularPolygonalSpace
+     *         -> GlobalLinearSpace
+     */
+    (void)sizeof(GlobalLinear0SpaceType);
+
+    /*
+     * Build the full icosahedron topology/rig.
+     *
+     * Important:
+     * Even if SphereSpaceType owns only a subset of faces, the topology still
+     * needs the full sphere because overlap streams need neighbor faces/edges.
+     */
+    MeshTopology<N> topo =
+        MakeMeshTopologyFromSphereSpace<SphereSpaceType, N>();
+
+    const RigData<N> rig =
+        BuildRigDataFromTopology(topo);
+
+    const auto& faces =
+        rig.faces;
+
+    const auto& vertices =
+        rig.vertices;
+
+    std::vector<int> moduleFaceIndices;
+    moduleFaceIndices.reserve(kModuleCount);
+
+    for (const std::size_t faceIndex :
+         SphereSpaceType::moduleFaceIndices_) {
+        if (faceIndex >= faces.size()) {
+            throw std::runtime_error(
+                "moduleFaceIndices_ contains face index out of rig range: " +
+                std::to_string(faceIndex)
+            );
+        }
+
+        moduleFaceIndices.push_back(
+            static_cast<int>(faceIndex)
+        );
     }
 
     if (moduleFaceIndices.empty()) {
         throw std::runtime_error("No module face indices were generated");
-    }
-
-    if (static_cast<int>(moduleFaceIndices.size()) != nApertureComputeModules) {
-        throw std::runtime_error("moduleFaceIndices size mismatch");
-    }
-
-    for (int faceIndex : moduleFaceIndices) {
-        if (faceIndex < 0 || faceIndex >= static_cast<int>(faces.size())) {
-            throw std::runtime_error("module face index out of range");
-        }
     }
 
     PrintRigAssignment(faces, moduleFaceIndices);
@@ -1907,80 +2168,144 @@ CameraSetup<N> makeCameraConfigs(int nApertureComputeModules)
         faces[static_cast<std::size_t>(moduleFaceIndices[0])];
 
     const Eigen::Matrix3d Rrig =
-        RotationAligningAToB(anchorFace.lookDir, Eigen::Vector3d(0.0, 0.0, 1.0));
+        RotationAligningAToB(
+            anchorFace.lookDir,
+            Eigen::Vector3d(0.0, 0.0, 1.0)
+        );
 
-    const Eigen::Matrix3d Ralign = CameraModelToRigAlignment();
+    const Eigen::Matrix3d Ralign =
+        CameraModelToRigAlignment();
 
     std::vector<Eigen::Matrix3d> moduleFaceRotations(
-        static_cast<std::size_t>(nApertureComputeModules),
-        Eigen::Matrix3d::Identity());
+        kModuleCount,
+        Eigen::Matrix3d::Identity()
+    );
 
-    if (nApertureComputeModules == 1) {
-        const int faceIndex = moduleFaceIndices[0];
-        const RigFace<N>& face = faces[static_cast<std::size_t>(faceIndex)];
+    if constexpr (kModuleCount == 1) {
+        const int faceIndex =
+            moduleFaceIndices[0];
 
-        moduleFaceRotations[0] = MakeCameraRcwFromFace<N>(face, vertices);
-    } else if (nApertureComputeModules == 2) {
-        const int faceIndex0 = moduleFaceIndices[0];
-        const int faceIndex1 = moduleFaceIndices[1];
+        const RigFace<N>& face =
+            faces[static_cast<std::size_t>(faceIndex)];
 
-        const RigFace<N>& face0 = faces[static_cast<std::size_t>(faceIndex0)];
-        const RigFace<N>& face1 = faces[static_cast<std::size_t>(faceIndex1)];
+        moduleFaceRotations[0] =
+            MakeCameraRcwFromFace<N>(face, vertices);
+    } else if constexpr (kModuleCount == 2) {
+        const int faceIndex0 =
+            moduleFaceIndices[0];
 
-        const auto sharedEdge = FindSharedEdgeVertices(face0, face1);
+        const int faceIndex1 =
+            moduleFaceIndices[1];
+
+        const RigFace<N>& face0 =
+            faces[static_cast<std::size_t>(faceIndex0)];
+
+        const RigFace<N>& face1 =
+            faces[static_cast<std::size_t>(faceIndex1)];
+
+        const auto sharedEdge =
+            FindSharedEdgeVertices(face0, face1);
 
         Eigen::Vector3d seam0 =
-            MakeFaceSeamTangent(face0, vertices, sharedEdge[0], sharedEdge[1]);
+            MakeFaceSeamTangent(
+                face0,
+                vertices,
+                sharedEdge[0],
+                sharedEdge[1]
+            );
+
         Eigen::Vector3d seam1 =
-            MakeFaceSeamTangent(face1, vertices, sharedEdge[0], sharedEdge[1]);
+            MakeFaceSeamTangent(
+                face1,
+                vertices,
+                sharedEdge[0],
+                sharedEdge[1]
+            );
 
         if (seam0.dot(seam1) < 0.0) {
             seam1 = -seam1;
         }
 
         moduleFaceRotations[0] =
-            MakeCameraRcwFromForwardAndUpHint(face0.lookDir, seam0);
-        moduleFaceRotations[1] =
-            MakeCameraRcwFromForwardAndUpHint(face1.lookDir, seam1);
-    } else {
-        for (int module = 0; module < nApertureComputeModules; ++module) {
-            const int faceIndex = moduleFaceIndices[static_cast<std::size_t>(module)];
-            const RigFace<N>& face = faces[static_cast<std::size_t>(faceIndex)];
+            MakeCameraRcwFromForwardAndUpHint(
+                face0.lookDir,
+                seam0
+            );
 
-            moduleFaceRotations[static_cast<std::size_t>(module)] =
-                MakeCameraRcwFromFace(face, vertices);
+        moduleFaceRotations[1] =
+            MakeCameraRcwFromForwardAndUpHint(
+                face1.lookDir,
+                seam1
+            );
+    } else {
+        for (std::size_t module = 0;
+             module < kModuleCount;
+             ++module) {
+            const int faceIndex =
+                moduleFaceIndices[module];
+
+            const RigFace<N>& face =
+                faces[static_cast<std::size_t>(faceIndex)];
+
+            moduleFaceRotations[module] =
+                MakeCameraRcwFromFace<N>(face, vertices);
         }
     }
 
     std::vector<CameraConfig> configs;
-    configs.reserve(TotalCameraCount(nApertureComputeModules));
+    configs.reserve(
+        TotalCameraCount(static_cast<int>(kModuleCount))
+    );
 
-    constexpr std::size_t kFaceEdgeCount = N;
-    static_assert(kCamerasPerModule == kFaceEdgeCount + 1,
-                  "Expected one non-overlap stream plus one overlap stream per face edge");
+    constexpr std::size_t kFaceEdgeCount =
+        SphereSpaceType::verticesPerFaceN_;
 
-    for (int module = 0; module < nApertureComputeModules; ++module) {
-        const int faceIndex = moduleFaceIndices[static_cast<std::size_t>(module)];
-        const RigFace<N>& face = faces[static_cast<std::size_t>(faceIndex)];
+    static_assert(kFaceEdgeCount == N);
+    static_assert(kFaceEdgeCount == Overlap0SpaceType::n_);
+    static_assert(kFaceEdgeCount == RegularPolygonal0SpaceType::n_);
+
+    static_assert(
+        kCamerasPerModule == kFaceEdgeCount + 1,
+        "Expected one non-overlap stream plus one overlap stream per face edge"
+    );
+
+    for (std::size_t module = 0;
+         module < kModuleCount;
+         ++module) {
+        const int moduleIndex =
+            static_cast<int>(module);
+
+        const int faceIndex =
+            moduleFaceIndices[module];
+
+        const RigFace<N>& face =
+            faces[static_cast<std::size_t>(faceIndex)];
 
         const Eigen::Matrix3d& Rface =
-            moduleFaceRotations[static_cast<std::size_t>(module)];
+            moduleFaceRotations[module];
 
-        const ImageRotation imageRotation = ImageRotation::None;
-        //Eigen::Matrix3d Rimg = Eigen::Matrix3d::Identity();
+        const ImageRotation imageRotation =
+            ImageRotation::None;
 
-		//const ImageRotation imageRotation = ImageRotation::None;
-		
-		const double cameraRollDeg = CameraLocalRollDegForModule(module);
-		const Eigen::Matrix3d Rimg = CameraRollDeg(cameraRollDeg);
-		
-		const Eigen::Matrix3d Rfinal = Rrig * Rface * Ralign * Rimg;
+        const double cameraRollDeg =
+            CameraLocalRollDegForModule(moduleIndex);
 
-        const Eigen::Vector3d camRightWorld   = Rfinal.col(0);
-        const Eigen::Vector3d camUpWorld      = Rfinal.col(1);
-        const Eigen::Vector3d camForwardWorld = Rfinal.col(2);
+        const Eigen::Matrix3d Rimg =
+            CameraRollDeg(cameraRollDeg);
 
-        std::cout << "[camera config] module=" << module
+        const Eigen::Matrix3d Rfinal =
+            Rrig * Rface * Ralign * Rimg;
+
+        const Eigen::Vector3d camRightWorld =
+            Rfinal.col(0);
+
+        const Eigen::Vector3d camUpWorld =
+            Rfinal.col(1);
+
+        const Eigen::Vector3d camForwardWorld =
+            Rfinal.col(2);
+
+        std::cout << "[camera config] module=" << moduleIndex
                   << " faceIndex=" << faceIndex
                   << " lookDir=(" << face.lookDir.transpose() << ")"
                   << " camRightWorld=(" << camRightWorld.transpose() << ")"
@@ -1988,29 +2313,49 @@ CameraSetup<N> makeCameraConfigs(int nApertureComputeModules)
                   << " camForwardWorld=(" << camForwardWorld.transpose() << ")"
                   << '\n';
 
-        if (nApertureComputeModules == 2) {
-            const int otherModule = (module == 0) ? 1 : 0;
+        if constexpr (kModuleCount == 2) {
+            const std::size_t otherModule =
+                (module == 0) ? 1 : 0;
+
             const int otherFaceIndex =
-                moduleFaceIndices[static_cast<std::size_t>(otherModule)];
+                moduleFaceIndices[otherModule];
+
             const RigFace<N>& otherFace =
                 faces[static_cast<std::size_t>(otherFaceIndex)];
 
-            const auto sharedEdge = FindSharedEdgeVertices(face, otherFace);
-            Eigen::Vector3d seam =
-                MakeFaceSeamTangent(face, vertices, sharedEdge[0], sharedEdge[1]);
+            const auto sharedEdge =
+                FindSharedEdgeVertices(face, otherFace);
+
+            const Eigen::Vector3d seam =
+                MakeFaceSeamTangent(
+                    face,
+                    vertices,
+                    sharedEdge[0],
+                    sharedEdge[1]
+                );
 
             std::cout << "  seam=(" << seam.transpose() << ")\n";
         }
 
-        // Stream 0 = non-overlap interior of owning face
+        /*
+         * Stream 0:
+         *
+         * SphereSpaceType
+         *   -> FacetSpace_t<face>
+         *     -> IcosahedronSpace<face>
+         */
         {
             CameraConfig cfg;
-            cfg.name = "module_" + std::to_string(module) + "_cam_0";
+
+            cfg.name =
+                "module_" + std::to_string(moduleIndex) + "_cam_0";
+
             cfg.device = "";
             cfg.sourceName = "";
             cfg.imageRotation = imageRotation;
             cfg.Rcw = Rfinal;
-            cfg.moduleIndex = module;
+            cfg.localRollDeg = cameraRollDeg;
+            cfg.moduleIndex = moduleIndex;
             cfg.sensorValidMask = cv::Mat();
             cfg.faceIndex = faceIndex;
 
@@ -2023,98 +2368,129 @@ CameraSetup<N> makeCameraConfigs(int nApertureComputeModules)
             configs.push_back(std::move(cfg));
         }
 
-		// Streams 1..N = overlap regions, one per local face edge
-		for (std::size_t localEdge = 0; localEdge < kFaceEdgeCount; ++localEdge) {
-		    constexpr int kOverlapLocalEdgeOffset = 0; // try +1, then -1 if wrong
+        /*
+         * Streams 1..N:
+         *
+         * SphereSpaceType
+         *   -> IcosahedronSpace<face>
+         *     -> OverlapSpace
+         *       -> RegularPolygonalSpace
+         *         -> GlobalLinearSpace
+         */
+        for (std::size_t localEdge = 0;
+             localEdge < kFaceEdgeCount;
+             ++localEdge) {
+            constexpr int kOverlapLocalEdgeOffset = 0;
 
-			const int maskSlot = static_cast<int>(localEdge);
-			const int edgeCount = static_cast<int>(kFaceEdgeCount);
-			
-			const int localEdgeIndex =
-			    (maskSlot + kOverlapLocalEdgeOffset + edgeCount) % edgeCount;
-		
-		    const int neighborFaceIndex =
-		        topo.faceNeighborIndices[static_cast<std::size_t>(faceIndex)]
-		                                [static_cast<std::size_t>(localEdgeIndex)];
-		
-		    const int edgeIndex =
-		        topo.faceEdgeIndices[static_cast<std::size_t>(faceIndex)]
-		                            [static_cast<std::size_t>(localEdgeIndex)];
-		
-		    if (neighborFaceIndex < 0) {
-		        throw std::runtime_error(
-		            "Missing neighborFaceIndex for face " + std::to_string(faceIndex) +
-		            " localEdge " + std::to_string(localEdgeIndex));
-		    }
-		
-		    if (edgeIndex < 0) {
-		        throw std::runtime_error(
-		            "Missing edgeIndex for face " + std::to_string(faceIndex) +
-		            " localEdge " + std::to_string(localEdgeIndex));
-		    }
-		
-		    const bool seamDirectionReversed =
-		        IsLocalEdgeReversedRelativeToTopology<N>(
-		            topo,
-		            faceIndex,
-		            localEdgeIndex,
-		            edgeIndex);
-		
-		    const auto& faceVerts =
-		        topo.faces[static_cast<std::size_t>(faceIndex)];
-		
-		    const std::size_t localV0 =
-		        faceVerts[static_cast<std::size_t>(localEdgeIndex)];
-		
-		    const std::size_t localV1 =
-		        faceVerts[(static_cast<std::size_t>(localEdgeIndex) + 1) % N];
-		
-		    const auto& topoEdge =
-		        topo.edges[static_cast<std::size_t>(edgeIndex)];
-		
-		    CameraConfig cfg;
-		    cfg.name = "module_" + std::to_string(module) + "_cam_" +
-		               std::to_string(static_cast<int>(localEdge) + 1);
-		
-		    cfg.device = "";
-		    cfg.sourceName = "";
-		    cfg.imageRotation = imageRotation;
-		    cfg.Rcw = Rfinal;
-		    cfg.moduleIndex = module;
-		    cfg.sensorValidMask = cv::Mat();
-		    cfg.faceIndex = faceIndex;
-		
-			cfg.localStreamIndex = maskSlot + 1;
-			cfg.localEdgeIndex = localEdgeIndex;
-			cfg.neighborFaceIndex = neighborFaceIndex;
-			cfg.edgeIndex = edgeIndex;
-		    cfg.seamDirectionReversed = seamDirectionReversed;
-		
-			std::cout << "[camera config overlap] "
-			          << "cfg.name=" << cfg.name
-			          << " module=" << cfg.moduleIndex
-			          << " faceIndex=" << cfg.faceIndex
-			          << " localStreamIndex=" << cfg.localStreamIndex
-			          << " maskSlot=" << maskSlot
-			          << " edgeOffset=" << kOverlapLocalEdgeOffset
-			          << " mappedLocalEdgeIndex=" << cfg.localEdgeIndex
-			          << " localEdge=(" << localV0 << " -> " << localV1 << ")"
-			          << " topologyEdge=(" << topoEdge.vertices[0]
-			          << " -> " << topoEdge.vertices[1] << ")"
-			          << " seamDirectionReversed="
-			          << (cfg.seamDirectionReversed ? "true" : "false")
-			          << " neighborFaceIndex=" << cfg.neighborFaceIndex
-			          << " edgeIndex=" << cfg.edgeIndex
-			          << '\n';
-		
-		    configs.push_back(std::move(cfg));
-		}
+            const int maskSlot =
+                static_cast<int>(localEdge);
+
+            const int edgeCount =
+                static_cast<int>(kFaceEdgeCount);
+
+            const int localEdgeIndex =
+                (maskSlot + kOverlapLocalEdgeOffset + edgeCount) %
+                edgeCount;
+
+            const int neighborFaceIndex =
+                topo.faceNeighborIndices[
+                    static_cast<std::size_t>(faceIndex)
+                ][static_cast<std::size_t>(localEdgeIndex)];
+
+            const int edgeIndex =
+                topo.faceEdgeIndices[
+                    static_cast<std::size_t>(faceIndex)
+                ][static_cast<std::size_t>(localEdgeIndex)];
+
+            if (neighborFaceIndex < 0) {
+                throw std::runtime_error(
+                    "Missing neighborFaceIndex for face " +
+                    std::to_string(faceIndex) +
+                    " localEdge " +
+                    std::to_string(localEdgeIndex)
+                );
+            }
+
+            if (edgeIndex < 0) {
+                throw std::runtime_error(
+                    "Missing edgeIndex for face " +
+                    std::to_string(faceIndex) +
+                    " localEdge " +
+                    std::to_string(localEdgeIndex)
+                );
+            }
+
+            const bool seamDirectionReversed =
+                IsLocalEdgeReversedRelativeToTopology<N>(
+                    topo,
+                    faceIndex,
+                    localEdgeIndex,
+                    edgeIndex
+                );
+
+            const auto& faceVerts =
+                topo.faces[static_cast<std::size_t>(faceIndex)];
+
+            const std::size_t localV0 =
+                faceVerts[static_cast<std::size_t>(localEdgeIndex)];
+
+            const std::size_t localV1 =
+                faceVerts[
+                    (static_cast<std::size_t>(localEdgeIndex) + 1) %
+                    N
+                ];
+
+            const auto& topoEdge =
+                topo.edges[static_cast<std::size_t>(edgeIndex)];
+
+            CameraConfig cfg;
+
+            cfg.name =
+                "module_" + std::to_string(moduleIndex) +
+                "_cam_" +
+                std::to_string(maskSlot + 1);
+
+            cfg.device = "";
+            cfg.sourceName = "";
+            cfg.imageRotation = imageRotation;
+            cfg.Rcw = Rfinal;
+            cfg.localRollDeg = cameraRollDeg;
+            cfg.moduleIndex = moduleIndex;
+            cfg.sensorValidMask = cv::Mat();
+            cfg.faceIndex = faceIndex;
+
+            cfg.localStreamIndex = maskSlot + 1;
+            cfg.localEdgeIndex = localEdgeIndex;
+            cfg.neighborFaceIndex = neighborFaceIndex;
+            cfg.edgeIndex = edgeIndex;
+            cfg.seamDirectionReversed = seamDirectionReversed;
+
+            std::cout << "[camera config overlap] "
+                      << "cfg.name=" << cfg.name
+                      << " module=" << cfg.moduleIndex
+                      << " faceIndex=" << cfg.faceIndex
+                      << " localStreamIndex=" << cfg.localStreamIndex
+                      << " maskSlot=" << maskSlot
+                      << " edgeOffset=" << kOverlapLocalEdgeOffset
+                      << " mappedLocalEdgeIndex=" << cfg.localEdgeIndex
+                      << " localEdge=(" << localV0 << " -> " << localV1 << ")"
+                      << " topologyEdge=(" << topoEdge.vertices[0]
+                      << " -> " << topoEdge.vertices[1] << ")"
+                      << " seamDirectionReversed="
+                      << (cfg.seamDirectionReversed ? "true" : "false")
+                      << " neighborFaceIndex=" << cfg.neighborFaceIndex
+                      << " edgeIndex=" << cfg.edgeIndex
+                      << '\n';
+
+            configs.push_back(std::move(cfg));
+        }
     }
 
     CameraSetup<N> setup;
-	setup.configs = std::move(configs);
-	setup.rig = rig;
-	return setup;
+    setup.configs = std::move(configs);
+    setup.rig = rig;
+    setup.moduleFaceIndices = std::move(moduleFaceIndices);
+    return setup;
 }
 
 //std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
@@ -2597,150 +2973,177 @@ bool haveAnyFrames(std::vector<LiveCameraState>& liveCameras)
     return false;
 }
 
-template <size_t N>
-void StartPeerThreads(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePeers,
-                      std::vector<LiveCameraState>& liveCameras,
-                      std::vector<std::jthread>& frameThreads,
-                      std::vector<std::jthread>& controlThreads,
-                      bool reverseModuleOrder)
+template<class SphereSpaceType>
+void StartPeerThreads(
+    std::vector<std::unique_ptr<DASPi::AperturePeerBase>>& aperturePeers,
+    std::vector<LiveCameraState>& liveCameras,
+    std::vector<std::jthread>& frameThreads,
+    std::vector<std::jthread>& controlThreads,
+    bool reverseModuleOrder)
 {
-	log_verbose("[StartPeerThreads]");
+    static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
+
+    constexpr std::size_t kLocalCameraCount =
+        SphereSpaceType::verticesPerFaceN_ + 1;
+
+    log_verbose("[StartPeerThreads]");
+
     std::cout << "[main] Starting per-peer frame/control threads\n";
 
-    frameThreads.reserve(aperturePeers.size());
-    controlThreads.reserve(aperturePeers.size());
+    frameThreads.reserve(frameThreads.size() + aperturePeers.size());
+    controlThreads.reserve(controlThreads.size() + aperturePeers.size());
 
-    for (size_t peerIndex = 0; peerIndex < aperturePeers.size(); ++peerIndex) {
-        const size_t moduleIndex =
-            PeerToModuleIndex(peerIndex, aperturePeers.size(), reverseModuleOrder);
+    for (std::size_t peerIndex = 0;
+         peerIndex < aperturePeers.size();
+         ++peerIndex) {
 
-        AperturePeer<N>* peer = aperturePeers[peerIndex].get();
+        if (!aperturePeers[peerIndex]) {
+            throw std::runtime_error(
+                "StartPeerThreads: null AperturePeer at peerIndex=" +
+                std::to_string(peerIndex)
+            );
+        }
 
-        frameThreads.emplace_back([peer, peerIndex, moduleIndex, &liveCameras]() {
-            std::vector<uint16_t> raw;
-            raw.reserve(kExpectedPixels);
-            //std::uint64_t frameCounter = 0;
-            std::uint64_t noFrameLoopCount = 0;
-            std::uint64_t runFrameLoopFailCount = 0;
+        const std::size_t moduleIndex =
+            PeerToModuleIndex(
+                peerIndex,
+                aperturePeers.size(),
+                reverseModuleOrder
+            );
 
-            for (;;) {
-                if (!peer->RunFrameLoop()) {
-                    ++runFrameLoopFailCount;
-                    std::cerr << "[frame thread] RunFrameLoop failed for peer "
-                              << peerIndex << " (module " << moduleIndex << ")\n";
-                    if ((runFrameLoopFailCount % kSignatureLogEvery) == 0) {
-                        std::cout << "[frame warning] peer=" << peerIndex
-                                  << " module=" << moduleIndex
-                                  << " RunFrameLoop failed for "
-                                  << runFrameLoopFailCount
-                                  << " consecutive attempts\n";
-                    }
-                    std::this_thread::sleep_for(kRetryDelay);
-                    continue;
-                }
-                runFrameLoopFailCount = 0;
+        DASPi::AperturePeerBase* peer =
+            aperturePeers[peerIndex].get();
 
-                bool gotAnyFrameThisLoop = false;
-                bool gotStream0ThisLoop = false;
-                bool gotStream1ThisLoop = false;
+        frameThreads.emplace_back(
+            [peer, peerIndex, moduleIndex, &liveCameras]() {
+                std::vector<uint16_t> raw;
+                raw.reserve(kExpectedPixels);
 
-                for (size_t localCameraIndex = 0; localCameraIndex < (N + 1); ++localCameraIndex) {
-                    raw.clear();
+                std::uint64_t noFrameLoopCount = 0;
+                std::uint64_t runFrameLoopFailCount = 0;
 
-                    if (!tryCopyLatestFrameFromPeer(*peer, localCameraIndex, raw)) {
-                        continue;
-                    }
-                    gotAnyFrameThisLoop = true;
-                    if (localCameraIndex == 0) {
-                        gotStream0ThisLoop = true;
-                    }
-                    if (localCameraIndex == 1) {
-                        gotStream1ThisLoop = true;
-                    }
+                for (;;) {
+                    if (!peer->RunFrameLoop()) {
+                        ++runFrameLoopFailCount;
 
-                    if (static_cast<int>(raw.size()) != kExpectedPixels) {
-                        std::cerr << "[frame thread] unexpected Bayer size for peer "
-                                  << peerIndex << " (module " << moduleIndex << ")"
-                                  << " localCameraIndex=" << localCameraIndex
-                                  << " size=" << raw.size()
-                                  << " expected=" << kExpectedPixels << '\n';
+                        std::cerr << "[frame thread] RunFrameLoop failed for peer "
+                                  << peerIndex
+                                  << " (module " << moduleIndex << ")\n";
+
+                        if ((runFrameLoopFailCount % kSignatureLogEvery) == 0) {
+                            std::cout << "[frame warning] peer=" << peerIndex
+                                      << " module=" << moduleIndex
+                                      << " RunFrameLoop failed for "
+                                      << runFrameLoopFailCount
+                                      << " consecutive attempts\n";
+                        }
+
+                        std::this_thread::sleep_for(kRetryDelay);
                         continue;
                     }
 
-                    const size_t globalIndex =
-                        GlobalCameraIndex(moduleIndex, localCameraIndex);
+                    runFrameLoopFailCount = 0;
 
-                    if (globalIndex >= liveCameras.size()) {
-                        std::cerr << "[frame thread] globalIndex out of range (peer "
-                                  << peerIndex << ", module " << moduleIndex << "): "
-                                  << globalIndex
-                                  << " liveCameras.size()=" << liveCameras.size() << '\n';
-                        continue;
+                    bool gotAnyFrameThisLoop = false;
+                    bool gotStream0ThisLoop = false;
+                    bool gotStream1ThisLoop = false;
+
+                    for (std::size_t localCameraIndex = 0;
+                         localCameraIndex < kLocalCameraCount;
+                         ++localCameraIndex) {
+
+                        raw.clear();
+
+                        if (!peer->TryCopyLatestFrame(localCameraIndex, raw)) {
+                            continue;
+                        }
+
+                        gotAnyFrameThisLoop = true;
+
+                        if (localCameraIndex == 0) {
+                            gotStream0ThisLoop = true;
+                        }
+
+                        if (localCameraIndex == 1) {
+                            gotStream1ThisLoop = true;
+                        }
+
+                        if (static_cast<int>(raw.size()) != kExpectedPixels) {
+                            std::cerr << "[frame thread] unexpected Bayer size for peer "
+                                      << peerIndex
+                                      << " (module " << moduleIndex << ")"
+                                      << " localCameraIndex=" << localCameraIndex
+                                      << " size=" << raw.size()
+                                      << " expected=" << kExpectedPixels
+                                      << '\n';
+                            continue;
+                        }
+
+                        const std::size_t globalIndex =
+                            GlobalCameraIndex(moduleIndex, localCameraIndex);
+
+                        if (globalIndex >= liveCameras.size()) {
+                            std::cerr << "[frame thread] globalIndex out of range "
+                                      << "(peer " << peerIndex
+                                      << ", module " << moduleIndex << "): "
+                                      << globalIndex
+                                      << " liveCameras.size()="
+                                      << liveCameras.size()
+                                      << '\n';
+                            continue;
+                        }
+
+                        cv::Mat bgr =
+                            decodeBayer16ToBgr8(raw);
+
+                        updateLatestFrame(
+                            liveCameras[globalIndex].frame,
+                            bgr
+                        );
                     }
 
-                    cv::Mat bgr = decodeBayer16ToBgr8(raw);
-                    updateLatestFrame(liveCameras[globalIndex].frame, bgr);
-                    gotAnyFrameThisLoop = true;
-                    if (localCameraIndex == 0) {
-                        gotStream0ThisLoop = true;
-                    }
-                    if (localCameraIndex == 1) {
-                        gotStream1ThisLoop = true;
-                    }
+                    if (!gotAnyFrameThisLoop) {
+                        ++noFrameLoopCount;
 
-                    //const bool shouldLogSignature =
-                        //((++frameCounter % kSignatureLogEvery) == 0) &&
-                        //(localCameraIndex == 0 || localCameraIndex == 1);
+                        if ((noFrameLoopCount % kSignatureLogEvery) == 0) {
+                            std::cout << "[frame warning] peer=" << peerIndex
+                                      << " module=" << moduleIndex
+                                      << " has not published any frames for "
+                                      << noFrameLoopCount
+                                      << " RunFrameLoop cycles\n";
+                        }
+                    } else if (!gotStream0ThisLoop || !gotStream1ThisLoop) {
+                        ++noFrameLoopCount;
 
-                    //if (shouldLogSignature) {
-                        //const cv::Scalar meanBgr = cv::mean(bgr);
-                        //std::cout << "[frame signature] peer=" << peerIndex
-                                  //<< " module=" << moduleIndex
-                                  //<< " global=" << globalIndex
-                                  //<< " local=" << localCameraIndex
-                                  //<< " meanBGR=("
-                                  //<< meanBgr[0] << ","
-                                  //<< meanBgr[1] << ","
-                                  //<< meanBgr[2] << ")\n";
-                    //}
-                }
-
-                if (!gotAnyFrameThisLoop) {
-                    ++noFrameLoopCount;
-                    if ((noFrameLoopCount % kSignatureLogEvery) == 0) {
-                        std::cout << "[frame warning] peer=" << peerIndex
-                                  << " module=" << moduleIndex
-                                  << " has not published any frames for "
-                                  << noFrameLoopCount
-                                  << " RunFrameLoop cycles\n";
+                        if ((noFrameLoopCount % kSignatureLogEvery) == 0) {
+                            std::cout << "[frame warning] peer=" << peerIndex
+                                      << " module=" << moduleIndex
+                                      << " missing stream(s):"
+                                      << (gotStream0ThisLoop ? "" : " 0")
+                                      << (gotStream1ThisLoop ? "" : " 1")
+                                      << " for "
+                                      << noFrameLoopCount
+                                      << " RunFrameLoop cycles\n";
+                        }
+                    } else {
+                        noFrameLoopCount = 0;
                     }
-                } else if (!gotStream0ThisLoop || !gotStream1ThisLoop) {
-                    ++noFrameLoopCount;
-                    if ((noFrameLoopCount % kSignatureLogEvery) == 0) {
-                        std::cout << "[frame warning] peer=" << peerIndex
-                                  << " module=" << moduleIndex
-                                  << " missing stream(s):"
-                                  << (gotStream0ThisLoop ? "" : " 0")
-                                  << (gotStream1ThisLoop ? "" : " 1")
-                                  << " for "
-                                  << noFrameLoopCount
-                                  << " RunFrameLoop cycles\n";
-                    }
-                } else {
-                    noFrameLoopCount = 0;
                 }
             }
-        });
+        );
 
-        controlThreads.emplace_back([peer, peerIndex, moduleIndex]() {
-            for (;;) {
-                if (!peer->RunControlLoop()) {
-                    std::cerr << "[control thread] RunControlLoop failed for peer "
-                              << peerIndex << " (module " << moduleIndex << ")\n";
-                    break;
+        controlThreads.emplace_back(
+            [peer, peerIndex, moduleIndex]() {
+                for (;;) {
+                    if (!peer->RunControlLoop()) {
+                        std::cerr << "[control thread] RunControlLoop failed for peer "
+                                  << peerIndex
+                                  << " (module " << moduleIndex << ")\n";
+                        break;
+                    }
                 }
             }
-        });
+        );
     }
 
     std::cout << "[main] Threads running\n";
@@ -3011,41 +3414,85 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
     cv::destroyWindow("Stitched Panorama");
 }
 
-template <size_t N>
-void InitializeCameraMasks(std::vector<std::unique_ptr<AperturePeer<N>>>& aperturePeers,
-                           std::vector<LiveCameraState>& liveCameras,
-                           bool reverseModuleOrder)
+template<class SphereSpaceType>
+void InitializeCameraMasks(
+    std::vector<std::unique_ptr<AperturePeerBase>>& aperturePeers,
+    std::vector<LiveCameraState>& liveCameras,
+    bool reverseModuleOrder)
 {
+    static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
 
-	
-    for (size_t peerIndex = 0; peerIndex < aperturePeers.size(); ++peerIndex) {
-        const size_t moduleIndex =
-            PeerToModuleIndex(peerIndex, aperturePeers.size(), reverseModuleOrder);
-        AperturePeer<N>* peer = aperturePeers[peerIndex].get();
-          
-        for (size_t localCameraIndex = 0; localCameraIndex < N + 1; ++localCameraIndex) {
-            const size_t globalIndex = GlobalCameraIndex(moduleIndex, localCameraIndex);
+    constexpr std::size_t kLocalCameraCount =
+        SphereSpaceType::verticesPerFaceN_ + 1;
+
+    for (std::size_t peerIndex = 0;
+         peerIndex < aperturePeers.size();
+         ++peerIndex) {
+
+        if (!aperturePeers[peerIndex]) {
+            throw std::runtime_error(
+                "InitializeCameraMasks: null AperturePeer at peerIndex=" +
+                std::to_string(peerIndex)
+            );
+        }
+
+        const std::size_t moduleIndex =
+            PeerToModuleIndex(
+                peerIndex,
+                aperturePeers.size(),
+                reverseModuleOrder
+            );
+
+        AperturePeerBase* peer =
+            aperturePeers[peerIndex].get();
+
+        for (std::size_t localCameraIndex = 0;
+             localCameraIndex < kLocalCameraCount;
+             ++localCameraIndex) {
+
+            const std::size_t globalIndex =
+                GlobalCameraIndex(moduleIndex, localCameraIndex);
+
+            if (globalIndex >= liveCameras.size()) {
+                throw std::runtime_error(
+                    "InitializeCameraMasks: global camera index out of range. "
+                    "globalIndex=" + std::to_string(globalIndex) +
+                    " liveCameras.size()=" + std::to_string(liveCameras.size())
+                );
+            }
 
             cv::Mat validMask;
-            if (!peer->CopyValidMask(localCameraIndex, validMask)) {
-                throw std::runtime_error("Failed to initialize valid mask for module " +
-                                         std::to_string(moduleIndex) +
-                                         ", localCameraIndex=" +
-                                         std::to_string(localCameraIndex));
-            }
-            
-            std::cout << "[InitializeCameraMasks] peer=" << peerIndex
-              << " module=" << moduleIndex
-	          << " local=" << localCameraIndex
-	          << " global=" << globalIndex
-	          << " copyOk=" << (peer->CopyValidMask(localCameraIndex, validMask) ? 1 : 0)
-	          << " nz=" << (validMask.empty() ? -1 : cv::countNonZero(validMask))
-	          << '\n';
 
-            liveCameras[globalIndex].validMask = std::move(validMask);
+            const bool copyOk =
+                peer->CopyValidMask(localCameraIndex, validMask);
+
+            if (!copyOk) {
+                throw std::runtime_error(
+                    "Failed to initialize valid mask for module " +
+                    std::to_string(moduleIndex) +
+                    ", localCameraIndex=" +
+                    std::to_string(localCameraIndex)
+                );
+            }
+
+            std::cout << "[InitializeCameraMasks] peer=" << peerIndex
+                      << " module=" << moduleIndex
+                      << " local=" << localCameraIndex
+                      << " global=" << globalIndex
+                      << " copyOk=" << (copyOk ? 1 : 0)
+                      << " nz=" << (validMask.empty()
+                                     ? -1
+                                     : cv::countNonZero(validMask))
+                      << '\n';
+
+            liveCameras[globalIndex].validMask =
+                std::move(validMask);
+
             liveCameras[globalIndex].role =
-                (localCameraIndex == 0) ? LogicalStreamRole::NonOverlap
-                                        : LogicalStreamRole::Overlap;
+                (localCameraIndex == 0)
+                    ? LogicalStreamRole::NonOverlap
+                    : LogicalStreamRole::Overlap;
+
             liveCameras[globalIndex].hasMask = true;
         }
     }
@@ -3101,11 +3548,70 @@ int main(int argc, char* argv[])
         const ProgramOptions options = ParseArgs(argc, argv);
         PrintProgramOptions(options);
 
-        const NetworkAddressPlan addressPlan = BuildNetworkAddressPlan(options);
+        const NetworkAddressPlan addressPlan =
+            BuildNetworkAddressPlan(options);
+
         PrintAddressPlan(addressPlan);
 
-        constexpr size_t n = kOverlapStreams;
-        auto aperturePeers = CreateAperturePeers<n>(options, addressPlan);
+        /*
+         * Pick the compile-time sphere/module layout here.
+         *
+         * This is now the single source of truth for:
+         *   - total icosahedron face count
+         *   - module-owned face count
+         *   - module-owned face indices
+         */
+        using SphereSpaceType =
+            DASPi::IcosahedronModuleSphereSpace<0, 1>;
+
+        static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
+
+        constexpr std::size_t n =
+            SphereSpaceType::verticesPerFaceN_;
+
+        constexpr std::size_t kModuleCount =
+            SphereSpaceType::moduleFacesN_;
+
+        static_assert(
+            n == kOverlapStreams,
+            "kOverlapStreams must match SphereSpaceType::verticesPerFaceN_"
+        );
+
+        static_assert(
+            kCamerasPerModule == n + 1,
+            "Expected one non-overlap stream plus one overlap stream per face edge"
+        );
+
+        static_assert(
+            kModuleCount > 0,
+            "SphereSpaceType must own at least one module face"
+        );
+
+        static_assert(
+            kModuleCount <= SphereSpaceType::totalFacetsN_,
+            "SphereSpaceType::moduleFacesN_ cannot exceed totalFacetsN_"
+        );
+
+        /*
+         * Runtime sanity check:
+         *
+         * The executable was compiled for SphereSpaceType::moduleFacesN_ modules.
+         * The command-line option should match that, but it should no longer
+         * decide the geometry.
+         */
+        if (options.nApertureComputeModules !=
+            static_cast<int>(kModuleCount)) {
+            throw std::runtime_error(
+                "nApertureComputeModules does not match "
+                "SphereSpaceType::moduleFacesN_. Runtime option=" +
+                std::to_string(options.nApertureComputeModules) +
+                " compile-time moduleFacesN_=" +
+                std::to_string(kModuleCount)
+            );
+        }
+
+        auto aperturePeers =
+            CreateAperturePeers<SphereSpaceType>(options, addressPlan);
 
         const FisheyeParams fisheyeParams{
             .fx = 600.0,
@@ -3115,83 +3621,125 @@ int main(int argc, char* argv[])
             .maxImageRadiusPx = 728.0
         };
 
-        const size_t totalCameras =
-            TotalCameraCount(options.nApertureComputeModules);
+        const std::size_t totalCameras =
+            TotalCameraCount(static_cast<int>(kModuleCount));
 
-        // Build topology once and use it as the single source of truth
-        // for both rig geometry and module face assignment.
-        IcosahedronTopology topologyBuilder;
-        const MeshTopology<3> topo = topologyBuilder.Make();
+        /*
+         * This is now driven by SphereSpaceType:
+         *
+         * SphereSpaceType
+         *   -> IcosahedronSpace
+         *     -> OverlapSpace
+         *       -> RegularPolygonalSpace
+         *         -> GlobalLinearSpace
+         *
+         * It also builds:
+         *   - CameraConfig list
+         *   - RigData
+         *   - moduleFaceIndices
+         */
+        CameraSetup<n> cameraSetup =
+            makeCameraConfigs<n, SphereSpaceType>();
 
- 		CameraSetup<3> cameraSetup =
-		    makeCameraConfigs<3>(options.nApertureComputeModules);
-		
-		const std::vector<CameraConfig>& configs = cameraSetup.configs;
-		const RigData<3>& rig = cameraSetup.rig;
-		
-		auto cameras = CreateCameraViews(configs, fisheyeParams, rig);
-       //const RigData<3> rig = MakeRigData<3>(topo);
-        const auto& faces = rig.faces;
-        const auto& vertices = rig.vertices;
+        const std::vector<CameraConfig>& configs =
+            cameraSetup.configs;
 
-        const std::vector<int> moduleFaceIndices =
-            topologyBuilder.DefaultModuleOwningFaces(options.nApertureComputeModules);
+        const RigData<n>& rig =
+            cameraSetup.rig;
+
+        const std::vector<int>& moduleFaceIndices =
+            cameraSetup.moduleFaceIndices;
+
+        const auto& faces =
+            rig.faces;
+
+        const auto& vertices =
+            rig.vertices;
 
         if (moduleFaceIndices.empty()) {
             throw std::runtime_error("moduleFaceIndices is empty");
         }
 
+        if (moduleFaceIndices.size() != kModuleCount) {
+            throw std::runtime_error(
+                "moduleFaceIndices count does not match "
+                "SphereSpaceType::moduleFacesN_"
+            );
+        }
+
         for (int faceIndex : moduleFaceIndices) {
-            if (faceIndex < 0 || faceIndex >= static_cast<int>(faces.size())) {
-                throw std::runtime_error("moduleFaceIndices contains out-of-range face");
+            if (faceIndex < 0 ||
+                faceIndex >= static_cast<int>(faces.size())) {
+                throw std::runtime_error(
+                    "moduleFaceIndices contains out-of-range face"
+                );
             }
         }
+
+        auto cameras =
+            CreateCameraViews(configs, fisheyeParams, rig);
 
         PrintRigAssignment(faces, moduleFaceIndices);
 
-
-
-        if (configs.size() != totalCameras || cameras.size() != totalCameras) {
-            throw std::runtime_error("Logical camera count mismatch during initialization");
+        if (configs.size() != totalCameras ||
+            cameras.size() != totalCameras) {
+            throw std::runtime_error(
+                "Logical camera count mismatch during initialization"
+            );
         }
 
         std::vector<cv::Mat> moduleFaceMasks;
-        moduleFaceMasks.reserve(static_cast<size_t>(options.nApertureComputeModules));
+        moduleFaceMasks.reserve(kModuleCount);
 
-        for (int module = 0; module < options.nApertureComputeModules; ++module) {
-            const int faceIndex = moduleFaceIndices[static_cast<size_t>(module)];
-            const RigFace<3>& face = faces[static_cast<size_t>(faceIndex)];
+        for (std::size_t module = 0;
+             module < kModuleCount;
+             ++module) {
+            const int moduleIndex =
+                static_cast<int>(module);
 
-            const size_t logicalIndex =
-                static_cast<size_t>(module) * kCamerasPerModule;
+            const int faceIndex =
+                moduleFaceIndices[module];
+
+            const RigFace<n>& face =
+                faces[static_cast<std::size_t>(faceIndex)];
+
+            const std::size_t logicalIndex =
+                module * kCamerasPerModule;
 
             if (logicalIndex >= cameras.size()) {
                 throw std::runtime_error(
-                    "logicalIndex out of range while building moduleFaceMasks");
+                    "logicalIndex out of range while building moduleFaceMasks"
+                );
             }
 
-            const CameraView& cam = cameras[logicalIndex];
+            const CameraView& cam =
+                cameras[logicalIndex];
 
             if (cam.image.empty()) {
                 throw std::runtime_error(
-                    "Camera image is empty while building moduleFaceMasks");
-            }
-            if (!cam.model) {
-                throw std::runtime_error(
-                    "Camera model is null while building moduleFaceMasks");
+                    "Camera image is empty while building moduleFaceMasks"
+                );
             }
 
-            cv::Mat faceMask = BuildFaceMaskForCamera(
-                *cam.model,
-                cam.Rcw,
-                face,
-                vertices,
-                cam.image.cols,
-                cam.image.rows);
+            if (!cam.model) {
+                throw std::runtime_error(
+                    "Camera model is null while building moduleFaceMasks"
+                );
+            }
+
+            cv::Mat faceMask =
+                BuildFaceMaskForCamera(
+                    *cam.model,
+                    cam.Rcw,
+                    face,
+                    vertices,
+                    cam.image.cols,
+                    cam.image.rows
+                );
 
             moduleFaceMasks.push_back(faceMask);
 
-            std::cout << "[moduleFaceMask] module=" << module
+            std::cout << "[moduleFaceMask] module=" << moduleIndex
                       << " faceIndex=" << faceIndex
                       << " nonzero=" << cv::countNonZero(faceMask)
                       << " rows=" << faceMask.rows
@@ -3199,8 +3747,11 @@ int main(int argc, char* argv[])
                       << '\n';
         }
 
-        for (size_t i = 0; i < cameras.size(); ++i) {
-            DebugCameraPose(cameras[i], "camera[" + std::to_string(i) + "]");
+        for (std::size_t i = 0; i < cameras.size(); ++i) {
+            DebugCameraPose(
+                cameras[i],
+                "camera[" + std::to_string(i) + "]"
+            );
         }
 
         if (!cameras.empty() && cameras[0].model) {
@@ -3210,18 +3761,28 @@ int main(int argc, char* argv[])
 
         if (!cameras.empty()) {
             cv::Mat footprint =
-                RenderCameraFootprintDebug(cameras[0], 1456, 1088);
+                RenderCameraFootprintDebug(
+                    cameras[0],
+                    kFrameWidth,
+                    kFrameHeight
+                );
 
             std::cout << "[DEBUG] Saved camera footprint\n";
 
-            const cv::Point c = FindMaskCentroid(footprint);
+            const cv::Point c =
+                FindMaskCentroid(footprint);
+
             std::cout << "[DEBUG] footprint centroid = ("
                       << c.x << ", " << c.y << ")\n";
         }
 
         std::vector<LiveCameraState> liveCameras(totalCameras);
 
-        InitializeCameraMasks(aperturePeers, liveCameras, options.reverseModuleOrder);
+        InitializeCameraMasks<SphereSpaceType>(
+            aperturePeers,
+            liveCameras,
+            options.reverseModuleOrder
+        );
 
         std::cout << "[main] configs.size()=" << configs.size()
                   << " cameras.size()=" << cameras.size()
@@ -3229,13 +3790,20 @@ int main(int argc, char* argv[])
                   << '\n';
 
         if (moduleFaceIndices.size() >= 2) {
-            const RigFace<3>& face0 =
-                faces[static_cast<size_t>(moduleFaceIndices[0])];
-            const RigFace<3>& face1 =
-                faces[static_cast<size_t>(moduleFaceIndices[1])];
+            const RigFace<n>& face0 =
+                faces[static_cast<std::size_t>(moduleFaceIndices[0])];
+
+            const RigFace<n>& face1 =
+                faces[static_cast<std::size_t>(moduleFaceIndices[1])];
 
             cv::Mat seam =
-                RenderSharedFaceSeamDebug(face0, face1, vertices, 1456, 1088);
+                RenderSharedFaceSeamDebug(
+                    face0,
+                    face1,
+                    vertices,
+                    kFrameWidth,
+                    kFrameHeight
+                );
 
             std::cout << "[DEBUG] saved /tmp/debug_shared_seam.png\n";
         }
@@ -3243,18 +3811,21 @@ int main(int argc, char* argv[])
         std::vector<std::jthread> frameThreads;
         std::vector<std::jthread> controlThreads;
 
-		
-        StartPeerThreads<n>(aperturePeers,
-                            liveCameras,
-                            frameThreads,
-                            controlThreads,
-                            options.reverseModuleOrder);
+        StartPeerThreads<SphereSpaceType>(
+            aperturePeers,
+            liveCameras,
+            frameThreads,
+            controlThreads,
+            options.reverseModuleOrder
+        );
 
-        RunStitchLoop(cameras,
-                      configs,
-                      liveCameras,
-                      moduleFaceMasks,
-                      rig);
+        RunStitchLoop(
+            cameras,
+            configs,
+            liveCameras,
+            moduleFaceMasks,
+            rig
+        );
     }
     catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';

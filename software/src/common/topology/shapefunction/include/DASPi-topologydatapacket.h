@@ -14,13 +14,13 @@ namespace DASPi {
 template<class Space>
 class TopologyDataPacket {
 public:
-    using SubSpace_t = typename Space::SubSpace_t;
-    using value_type = OverlapTopology<SubSpace_t>;
+    using Space_t = Space;
+    //using SubSpace_t = typename Space::SubSpace_t;
+    //using value_type = OverlapTopology<SubSpace_t>;
 
 private:
 
-
-    static constexpr size_t n_ = Space::SubSpace_t::n_;
+    static constexpr size_t n_ = Space::n_;
 	static constexpr size_t NUM_REGIONS = n_ + 1;
 	
     std::vector<uint16_t> contiguousMemory_;
