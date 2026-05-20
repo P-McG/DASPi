@@ -31,25 +31,42 @@ private:
 public:
     TopologyDataPacket(const OverlapTopology<Space>& sf)
     {
-        //log_verbose("[ShapeFunctonDataPacket::TopologyDataPacket]");
-
-        capacities_[0] = sf.RegularPolygonalTopology<RegularPolygonalSpace<Space::n_, Space::center_, Space::orientation_>>::size();
+        using NonOverlapTopology_t =
+            typename OverlapTopology<Space>::NonOverlapFacetTopology_t;
+    
+        capacities_[0] =
+            static_cast<const NonOverlapTopology_t&>(sf).size();
+    
         for (size_t i = 0; i < n_; ++i) {
             capacities_[i + 1] = sf.size(i);
         }
-
+    
         contiguousMemory_ = std::vector<uint16_t>(
-            std::accumulate(capacities_.begin(), capacities_.end(), size_t{0})
+            std::accumulate(
+                capacities_.begin(),
+                capacities_.end(),
+                size_t{0}
+            )
         );
-
-        regions_[0] = std::span<uint16_t>(contiguousMemory_.data(), capacities_[0]);
-
+    
+        regions_[0] =
+            std::span<uint16_t>(
+                contiguousMemory_.data(),
+                capacities_[0]
+            );
+    
         size_t offset = capacities_[0];
+    
         for (size_t i = 0; i < n_; ++i) {
-            regions_[i + 1] = std::span<uint16_t>(contiguousMemory_.data() + offset, capacities_[i + 1]);
+            regions_[i + 1] =
+                std::span<uint16_t>(
+                    contiguousMemory_.data() + offset,
+                    capacities_[i + 1]
+                );
+    
             offset += capacities_[i + 1];
         }
-
+    
         validSizes_.fill(0);
     }
 

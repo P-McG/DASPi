@@ -56,23 +56,28 @@ namespace DASPi{
        	// GenerateIndexMap
 		/*
 		 */
-        template<OverlapSpace_t Space>
-	    void OverlapTopology<Space>::GenerateIndexMap(){
-            
-            using G = GlobalLinearTopology<Space>;
-            //using Index = typename G::Index;
-            using Point = typename G::Point;
-            
+		 template<OverlapSpace_t Space>
+		void OverlapTopology<Space>::GenerateIndexMap()
+		{
+			using G = GlobalLinearTopology_t;
+			using Point = typename G::Point;
+		
 			log_verbose("[OverlapTopology::GenerateIndexMap]");
-			
-            for(size_t overlapRegion = 0; overlapRegion < Space::n_; overlapRegion++){
+		
+			for (size_t overlapRegion = 0;
+				 overlapRegion < Space::n_;
+				 ++overlapRegion) {
+		
 				const size_t region = overlapRegion;
-				indexMaps_[overlapRegion] = GlobalLinearTopology<Space>::template GenerateIndexMap<Index>(
-					[this, region](const /*typename GlobalLinearTopology<center, orientation>::*/Point &p){
-						return Mask(p, region);
-				});
+		
+				indexMaps_[overlapRegion] =
+					G::template GenerateIndexMap<Index>(
+						[this, region](const Point& p) {
+							return Mask(p, region);
+						}
+					);
 			}
-		};
+		}
 		 
         // GenerateIndexLinear
         /*
@@ -138,39 +143,55 @@ namespace DASPi{
 		// Mask
 		/*
 		 */
-         template<OverlapSpace_t Space>
- 	    uint16_t OverlapTopology<Space>::Mask(
-            const GlobalLinearTopology_t::Point &p,
-	 		const size_t overlapRegion
- 		){
-			//log_verbose("[OverlapTopology::Mask] overlapRegion:" + std::to_string(overlapRegion));//EXCESSIVE LOGGING
-
-			std::vector<double> vector0{ 
-					std::vector<double>{
-						static_cast<double>(Space::orientation_.deltaX()),
-						static_cast<double>(Space::orientation_.deltaY())
-			}};
-
-			std::vector<double> vector1{
-					 std::vector<double>{
-							 static_cast<double>(p.x()) - static_cast<double>(Space::center_.x()), 
-							 static_cast<double>(p.y()) - static_cast<double>(Space::center_.y())
-			}};
-
-		    double theta{SignedAngle2D(vector0, vector1)};
-			theta = std::fmod(theta + 2.0 * std::numbers::pi, 2.0 * std::numbers::pi);
-			    
-			double lowerLimit{2.0 * std::numbers::pi * double(overlapRegion)  / double(Space::n_)};
-			double upperLimit{2.0 * std::numbers::pi * double(overlapRegion + 1) / double(Space::n_)};
-
-			uint16_t overlapRegionMask {
-				((lowerLimit <= theta) && (theta < upperLimit))
-			    ? uint16_t{0XFF} : uint16_t{0x00}
+		template<OverlapSpace_t Space>
+		uint16_t OverlapTopology<Space>::Mask(
+			const typename GlobalLinearTopology_t::Point& p,
+			const size_t overlapRegion
+		)
+		{
+			const auto& maskOrientation =
+				Space::maskOrientation_;
+		
+			const auto center =
+				GlobalLinearTopology_t::sensorCenter_;
+		
+			std::vector<double> vector0{
+				maskOrientation.radius_ * maskOrientation.cosValue_,
+				maskOrientation.radius_ * maskOrientation.sinValue_
 			};
-			return overlapRegionMask
-				& coverage_t::Mask(p) 
-				& static_cast<uint16_t>(~NonOverlapFacetTopology_t::Mask(p));
-		};
+		
+			std::vector<double> vector1{
+				static_cast<double>(p.x()) - static_cast<double>(center.x()),
+				static_cast<double>(p.y()) - static_cast<double>(center.y())
+			};
+		
+			double theta = SignedAngle2D(vector0, vector1);
+			theta = std::fmod(
+				theta + 2.0 * std::numbers::pi,
+				2.0 * std::numbers::pi
+			);
+		
+			const double lowerLimit =
+				2.0 * std::numbers::pi *
+				static_cast<double>(overlapRegion) /
+				static_cast<double>(Space::n_);
+		
+			const double upperLimit =
+				2.0 * std::numbers::pi *
+				static_cast<double>(overlapRegion + 1) /
+				static_cast<double>(Space::n_);
+		
+			const uint16_t overlapRegionMask =
+				((lowerLimit <= theta) && (theta < upperLimit))
+					? uint16_t{0xFF}
+					: uint16_t{0x00};
+		
+			return static_cast<uint16_t>(
+				overlapRegionMask
+				& CoverageTopology_t::Mask(p)
+				& static_cast<uint16_t>(~NonOverlapFacetTopology_t::Mask(p))
+			);
+		}
 
         template<OverlapSpace_t Space>
 		size_t OverlapTopology<Space>::size(const size_t overlapRegion) const {
@@ -190,10 +211,11 @@ namespace DASPi{
                  std::terminate(); // or throw
 			 }
 			 
-             return static_cast<coverage_t::GlobalLinearTopology_t*>(this)->FrameBufferUnmask( 
-                frameBuffer,
-                indexLinearMaxs_[overlapRegion].get()
-             );
+			return static_cast<typename CoverageTopology_t::GlobalLinearTopology_t*>(this)
+				->FrameBufferUnmask(
+					frameBuffer,
+					indexLinearMaxs_[overlapRegion].get()
+				);
         };
 
         template<OverlapSpace_t Space>

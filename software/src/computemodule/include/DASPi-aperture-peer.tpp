@@ -24,7 +24,11 @@ namespace DASPi{
 										 int srvFramePort,
 										 int srvControlPort)
 		: tpgy_(),
-		  tpgydp_(this->tpgy_),
+		  tpgydp_(
+			  static_cast<const OverlapTopologyType&>(
+				  static_cast<const FacetTopologyType&>(tpgy_)
+			  )
+		  ),
 		  frameClnt_(clntAddr, clntFramePort, srvAddr, srvFramePort),
 		  controlClnt_(clntAddr, clntControlPort, srvAddr, srvControlPort)
 	{
@@ -1002,7 +1006,7 @@ namespace DASPi{
 	}
 	
 template<unsigned int FacetIndex>
-cv::Mat AperturePeer<FacetIndex>::BuildValidMask(size_t regionIndex)
+cv::Mat AperturePeer<FacetIndex>::BuildValidMask(size_t regionIndex) const
 {
 	
 	using SphereSpace_t = typename tpgy_t::Space_t::FacetSpace_t<FacetIndex>;

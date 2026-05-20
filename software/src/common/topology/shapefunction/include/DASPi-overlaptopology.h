@@ -53,23 +53,24 @@ namespace DASPi{
 			
     public:
         using Space_t = Space;
-   
+        using GlobalLinearTopology_t = GlobalLinearTopology<MakeGlobalLinearSpace<Space>>;   
+        
         //Local Coordinates structures
         struct Index : public IndexData {
             using IndexData::IndexData; // inherit constructor
             using IndexData::operator==;
             
             // Accept Global index as input
-            Index(const GlobalLinearTopology<Space>::Index& other)
+            Index(const typename GlobalLinearTopology_t::Index& other)
                 : IndexData(other.value()) {}
                 
 			Index(size_t val) : IndexData(val) {}
         };
 		
 		//using GlobalLinearSpace_t = GlobalLinearSpace<Space::center_, Space::orientation_> ;
-        using GlobalLinearTopology_t = GlobalLinearTopology<MakeGlobalLinearSpace<Space>>;
+
 		
-		using coverage_t = RegularPolygonalTopology<Space>;
+		using CoverageTopology_t = RegularPolygonalTopology<typename Space::SubSpaceCoverage_t>;
 		
 		//using nonOverlapFacet = RegularPolygonalSpace<Space::n_, Space::center_, 
             //OrientationData{ 

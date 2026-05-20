@@ -29,6 +29,12 @@ class AperturePeer : public AperturePeerBase
     
     using tpgy_t   = DASPi::tpgy_t;
     using tpgydp_t = DASPi::tpgydp_t<FacetIndex>;
+    
+    using FacetTopologyType =
+        typename tpgy_t::template FacetTopology_t<FacetIndex>;
+    
+    using OverlapTopologyType =
+        typename tpgy_t::template OverlapTopology_t<FacetIndex>;
 
     static constexpr unsigned int facetIndex_ = FacetIndex;
     static constexpr size_t verticesPerFaceN_{tpgy_t::FacetSpace_t<FacetIndex>::verticesPerFaceN_};
@@ -66,8 +72,8 @@ public:
                  int srvFramePort,
                  int srvControlPort);
 
-    bool RunFrameLoop();
-    bool RunControlLoop();
+    bool RunFrameLoop() override;
+    bool RunControlLoop() override;
     
     std::string inAddrTToString(in_addr_t ip);
     bool BufferToFile();
@@ -89,11 +95,12 @@ public:
                         size_t sharedSideOther,
                         std::vector<uint16_t>& out,
                         bool reverseOther = false);
-    cv::Mat BuildValidMask(size_t regionIndex);
+    cv::Mat BuildValidMask(size_t regionIndex) const ;
     bool CopyValidMask( std::size_t localCameraIndex, cv::Mat& dst) const override;
     void MaybePrintRxSummary();
     //void MaybePrintRxSummary(size_t peerIndex, size_t moduleIndex);
-    bool TryCopyLatestFrame(std::size_t localCameraIndex, std::vector<uint16_t>& dst) const;
+    bool TryCopyLatestFrame(std::size_t localCameraIndex, std::vector<uint16_t>& dst) const override;
+    unsigned int FacetIndexValue() const override { return FacetIndex;}
     
 private:
     const int processingThreads_{4};

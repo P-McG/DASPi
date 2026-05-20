@@ -61,8 +61,10 @@ namespace DASPi{
             Index( const typename GlobalLinearTopology<Space>::Index& other)
                 : IndexData(other.value()) {}
         };
-
-        using GlobalLinearTopology_t = GlobalLinearTopology<MakeGlobalLinearSpace<Space>>;
+		
+		using GlobalLinearSpace_t = MakeGlobalLinearSpace<Space>;
+        using GlobalLinearTopology_t = GlobalLinearTopology<GlobalLinearSpace_t>;
+		
         using Point = RegularPolygonalTopology<Space>::Point;
         using SensorOrientation = RegularPolygonalTopology<Space>::SensorOrientation;
         //using Index = RegularPolygonalTopology<n, center, orientation>::Index;
@@ -72,8 +74,8 @@ namespace DASPi{
         using ShapeDefiningPoints = std::array<typename GlobalLinearTopology_t::Point, Space::n_>;
         
 		// Common member variables
-		GlobalLinearTopology_t::Point sensorCenter_{typename GlobalLinearTopology_t::Point(Space::sensorCenter_)};
-		GlobalLinearTopology_t::SensorOrientation sensorOrientation_{typename GlobalLinearTopology_t::SensorOrientation(Space::sensorOrientation_)};
+		typename GlobalLinearTopology_t::Point sensorCenter_{typename GlobalLinearTopology_t::Point(GlobalLinearSpace_t::sensorCenter_)};
+		typename GlobalLinearTopology_t::SensorOrientation sensorOrientation_{ typename GlobalLinearTopology_t::SensorOrientation(GlobalLinearSpace_t::sensorOrientation_)};
         ShapeDefiningPoints shapeDefiningPoints_;
         std::unique_ptr<IndexMap> indexMap_;
         std::unique_ptr<IndexLinearMax> indexLinearMax_;

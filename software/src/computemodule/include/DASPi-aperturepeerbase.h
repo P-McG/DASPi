@@ -17,10 +17,10 @@ public:
         cv::Mat& dst
     ) const = 0;
 
-    virtual void InitializeCameraMasks(
-        std::vector<LiveCameraState>& liveCameras,
-        bool reverseModuleOrder
-    ) = 0;
+    //virtual void InitializeCameraMasks(
+        //std::vector<LiveCameraState>& liveCameras,
+        //bool reverseModuleOrder
+    //) = 0;
     
     virtual bool TryCopyLatestFrame(
         std::size_t localCameraIndex,
