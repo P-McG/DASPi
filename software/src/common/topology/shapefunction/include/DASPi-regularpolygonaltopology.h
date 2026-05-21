@@ -35,57 +35,75 @@ namespace DASPi{
 	 * - the cameras are position in proper rotation due to the
 	 * low speed of arbitrary rotational transforms.
 	 */
-	 template<RegularPolygonalSpace_t Space>
-	class RegularPolygonalTopology : virtual public GlobalLinearTopology<MakeGlobalLinearSpace<Space>>{
+	template<RegularPolygonalSpace_t Space>
+	class RegularPolygonalTopology
+		: virtual public GlobalLinearTopology<MakeGlobalLinearSpace<Space>>
+	{
+	public:
+		using Space_t = Space;
+	
+		using GlobalLinearSpace_t =
+			MakeGlobalLinearSpace<Space>;
+	
+		using GlobalLinearTopology_t =
+			GlobalLinearTopology<GlobalLinearSpace_t>;
+	
+		struct Point : public PointData2dI {
+			using PointData2dI::PointData2dI;
+			using PointData2dI::operator==;
+	
+			constexpr Point(const PointData2dI& pd)
+				: PointData2dI(pd)
+			{}
+		};
+	
+		struct SensorOrientation : public SensorOrientationData {
+			using SensorOrientationData::SensorOrientationData;
+			using SensorOrientationData::operator==;
+	
+			constexpr SensorOrientation(const SensorOrientationData& sd)
+				: SensorOrientationData(sd)
+			{}
+		};
+	
+		struct Index : public IndexData {
+			using IndexData::IndexData;
+			using IndexData::operator==;
+	
+			Index(const typename GlobalLinearTopology_t::Index& other)
+				: IndexData(other.value())
+			{}
+		};
+	
+		using IndexMap =
+			typename GlobalLinearTopology_t::template IndexMap<Index>;
+	
+		using IndexLinearMax =
+			typename GlobalLinearTopology_t::template IndexLinearMax<
+				typename GlobalLinearTopology_t::Index
+			>;
+	
+		using ShapeDefiningPoints =
+			std::array<typename GlobalLinearTopology_t::Point, Space::n_>;
+	
+		typename GlobalLinearTopology_t::Point sensorCenter_{
+			typename GlobalLinearTopology_t::Point(
+				GlobalLinearSpace_t::sensorCenter_
+			)
+		};
+	
+		typename GlobalLinearTopology_t::SensorOrientation sensorOrientation_{
+			typename GlobalLinearTopology_t::SensorOrientation(
+				GlobalLinearSpace_t::sensorOrientation_
+			)
+		};
+	
+		ShapeDefiningPoints shapeDefiningPoints_;
+		std::unique_ptr<IndexMap> indexMap_;
+		std::unique_ptr<IndexLinearMax> indexLinearMax_;
+	
+		RegularPolygonalTopology();
 
-       //static constexpr size_t n{6};
-    public:
-	   using Space_t = Space;
-
-      //Local Coordinates structures
-        struct Point : public PointData2dI {
-            using PointData2dI::PointData2dI; // inherit constructor
-            using PointData2dI::operator==;
-            constexpr Point(const PointData2dI& pd) : PointData2dI(pd) {};
-        };
-        struct SensorOrientation : public SensorOrientationData {
-            using SensorOrientationData::SensorOrientationData; // inherit constructor
-            using SensorOrientationData::operator==;
-            constexpr SensorOrientation(const SensorOrientationData& dd) : SensorOrientationData(dd) {};
-        };
-        struct Index : public IndexData {
-            using IndexData::IndexData; // inherit constructor
-            using IndexData::operator==;
-            
-			// Accept Global index as input
-            Index( const typename GlobalLinearTopology<Space>::Index& other)
-                : IndexData(other.value()) {}
-        };
-		
-		using GlobalLinearSpace_t = MakeGlobalLinearSpace<Space>;
-        using GlobalLinearTopology_t = GlobalLinearTopology<GlobalLinearSpace_t>;
-		
-        using Point = RegularPolygonalTopology<Space>::Point;
-        using SensorOrientation = RegularPolygonalTopology<Space>::SensorOrientation;
-        //using Index = RegularPolygonalTopology<n, center, orientation>::Index;
-        //using Index = GlobalLinearTopology<center, orientation>::Index;
-        using IndexMap = typename GlobalLinearTopology_t::IndexMap<Index>;//index is a local index
-        using IndexLinearMax = typename GlobalLinearTopology_t::IndexLinearMax<typename GlobalLinearTopology_t::Index>;//index is a global index
-        using ShapeDefiningPoints = std::array<typename GlobalLinearTopology_t::Point, Space::n_>;
-        
-		// Common member variables
-		typename GlobalLinearTopology_t::Point sensorCenter_{typename GlobalLinearTopology_t::Point(GlobalLinearSpace_t::sensorCenter_)};
-		typename GlobalLinearTopology_t::SensorOrientation sensorOrientation_{ typename GlobalLinearTopology_t::SensorOrientation(GlobalLinearSpace_t::sensorOrientation_)};
-        ShapeDefiningPoints shapeDefiningPoints_;
-        std::unique_ptr<IndexMap> indexMap_;
-        std::unique_ptr<IndexLinearMax> indexLinearMax_;
-       
-    public:
-       RegularPolygonalTopology(
-            //GlobalLinearTopology_t::Point center = GlobalLinearTopology_t::Point{static_cast<size_t>(0.5*sensorWidthValue_), static_cast<size_t>((+1.0/2.0)*sensorHeightValue_)},
-		    //GlobalLinearTopology_t::Orientation orientation = GlobalLinearTopology_t::Orientation { static_cast<long>((1.0/2.0)*2.0/sqrt(3)*sensorHeightValue_*sin(2.0*std::numbers::pi/12.0)), static_cast<long>((1.0/2.0)*2.0/sqrt(3)*sensorHeightValue_*cos(2.0*std::numbers::pi/12.0))}
-        );
-        
     protected:
 		void DefineShapeDefiningPoints(/*const GlobalLinearTopology_t::Orientation &orientation, const GlobalLinearTopology_t::Point &center*/);
 	    void GenerateIndexMap();
@@ -98,9 +116,9 @@ namespace DASPi{
 	public:		
 		size_t size() const;
         template <typename T0>
-            auto FrameBufferUnmask(T0 &&frameBuffer);
+            auto FrameBufferUnmask(T0 &&frameBuffer) const;
         template<typename frameBuffer_t>
-            std::vector<uint16_t> FrameBufferMask(frameBuffer_t &&frameBuffer) ;
+            std::vector<uint16_t> FrameBufferMask(frameBuffer_t &&frameBuffer);
       void FrameBufferMaskChunked(
             std::span<uint16_t> input,
             size_t start,
@@ -108,18 +126,5 @@ namespace DASPi{
             uint16_t* outputBuffer   // New output pointer
         );
     };
-    
-    //inline RegularPolygonalTopology<
-        //3,
-        //PointData2dI{static_cast<size_t>((+1.0/2.0)*sensorWidthValue_), static_cast<size_t>((+1.0/2.0)*sensorHeightValue_)},
-        //OrientationData { static_cast<long>((1.0/2.0)*sensorHeightValue_*sin(0.0*std::numbers::pi/3.0)), static_cast<long>((1.0/2.0)*sensorHeightValue_*cos(0.0*std::numbers::pi/3.0))}
-    //> regularPolygonalTopologyInstance0;
-    
-    //inline RegularPolygonalTopology<
-        //3,
-        //PointData2dI{static_cast<size_t>(0.5*sensorWidthValue_), static_cast<size_t>((+1.0/2.0)*sensorHeightValue_)},
-        //OrientationData { static_cast<long>(0.75*(1.0/2.0)*sensorHeightValue_*sin(0.0*std::numbers::pi/3.0)), static_cast<long>(0.75*(1.0/2.0)*sensorHeightValue_*cos(0.0*std::numbers::pi/3.0))}
-    //> regularPolygonalTopologyInstance1;
-    
 };//ending namespace DASPi
 #include "DASPi-regularpolygonaltopology.tpp"

@@ -105,7 +105,7 @@ namespace DASPi{
  		//);
 		size_t size(const size_t overlapRegion) const;
         template <typename frameBuffer_t>
-        auto FrameBufferUnmask(frameBuffer_t &&frameBuffer, size_t overlapRegion);
+        auto FrameBufferUnmask(frameBuffer_t &&frameBuffer, size_t overlapRegion) const;
         template<typename frameBuffer_t>
         std::vector<uint16_t> FrameBufferMask(frameBuffer_t &&frameBuffer, size_t overlapRegion);
         void FrameBufferMaskChunked(

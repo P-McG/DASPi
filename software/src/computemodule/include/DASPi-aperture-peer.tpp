@@ -263,32 +263,62 @@ namespace DASPi{
 	
 		const auto tUnpackDone = Clock::now();
 	
+		//std::array<std::vector<uint16_t>, verticesPerFaceN_ + 1> newBuffers;
+		
+		//using FacetSpaceType =
+			//typename tpgy_t::template FacetSpace_t<FacetIndex>;
+		
+		//using OverlapSpaceType =
+			//typename FacetSpaceType::SubSpace_t;
+		
+		//using IcosahedronTopologyType =
+			//DASPi::IcosahedronTopology<FacetSpaceType>;
+		
+		//using OverlapTopologyType =
+			//typename IcosahedronTopologyType::template OverlapTopology<OverlapSpaceType>;
+		
+		//static_assert(
+			//std::is_base_of_v<IcosahedronTopologyType, tpgy_t>,
+			//"IcosahedronTopologyType is not a base of tpgy_t"
+		//);
+		
+		//static_assert(
+			//std::is_base_of_v<OverlapTopologyType, tpgy_t>,
+			//"OverlapTopologyType is not a base of tpgy_t"
+		//);
+		
+		//auto unmasked0 =
+			//this->tpgy_.OverlapTopologyType::FrameBufferUnmask(
+				//this->tpgydp_[0],
+				//0
+			//);
+			
 		std::array<std::vector<uint16_t>, verticesPerFaceN_ + 1> newBuffers;
 		
-		using FacetSpaceType =
-			typename tpgy_t::template FacetSpace_t<FacetIndex>;
-		
-		using OverlapSpaceType =
-			typename FacetSpaceType::SubSpace_t;
-		
-		using IcosahedronTopologyType =
-			DASPi::IcosahedronTopology<FacetSpaceType>;
+		using FacetTopologyType =
+			typename tpgy_t::template FacetTopology_t<FacetIndex>;
 		
 		using OverlapTopologyType =
-			typename IcosahedronTopologyType::template OverlapTopology<OverlapSpaceType>;
+			typename tpgy_t::template OverlapTopology_t<FacetIndex>;
 		
 		static_assert(
-			std::is_base_of_v<IcosahedronTopologyType, tpgy_t>,
-			"IcosahedronTopologyType is not a base of tpgy_t"
+			std::is_base_of_v<FacetTopologyType, tpgy_t>,
+			"FacetTopologyType is not a base of tpgy_t"
 		);
 		
 		static_assert(
-			std::is_base_of_v<OverlapTopologyType, tpgy_t>,
-			"OverlapTopologyType is not a base of tpgy_t"
+			std::is_base_of_v<OverlapTopologyType, FacetTopologyType>,
+			"OverlapTopologyType is not a base of FacetTopologyType"
 		);
+		
+		auto& facetTopology =
+			static_cast<FacetTopologyType&>(this->tpgy_);
+		
+		auto& overlapTopology =
+			static_cast<OverlapTopologyType&>(facetTopology);
 		
 		auto unmasked0 =
-			this->tpgy_.OverlapTopologyType::FrameBufferUnmask(
+			overlapTopology.FrameBufferUnmask(
 				this->tpgydp_[0],
 				0
 			);
@@ -305,7 +335,7 @@ namespace DASPi{
 		
 		for (std::size_t i = 0; i < verticesPerFaceN_; ++i) {
 			auto unmasked =
-				this->tpgy_.OverlapTopologyType::FrameBufferUnmask(
+				overlapTopology.FrameBufferUnmask(
 					this->tpgydp_[i + 1],
 					i
 				);
@@ -1008,45 +1038,71 @@ namespace DASPi{
 template<unsigned int FacetIndex>
 cv::Mat AperturePeer<FacetIndex>::BuildValidMask(size_t regionIndex) const
 {
-	
-	using SphereSpace_t = typename tpgy_t::Space_t::FacetSpace_t<FacetIndex>;
-	using OverlapSpace_t = SphereSpace_t::SubSpace_t;
-	using NonOverlapFacetSpace_t = typename OverlapSpace_t::SubSpace_t;
-			
+    using FacetTopologyType =
+        typename tpgy_t::template FacetTopology_t<FacetIndex>;
+
+    using OverlapTopologyType =
+        typename tpgy_t::template OverlapTopology_t<FacetIndex>;
+
+    //using OverlapSpaceType =
+        //typename tpgy_t::template OverlapSpace_t<FacetIndex>;
+
+    using NonOverlapFacetTopologyType =
+        typename OverlapTopologyType::NonOverlapFacetTopology_t;
+
     if (regionIndex >= verticesPerFaceN_ + 1) {
         throw std::out_of_range("BuildValidMask regionIndex out of range");
     }
 
+    const auto& facetTopology =
+        static_cast<const FacetTopologyType&>(this->tpgy_);
+
+    const auto& overlapTopology =
+        static_cast<const OverlapTopologyType&>(facetTopology);
+
     std::vector<uint16_t> unmasked;
 
     if (regionIndex == 0) {
+        const auto& nonOverlapTopology =
+            static_cast<const NonOverlapFacetTopologyType&>(overlapTopology);
+
         std::vector<uint16_t> compact(
-            this->tpgy_.OverlapTopology<OverlapSpace_t>::template NonOverlapFacetTopology_t<NonOverlapFacetSpace_t>::size(),
-            static_cast<uint16_t>(1));
-        unmasked = this->tpgy_.OverlapTopology<OverlapSpace_t>::template NonOverlapFacetTopology_t<NonOverlapFacetSpace_t>::FrameBufferUnmask(compact);
+            nonOverlapTopology.size(),
+            static_cast<uint16_t>(1)
+        );
+
+        unmasked =
+            nonOverlapTopology.FrameBufferUnmask(compact);
     } else {
         const size_t overlapIdx = regionIndex - 1;
 
         std::vector<uint16_t> compact(
-            this->tpgy_.OverlapTopology<OverlapSpace_t>::size(overlapIdx),
-            static_cast<uint16_t>(1));
+            overlapTopology.size(overlapIdx),
+            static_cast<uint16_t>(1)
+        );
 
-        unmasked = this->tpgy_.OverlapTopology<OverlapSpace_t>::FrameBufferUnmask(compact, overlapIdx);
+        unmasked =
+            overlapTopology.FrameBufferUnmask(compact, overlapIdx);
     }
 
     if (unmasked.size() != sensorWidthValue_ * sensorHeightValue_) {
-        throw std::runtime_error("BuildValidMask: unexpected unmasked buffer size");
+        throw std::runtime_error(
+            "BuildValidMask: unexpected unmasked buffer size"
+        );
     }
 
-    cv::Mat mask(static_cast<int>(sensorHeightValue_),
-                 static_cast<int>(sensorWidthValue_),
-                 CV_8UC1,
-                 cv::Scalar(0));
+    cv::Mat mask(
+        static_cast<int>(sensorHeightValue_),
+        static_cast<int>(sensorWidthValue_),
+        CV_8UC1,
+        cv::Scalar(0)
+    );
 
     for (size_t i = 0; i < unmasked.size(); ++i) {
-        mask.data[i] = (unmasked[i] != 0)
-                         ? static_cast<uint8_t>(255)
-                         : static_cast<uint8_t>(0);
+        mask.data[i] =
+            (unmasked[i] != 0)
+                ? static_cast<uint8_t>(255)
+                : static_cast<uint8_t>(0);
     }
 
     return mask;

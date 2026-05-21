@@ -200,9 +200,8 @@ namespace DASPi{
 
         template<OverlapSpace_t Space>
         template <typename frameBuffer_t>
-        auto OverlapTopology<Space>::FrameBufferUnmask(
-            frameBuffer_t &&frameBuffer, size_t overlapRegion
-        ){
+        auto OverlapTopology<Space>::FrameBufferUnmask(frameBuffer_t &&frameBuffer, size_t overlapRegion) const
+		{
 			 //log_verbose("[OverlapTopology::FrameBufferUnmask]");
 			 
 			 //check to see if overlapRegion is within limits
@@ -211,9 +210,8 @@ namespace DASPi{
                  std::terminate(); // or throw
 			 }
 			 
-			return static_cast<typename CoverageTopology_t::GlobalLinearTopology_t*>(this)
-				->FrameBufferUnmask(
-					frameBuffer,
+			return CoverageTopology_t::GlobalLinearTopology_t::FrameBufferUnmask(
+					std::forward<frameBuffer_t>(frameBuffer),
 					indexLinearMaxs_[overlapRegion].get()
 				);
         };

@@ -39,28 +39,57 @@ namespace DASPi{
     	/*
     	 * Needs to be defined in a ccw fashion.
     	 */
-		template<RegularPolygonalSpace_t Space> 
-		void RegularPolygonalTopology<Space>::DefineShapeDefiningPoints(
-			//const GlobalLinearTopology::Orientation &orientation, const GlobalLinearTopology::Point &center
-		){
-            log_verbose("[RegularPolygonalTopology::ShapeDefiningPoints]");
-		    double orientationMagnitude{ sqrt( pow( Space::orientation_.deltaX(), 2) + pow(Space::orientation_.deltaY(),2)) };
-			double initialRotation{ atan2(Space::orientation_.deltaY(), Space::orientation_.deltaX()) };
-			
-			for(size_t i=0; i < Space::n_; i++){
-			      shapeDefiningPoints_[i] = typename GlobalLinearTopology_t::Point{
-					     static_cast<size_t>(Space::center_.x() + orientationMagnitude * cos(double(i)/double(Space::n_) * 2.0*std::numbers::pi + initialRotation)),
-						 static_cast<size_t>(Space::center_.y() + orientationMagnitude * sin(double(i)/double(Space::n_) * 2.0*std::numbers::pi + initialRotation))
-				  };
+		template<RegularPolygonalSpace_t Space>
+		void RegularPolygonalTopology<Space>::DefineShapeDefiningPoints()
+		{
+			log_verbose("[RegularPolygonalTopology::ShapeDefiningPoints]");
+		
+			const auto& maskOrientation =
+				Space::maskOrientation_;
+		
+			const auto center =
+				GlobalLinearSpace_t::sensorCenter_;
+		
+			const double orientationMagnitude =
+				maskOrientation.radius_;
+		
+			const double initialRotation =
+				std::atan2(
+					maskOrientation.sinValue_,
+					maskOrientation.cosValue_
+				);
+		
+			for (std::size_t i = 0; i < Space::n_; ++i) {
+				const double theta =
+					static_cast<double>(i) /
+					static_cast<double>(Space::n_) *
+					2.0 * std::numbers::pi +
+					initialRotation;
+		
+				shapeDefiningPoints_[i] =
+					typename GlobalLinearTopology_t::Point{
+						static_cast<std::size_t>(
+							std::lround(
+								static_cast<double>(center.x()) +
+								orientationMagnitude * std::cos(theta)
+							)
+						),
+						static_cast<std::size_t>(
+							std::lround(
+								static_cast<double>(center.y()) +
+								orientationMagnitude * std::sin(theta)
+							)
+						)
+					};
 			}
-		};
+		}
 
 		// GenerateIndexMap
 		/*
 		 */
  		template<RegularPolygonalSpace_t Space> 
 	    void RegularPolygonalTopology<Space>::GenerateIndexMap(){
-		    using G = GlobalLinearTopology<Space>;
+		    using G = GlobalLinearTopology_t;
 			//using Index = typename G::Index;
 			using Point = typename G::Point;
 			
@@ -140,21 +169,17 @@ namespace DASPi{
 		};
         
         // FrameBufferUnmask
- 		template<RegularPolygonalSpace_t Space> 
+        template<RegularPolygonalSpace_t Space>
         template <typename T0>
-        auto RegularPolygonalTopology<Space>::FrameBufferUnmask(T0 &&frameBuffer){
-		     //log_verbose("[RegularPolygonalTopology::FrameBufferUnmask]");
-			 
-			 if (!indexLinearMax_) {
-				std::cerr << "[FATAL] indexLinearMax_ is null before FrameBufferUnmask!" << std::endl;
-				std::terminate();
-            }
-			 
-             return static_cast<GlobalLinearTopology_t*>(this)->FrameBufferUnmask( 
-                frameBuffer,
+        auto RegularPolygonalTopology<Space>::FrameBufferUnmask(
+            T0&& frameBuffer
+        ) const
+        {
+            return GlobalLinearTopology_t::FrameBufferUnmask(
+                std::forward<T0>(frameBuffer),
                 indexLinearMax_.get()
-             );
-        };
+            );
+        }
         
         // FrameBufferMask
  		template<RegularPolygonalSpace_t Space> 
