@@ -35,15 +35,28 @@
 
 namespace DASPi{
     
-    template<size_t n>
+    template<unsigned int FacetIndex>
     class Aperture {
-        
-        using sf_t   = DASPi::sf_t<n>;
-        using sfdp_t = DASPi::sfdp_t<n>;
+        using tpgy_t   = DASPi::tpgy_t;
+        using tpgydp_t = DASPi::tpgydp_t<FacetIndex>;
+    
+        using FacetTopologyType =
+            typename tpgy_t::template FacetTopology_t<FacetIndex>;
+    
+        using OverlapTopologyType =
+            typename tpgy_t::template OverlapTopology_t<FacetIndex>;
+    
+        using NonOverlapFacetTopologyType =
+            typename OverlapTopologyType::NonOverlapFacetTopology_t;
+    
+        using GlobalLinearTopologyType =
+            typename OverlapTopologyType::GlobalLinearTopology_t;
 
         //Check DASPi-config.h if triggered
-        static_assert(NUM_REGIONS == sfdp_t::NumberOfRegions(),
-          "NUM_REGIONS must match ShapeFunctionDataPacket regions");
+        static_assert(
+            NUM_REGIONS == tpgydp_t::NumberOfRegions(),
+            "NUM_REGIONS must match TopologyDataPacket regions"
+        );
     
         const int processingThreads_{4};
         const int chunkThreads_{4};
@@ -69,7 +82,7 @@ namespace DASPi{
         libcamera::PixelFormat codec_{libcamera::formats::SBGGR16};
         inline static std::atomic<bool> isStartCaptureThreadDone_{false}; // Atomic flag
         inline static std::atomic<bool> isStartCaptureRunning_{false}; // Atomic flag
-        sf_t sf_;
+        tpgy_t sf_;
         std::chrono::time_point<std::chrono::high_resolution_clock> fpsTimer_;
         
         // Thread pool
@@ -101,8 +114,8 @@ namespace DASPi{
         std::atomic<bool> stopPostProcessing_{false};
         
         
-        static constexpr size_t n_ = sf_t::n_;
-        static constexpr double nonOverlapScale_ = sf_t::nonOverlapScale_;
+        static constexpr std::size_t n_ =
+            tpgy_t::verticesPerFaceN_;
       
     public:
         UDPSrv frameSrv_;
@@ -113,6 +126,11 @@ namespace DASPi{
     public:
         Aperture(const std::string clientIp, const size_t port);
         ~Aperture();
+
+        template<size_t n> OverlapTopologyType& Aperture<n>::OverlapTopologyRef();
+        template<size_t n> const OverlapTopologyType& OverlapTopologyRef() const;
+        template<size_t n> NonOverlapFacetTopologyType& NonOverlapTopologyRef();
+        template<size_t n> const NonOverlapFacetTopologyType& NonOverlapTopologyRef() const;
         void PrintThreadInfo();
         void CleanupCamera();
         void CreateCameraManager();
@@ -158,8 +176,8 @@ namespace DASPi{
     
         void StartPostProcessingThreads();
         void StopPostProcessingThreads();
-        inline void ApplyWhiteBalanceToMosaic_BGGR(size_t region, const sf_t &sf, std::span<uint16_t> data, const GainMsg& gainMsg);
-        inline void ApplyWhiteBalanceToMosaic_RGGB(size_t region, const sf_t &sf, std::span<uint16_t> data, const GainMsg& gainMsg);
+        inline void ApplyWhiteBalanceToMosaic_BGGR(size_t region, const tpgy_t &sf, std::span<uint16_t> data, const GainMsg& gainMsg);
+        inline void ApplyWhiteBalanceToMosaic_RGGB(size_t region, std::span<uint16_t> data, const GainMsg& gainMsg);
         std::string GetBoardSerial();
         //uint32_t ParseCameraAddressId(const std::string& libcameraId);
         std::string ExtractCameraBusAddr(const std::string& libcameraId);
