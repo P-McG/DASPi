@@ -42,4 +42,6 @@ private:
 	void dispatchCalls();
 };
 
+EventLoop& GetEventLoop();
+
 #endif /* __SIMPLE_CAM_EVENT_LOOP_H__ */

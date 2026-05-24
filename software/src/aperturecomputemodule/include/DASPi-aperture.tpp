@@ -36,25 +36,34 @@ inline constexpr bool kApertureTxLogUdpFrame = false;
 
 // Constructor
 template<unsigned int FacetIndex>
-Aperture<FacetIndex>::Aperture(const std::string clientIp, const size_t port)
-    : frameSrv_{clientIp, port},
+Aperture<FacetIndex>::Aperture(
+    const std::string clientIp,
+    const size_t port
+)
+    : tpgy_(),
+      tpgydp_(
+          static_cast<const OverlapTopologyType&>(
+              static_cast<const FacetTopologyType&>(tpgy_)
+          )
+      ),
+      frameSrv_{clientIp, port},
       controlClnt_{INADDR_ANY,
-             static_cast<int>(port + 1),
-             inet_addr(clientIp.c_str()),
-             static_cast<int>(port + 1)}
+                   static_cast<int>(port + 1),
+                   inet_addr(clientIp.c_str()),
+                   static_cast<int>(port + 1)}
 {
-	
-	std::cout << "[TX sizeof]\n";
+    std::cout << "[TX sizeof]\n";
     std::cout << "sizeof(MessageHeader)=" << sizeof(MessageHeader) << '\n';
     std::cout << "sizeof(GainMsg)=" << sizeof(GainMsg) << '\n';
     std::cout << "sizeof(FrameHeader)=" << sizeof(FrameHeader) << '\n';
     std::cout << "sizeof(UdpChunkHeader)=" << sizeof(UdpChunkHeader) << '\n';
 
-	
     log_verbose("[Aperture::Aperture]");
+
     CreateCameraManager();
     AquireCamera();
     Stream();
+
     fpsTimer_ = std::chrono::high_resolution_clock::now();
 }
 
@@ -81,7 +90,8 @@ Aperture<FacetIndex>::~Aperture(){
 }
 
 template<unsigned int FacetIndex>
-OverlapTopologyType& Aperture<FacetIndex>::OverlapTopologyRef()
+auto Aperture<FacetIndex>::OverlapTopologyRef()
+    -> typename Aperture<FacetIndex>::OverlapTopologyType&
 {
     auto& facetTopology =
         static_cast<FacetTopologyType&>(tpgy_);
@@ -90,7 +100,8 @@ OverlapTopologyType& Aperture<FacetIndex>::OverlapTopologyRef()
 }
 
 template<unsigned int FacetIndex>
-const OverlapTopologyType& Aperture<FacetIndex>::OverlapTopologyRef() const
+auto Aperture<FacetIndex>::OverlapTopologyRef() const
+    -> const typename Aperture<FacetIndex>::OverlapTopologyType&
 {
     const auto& facetTopology =
         static_cast<const FacetTopologyType&>(tpgy_);
@@ -99,7 +110,8 @@ const OverlapTopologyType& Aperture<FacetIndex>::OverlapTopologyRef() const
 }
 
 template<unsigned int FacetIndex>
-NonOverlapFacetTopologyType& Aperture<FacetIndex>::NonOverlapTopologyRef()
+auto Aperture<FacetIndex>::NonOverlapTopologyRef()
+    -> typename Aperture<FacetIndex>::NonOverlapFacetTopologyType&
 {
     return static_cast<NonOverlapFacetTopologyType&>(
         OverlapTopologyRef()
@@ -107,7 +119,8 @@ NonOverlapFacetTopologyType& Aperture<FacetIndex>::NonOverlapTopologyRef()
 }
 
 template<unsigned int FacetIndex>
-const NonOverlapFacetTopologyType& Aperture<FacetIndex>::NonOverlapTopologyRef() const
+auto Aperture<FacetIndex>::NonOverlapTopologyRef() const
+    -> const typename Aperture<FacetIndex>::NonOverlapFacetTopologyType&
 {
     return static_cast<const NonOverlapFacetTopologyType&>(
         OverlapTopologyRef()

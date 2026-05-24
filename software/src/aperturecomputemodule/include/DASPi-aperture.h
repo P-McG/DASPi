@@ -28,36 +28,33 @@
 #include "DASPi-udp-srv.h"
 #include "DASPi-udp-clnt.h"
 #include "DASPi-udpframe.h"
-#include "DASPi-shapefunctiondatapacket.h"
-#include "DASPi-overlapshapefunction.h"
+#include "DASPi-topologydatapacket.h"
+#include "DASPi-overlaptopology.h"
 #include "DASPi-postprocessitem.h"
 #include "DASPi-fps-counter.h"
 
 namespace DASPi{
-    
+
+               
     template<unsigned int FacetIndex>
     class Aperture {
         using tpgy_t   = DASPi::tpgy_t;
         using tpgydp_t = DASPi::tpgydp_t<FacetIndex>;
     
-        using FacetTopologyType =
-            typename tpgy_t::template FacetTopology_t<FacetIndex>;
-    
-        using OverlapTopologyType =
-            typename tpgy_t::template OverlapTopology_t<FacetIndex>;
-    
-        using NonOverlapFacetTopologyType =
-            typename OverlapTopologyType::NonOverlapFacetTopology_t;
-    
-        using GlobalLinearTopologyType =
-            typename OverlapTopologyType::GlobalLinearTopology_t;
+        using FacetTopologyType = typename tpgy_t::template FacetTopology_t<FacetIndex>;
+        using OverlapTopologyType = typename tpgy_t::template OverlapTopology_t<FacetIndex>;
+        using NonOverlapFacetTopologyType = typename OverlapTopologyType::NonOverlapFacetTopology_t;
+        using GlobalLinearTopologyType = typename OverlapTopologyType::GlobalLinearTopology_t; 
 
         //Check DASPi-config.h if triggered
         static_assert(
             NUM_REGIONS == tpgydp_t::NumberOfRegions(),
             "NUM_REGIONS must match TopologyDataPacket regions"
         );
-    
+        
+        tpgy_t tpgy_;
+        tpgydp_t tpgydp_;
+        
         const int processingThreads_{4};
         const int chunkThreads_{4};
         const int numBuffers_{4};
@@ -74,7 +71,7 @@ namespace DASPi{
         inline static std::vector<std::unique_ptr<libcamera::Request>> requests_;
         inline static int timeout_{600};//seconds
         std::atomic<size_t> pendingRequests_{0};
-        inline static EventLoop loop_;
+        inline static EventLoop& loop_ = GetEventLoop();
         inline static std::unique_ptr<std::ofstream> outputFile_;
         inline static unsigned int frameNumber_{0};
         //constexpr inline static unsigned int width_{1536};
@@ -127,10 +124,15 @@ namespace DASPi{
         Aperture(const std::string clientIp, const size_t port);
         ~Aperture();
 
-        template<size_t n> OverlapTopologyType& Aperture<n>::OverlapTopologyRef();
-        template<size_t n> const OverlapTopologyType& OverlapTopologyRef() const;
-        template<size_t n> NonOverlapFacetTopologyType& NonOverlapTopologyRef();
-        template<size_t n> const NonOverlapFacetTopologyType& NonOverlapTopologyRef() const;
+        auto OverlapTopologyRef() -> OverlapTopologyType&;
+        auto OverlapTopologyRef() const -> const OverlapTopologyType&;
+        auto NonOverlapTopologyRef() -> NonOverlapFacetTopologyType&;
+        auto NonOverlapTopologyRef() const -> const NonOverlapFacetTopologyType&;
+
+        //template<size_t n> OverlapTopologyType& OverlapTopologyRef();
+        //template<size_t n> const OverlapTopologyType& OverlapTopologyRef() const;
+        //template<size_t n> NonOverlapFacetTopologyType& NonOverlapTopologyRef();
+        //template<size_t n> const NonOverlapFacetTopologyType& NonOverlapTopologyRef() const;
         void PrintThreadInfo();
         void CleanupCamera();
         void CreateCameraManager();
@@ -160,7 +162,7 @@ namespace DASPi{
         //template<typename input_t>
             //void constexpr FrameBufferTransformation(input_t&& input, std::array<std::vector<uint16_t>, n_ + 1>& output, const size_t numThreads);
         template<typename input_t>
-            void constexpr FrameBufferTransformation(input_t&& input, const GainMsg &gainMsg, sfdp_t& output, const size_t numThreads);
+            void constexpr FrameBufferTransformation(input_t&& input, const GainMsg &gainMsg, tpgydp_t& output, const size_t numThreads);
         //template<typename T0> void constexpr FrameBufferTransformation2(T0&& input, std::vector<uint16_t>& output, const size_t numThreads);
         
         void FrameBufferToUDP(const uint64_t frameNumber,
@@ -176,7 +178,7 @@ namespace DASPi{
     
         void StartPostProcessingThreads();
         void StopPostProcessingThreads();
-        inline void ApplyWhiteBalanceToMosaic_BGGR(size_t region, const tpgy_t &sf, std::span<uint16_t> data, const GainMsg& gainMsg);
+        inline void ApplyWhiteBalanceToMosaic_BGGR(size_t region, std::span<uint16_t> data, const GainMsg& gainMsg);
         inline void ApplyWhiteBalanceToMosaic_RGGB(size_t region, std::span<uint16_t> data, const GainMsg& gainMsg);
         std::string GetBoardSerial();
         //uint32_t ParseCameraAddressId(const std::string& libcameraId);

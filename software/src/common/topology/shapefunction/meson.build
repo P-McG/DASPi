@@ -4,6 +4,7 @@ cpp = meson.get_compiler('cpp')
 
 opencv_dep = dependency('opencv4', native : false)
 armadillo_dep = dependency('armadillo', native : false, required : true)
+eigen_dep = dependency('eigen3', required : true)
 
 blas_dep = cpp.find_library('blas', required : true)
 lapack_dep = cpp.find_library('openblas', required : true)
@@ -17,6 +18,7 @@ shapefunction_lib = static_library(
   dependencies : [
     opencv_dep,
     armadillo_dep,
+    eigen_dep,
     blas_dep,
     lapack_dep,
     arpack_dep,],
@@ -28,6 +30,7 @@ shapefunction_dep = declare_dependency(
   dependencies : [
     opencv_dep,
     armadillo_dep,
+    eigen_dep,
     blas_dep,
     lapack_dep,
     arpack_dep,],

@@ -97,3 +97,9 @@ void EventLoop::dispatchCalls()
 		locker.lock();
 	}
 }
+
+EventLoop& GetEventLoop()
+{
+    static EventLoop loop;
+    return loop;
+}
