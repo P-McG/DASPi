@@ -1160,11 +1160,17 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
 
     std::array<uint32_t, NUM_REGIONS> regionSizes{};
     size_t totalElems = 0;
-
-    for (size_t i = 0; i < NUM_REGIONS; ++i) {
+    
+    for (size_t i = 0; i < regionCount_; ++i) {
         const auto valid = tpgydp.RegionValidSize(i);
         regionSizes[i] = static_cast<uint32_t>(valid);
         totalElems += valid;
+    
+        std::cout << "[TX region] facet=" << FacetIndex
+                  << " region=" << i
+                  << " valid=" << valid
+                  << " capacity=" << tpgydp.RegionCapacity(i)
+                  << '\n';
     }
 
     if (data.size() != totalElems) {
@@ -1760,80 +1766,116 @@ constexpr void Aperture<FacetIndex>::FrameBufferTransformation(
     tpgydp_t& output,
     const size_t numThreads)
 {
-    //log_verbose("[Aperture::FrameBufferTransformation]");
+    // log_verbose("[Aperture::FrameBufferTransformation]");
+
+    constexpr std::size_t regionCount = tpgydp_t::NumberOfRegions();
+
+    static_assert(
+        regionCount == n_ + 1,
+        "TopologyDataPacket region count must be verticesPerFaceN_ + 1"
+    );
+
+    static_assert(
+        NUM_REGIONS == regionCount,
+        "NUM_REGIONS must match TopologyDataPacket::NumberOfRegions()"
+    );
 
     if (numThreads == 0) {
-        std::cerr << "[FrameBufferTransformation] numThreads must be > 0" << std::endl;
+        std::cerr << "[FrameBufferTransformation] numThreads must be > 0"
+                  << std::endl;
         std::exit(EXIT_FAILURE);
     }
 
     output.ResetValidSizes();
 
-    auto copyFacetToOutput = [&](size_t outIndex, auto& maskedOutput) {
-        auto& dst = output[outIndex];
+    auto& overlapTopology = OverlapTopologyRef();
+    auto& nonOverlapTopology = NonOverlapTopologyRef();
 
-        //std::cout << "[FrameBufferTransformation] facet=" << outIndex
-                  //<< " masked.size()=" << maskedOutput.size()
-                  //<< " dst.capacity()=" << dst.size()
-                  //<< std::endl;
+    auto copyRegionToOutput =
+        [&](std::size_t regionIndex, const auto& maskedOutput)
+    {
+        if (regionIndex >= regionCount) {
+            std::cerr << "[FrameBufferTransformation] invalid region index "
+                      << regionIndex
+                      << " regionCount=" << regionCount
+                      << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+
+        auto& dst = output[regionIndex];
 
         if (maskedOutput.size() > dst.size()) {
-            std::cerr << "[FrameBufferTransformation] overflow for facet " << outIndex
+            std::cerr << "[FrameBufferTransformation] overflow for region "
+                      << regionIndex
                       << ": masked.size()=" << maskedOutput.size()
                       << " dst.size()=" << dst.size()
                       << std::endl;
             std::exit(EXIT_FAILURE);
         }
 
-        std::memcpy(dst.data(), maskedOutput.data(), maskedOutput.size() * sizeof(uint16_t));
-        output.SetRegionValidSize(outIndex, maskedOutput.size());
+        if (!maskedOutput.empty()) {
+            std::memcpy(
+                dst.data(),
+                maskedOutput.data(),
+                maskedOutput.size() * sizeof(uint16_t)
+            );
+        }
+
+        output.SetRegionValidSize(regionIndex, maskedOutput.size());
     };
 
-     auto& overlapTopology =
-        OverlapTopologyRef();
-    
-    auto& nonOverlapTopology =
-        NonOverlapTopologyRef();
-    
+    auto applyWhiteBalanceAndCopy =
+        [&](std::size_t regionIndex, auto& maskedOutput)
+    {
+        ApplyWhiteBalanceToMosaic_RGGB(
+            regionIndex,
+            std::span<uint16_t>(
+                maskedOutput.data(),
+                maskedOutput.size()
+            ),
+            gainMsg
+        );
+
+        copyRegionToOutput(regionIndex, maskedOutput);
+    };
+
+    /*
+     * Region layout:
+     *
+     *   region 0               = non-overlap facet region
+     *   regions 1..n_          = overlap regions
+     *   overlap topology index = region - 1
+     */
+
     {
         auto maskedOutput =
             nonOverlapTopology.FrameBufferMask(input);
-    
-        ApplyWhiteBalanceToMosaic_RGGB(
-            0,
-            std::span<uint16_t>(
-                maskedOutput.data(),
-                maskedOutput.size()
-            ),
-            gainMsg
-        );
-    
-        copyFacetToOutput(0, maskedOutput);
+
+        applyWhiteBalanceAndCopy(0, maskedOutput);
     }
-    
-    for (size_t i = 0; i < n_; ++i) {
+
+    for (std::size_t regionIndex = 1;
+         regionIndex < regionCount;
+         ++regionIndex) {
+
+        const std::size_t overlapIndex = regionIndex - 1;
+
         auto maskedOutput =
-            overlapTopology.FrameBufferMask(input, i);
-    
-        ApplyWhiteBalanceToMosaic_RGGB(
-            i + 1,
-            std::span<uint16_t>(
-                maskedOutput.data(),
-                maskedOutput.size()
-            ),
-            gainMsg
-        );
-    
-        copyFacetToOutput(i + 1, maskedOutput);
+            overlapTopology.FrameBufferMask(input, overlapIndex);
+
+        applyWhiteBalanceAndCopy(regionIndex, maskedOutput);
     }
-    
-    size_t totalValid = 0;
-    for (size_t i = 0; i < NUM_REGIONS; ++i) {
-        totalValid += output.RegionValidSize(i);
+
+    std::size_t totalValid = 0;
+
+    for (std::size_t regionIndex = 0;
+         regionIndex < regionCount;
+         ++regionIndex) {
+        totalValid += output.RegionValidSize(regionIndex);
     }
-    
-    //std::cout << "[FrameBufferTransformation] total valid elements="
-              //<< totalValid << std::endl;
+
+    // std::cout << "[FrameBufferTransformation] total valid elements="
+    //           << totalValid << std::endl;
 }
 
 };//end namespace DASPi

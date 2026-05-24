@@ -223,7 +223,7 @@ meson setup ~/DASPi/software/build/computemodule \
 ```
 Compile with:
 ```bash
-meson compile -C ~/DASPi/software/build/aperturecomputemodule
+meson compile -C ~/DASPi/software/build/computemodule
 ```
 
 Or with a project build script:

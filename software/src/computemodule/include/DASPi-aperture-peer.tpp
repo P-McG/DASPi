@@ -855,21 +855,31 @@ namespace DASPi{
 	{
 		GainMsg msg{};
 	
-		ssize_t bytes = controlClnt_.ReceiveFromServer(msg);
+		const ssize_t bytes = controlClnt_.ReceiveFromServer(msg);
 	
 		if (bytes < 0) {
 			perror("ReceiveGainMsg recvfrom");
 			return false;
 		}
 	
-		if (bytes != sizeof(GainMsg)) {
-			std::cerr << "ReceiveGainMsg: wrong size\n";
-			return false;
+		// No control packet available right now. This is not an error.
+		if (bytes == 0) {
+			return true;
+		}
+	
+		if (bytes != static_cast<ssize_t>(sizeof(GainMsg))) {
+			std::cerr << "ReceiveGainMsg: wrong size bytes="
+					  << bytes
+					  << " expected=" << sizeof(GainMsg)
+					  << '\n';
+			return true;   // do not kill the control thread
 		}
 	
 		if (msg.header.type != MessageType::GainMsg) {
-			std::cerr << "ReceiveGainMsg: invalid type\n";
-			return false;
+			std::cerr << "ReceiveGainMsg: invalid type="
+					  << static_cast<int>(msg.header.type)
+					  << '\n';
+			return true;   // ignore bad packet, keep thread alive
 		}
 	
 		HandleGainMsg(msg);

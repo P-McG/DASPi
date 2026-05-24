@@ -109,10 +109,12 @@ namespace DASPi{
         bool running_ = true;
         bool postProcessingRunning_ = false;
         std::atomic<bool> stopPostProcessing_{false};
-        
-        
-        static constexpr std::size_t n_ =
-            tpgy_t::verticesPerFaceN_;
+
+        static constexpr std::size_t n_ = tpgy_t::verticesPerFaceN_;
+        static constexpr std::size_t regionCount_ = tpgydp_t::NumberOfRegions();
+
+        static_assert(regionCount_ == n_ + 1);
+        static_assert(NUM_REGIONS == regionCount_);
       
     public:
         UDPSrv frameSrv_;
