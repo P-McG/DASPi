@@ -23,47 +23,47 @@ public:
     static inline constexpr double kPi{std::numbers::pi};
     static inline constexpr double phi{ std::numbers::phi };
              
-    MeshTopology<3> Make() const
-    {
-        MeshTopology<3> topo;
+    //MeshTopology<3> Make() const
+    //{
+        //MeshTopology<3> topo;
 
-        topo.vertices = {
-            {-1,  phi, 0}, { 1,  phi, 0}, {-1, -phi, 0}, { 1, -phi, 0},
-            {0, -1,  phi}, {0,  1,  phi}, {0, -1, -phi}, {0,  1, -phi},
-            { phi, 0, -1}, { phi, 0,  1}, {-phi, 0, -1}, {-phi, 0,  1},
-        };
+        //topo.vertices = {
+            //{-1,  phi, 0}, { 1,  phi, 0}, {-1, -phi, 0}, { 1, -phi, 0},
+            //{0, -1,  phi}, {0,  1,  phi}, {0, -1, -phi}, {0,  1, -phi},
+            //{ phi, 0, -1}, { phi, 0,  1}, {-phi, 0, -1}, {-phi, 0,  1},
+        //};
 
-        const Eigen::Matrix3d R =
-            Eigen::AngleAxisd(kPi / 5.0, Eigen::Vector3d::UnitY()).toRotationMatrix() *
-            Eigen::AngleAxisd(kPi / 7.0, Eigen::Vector3d::UnitX()).toRotationMatrix();
+        //const Eigen::Matrix3d R =
+            //Eigen::AngleAxisd(kPi / 5.0, Eigen::Vector3d::UnitY()).toRotationMatrix() *
+            //Eigen::AngleAxisd(kPi / 7.0, Eigen::Vector3d::UnitX()).toRotationMatrix();
 
-        for (auto& p : topo.vertices) {
-            p = R * p;
-        }
+        //for (auto& p : topo.vertices) {
+            //p = R * p;
+        //}
 
-        topo.faces = {
-            {0,11,5},{0,5,1},{0,1,7},{0,7,10},{0,10,11},
-            {1,5,9},{5,11,4},{11,10,2},{10,7,6},{7,1,8},
-            {3,9,4},{3,4,2},{3,2,6},{3,6,8},{3,8,9},
-            {4,9,5},{2,4,11},{6,2,10},{8,6,7},{9,8,1}
-        };
+        //topo.faces = {
+            //{0,11,5},{0,5,1},{0,1,7},{0,7,10},{0,10,11},
+            //{1,5,9},{5,11,4},{11,10,2},{10,7,6},{7,1,8},
+            //{3,9,4},{3,4,2},{3,2,6},{3,6,8},{3,8,9},
+            //{4,9,5},{2,4,11},{6,2,10},{8,6,7},{9,8,1}
+        //};
 
-        BuildTopologyAdjacency(topo);
+        //BuildTopologyAdjacency(topo);
 
-        if (topo.edges.size() != 30) {
-            throw std::runtime_error("IcosahedronTopology expected 30 edges");
-        }
+        //if (topo.edges.size() != 30) {
+            //throw std::runtime_error("IcosahedronTopology expected 30 edges");
+        //}
 
-        for (std::size_t faceIndex = 0; faceIndex < topo.faceNeighborIndices.size(); ++faceIndex) {
-            for (int neighbor : topo.faceNeighborIndices[faceIndex]) {
-                if (neighbor < 0) {
-                    throw std::runtime_error("IcosahedronTopology has boundary edge");
-                }
-            }
-        }
+        //for (std::size_t faceIndex = 0; faceIndex < topo.faceNeighborIndices.size(); ++faceIndex) {
+            //for (int neighbor : topo.faceNeighborIndices[faceIndex]) {
+                //if (neighbor < 0) {
+                    //throw std::runtime_error("IcosahedronTopology has boundary edge");
+                //}
+            //}
+        //}
 
-        return topo;
-    }
+        //return topo;
+    //}
     
     static constexpr MaskOrientationData MaskOrientation(double radius, double cosValue, double sinValue){
         return MaskOrientationData{

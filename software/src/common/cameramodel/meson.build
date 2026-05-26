@@ -12,7 +12,7 @@ camera_model_lib = static_library(
   [
     'src/DASPi-sphere-stitcher.cpp',
     'src/DASPi-spherical-math.cpp',
-
+    'src/DASPi-bayer-io.cpp',
   ],
   include_directories : [shapefunction_inc, camera_model_inc, eigen_inc],
   dependencies : camera_model_deps,

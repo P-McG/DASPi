@@ -288,17 +288,39 @@ std::size_t SphereStitcher::rayIndex(int x, int y) const {
            static_cast<std::size_t>(x);
 }
 
-void SphereStitcher::precomputeWorldRays() {
+//void SphereStitcher::precomputeWorldRays() {
+    //worldRays_.resize(
+        //static_cast<std::size_t>(config_.outputWidth) *
+        //static_cast<std::size_t>(config_.outputHeight));
+
+    //for (int y = 0; y < config_.outputHeight; ++y) {
+        //for (int x = 0; x < config_.outputWidth; ++x) {
+            //worldRays_[rayIndex(x, y)] = projection_.pixelToRay(x, y).cast<float>();
+        //}
+    //}
+//}
+
+void SphereStitcher::precomputeWorldRays()
+{
     worldRays_.resize(
         static_cast<std::size_t>(config_.outputWidth) *
-        static_cast<std::size_t>(config_.outputHeight));
+        static_cast<std::size_t>(config_.outputHeight)
+    );
 
     for (int y = 0; y < config_.outputHeight; ++y) {
         for (int x = 0; x < config_.outputWidth; ++x) {
-            worldRays_[rayIndex(x, y)] = projection_.pixelToRay(x, y).cast<float>();
+            const Eigen::Vector3d panoRay =
+                projection_.pixelToRay(x, y).normalized();
+
+            const Eigen::Vector3d worldRay =
+                (config_.projectionToWorld * panoRay).normalized();
+
+            worldRays_[rayIndex(x, y)] =
+                worldRay.cast<float>();
         }
     }
 }
+
 
 void SphereStitcher::precomputeProjectionOnlyMap()
 {
@@ -561,19 +583,16 @@ cv::Mat SphereStitcher::stitch(cv::Mat* validMask) const
 std::vector<Contribution>
 SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
 {
-    const Eigen::Vector3d ray_world = ray_world_f.cast<double>().normalized();
+    const Eigen::Vector3d ray_world =
+        ray_world_f.cast<double>().normalized();
 
     std::vector<Contribution> out;
     out.reserve(cameras_.size());
 
-    const int owningFace = FindOwningFace(ray_world_f);
-    if (owningFace < 0) {
-        return out;
-    }
-
-    auto projectIfValid = [&](const CameraView& cam,
-                              cv::Point2d& uvOut,
-                              Eigen::Vector3d& rayCamOut) -> bool
+    auto projectIfValid =
+        [&](const CameraView& cam,
+            cv::Point2d& uvOut,
+            Eigen::Vector3d& rayCamOut) -> bool
     {
         rayCamOut = cam.Rcw.transpose() * ray_world;
 
@@ -581,50 +600,41 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
             return false;
         }
 
-        const ProjectionResult proj = cam.model->project(rayCamOut);
+        const ProjectionResult proj =
+            cam.model->project(rayCamOut);
+
         if (!proj.valid) {
             return false;
-        }
-
-        if (!cam.sensorValidMask.empty()) {
-            const int x = static_cast<int>(std::floor(proj.uv.x));
-            const int y = static_cast<int>(std::floor(proj.uv.y));
-
-            if (x < 0 || x >= cam.sensorValidMask.cols ||
-                y < 0 || y >= cam.sensorValidMask.rows) {
-                return false;
-            }
-
-            if (cam.sensorValidMask.at<std::uint8_t>(y, x) == 0) {
-                return false;
-            }
         }
 
         uvOut = proj.uv;
         return true;
     };
 
-    auto appendContribution = [&](int camIndex,
-                                  const cv::Point2d& uv,
-                                  const Eigen::Vector3d& ray_cam,
-                                  bool fromNonOverlap)
+    auto appendContribution =
+        [&](int camIndex,
+            const cv::Point2d& uv,
+            const Eigen::Vector3d& ray_cam,
+            bool fromNonOverlap)
     {
         Contribution c;
         c.cameraIndex = camIndex;
         c.uv = uv;
         c.color = SampleBilinear(
             cameras_[static_cast<std::size_t>(camIndex)].image,
-            uv);
+            uv
+        );
         c.weight = OpticalWeight(ray_cam, config_.blendPower);
         c.fromNonOverlap = fromNonOverlap;
 
         out.push_back(std::move(c));
     };
 
-    // Projection-only:
-    // Use the owning face's mapped non-overlap stream directly.
     if (config_.mode == StitchMode::ProjectionOnly) {
-        if (owningFace >= static_cast<int>(faceToCameraIndex_.size())) {
+        const int owningFace = FindOwningFace(ray_world_f);
+
+        if (owningFace < 0 ||
+            owningFace >= static_cast<int>(faceToCameraIndex_.size())) {
             return out;
         }
 
@@ -639,10 +649,6 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
         const CameraView& cam =
             cameras_[static_cast<std::size_t>(camIndex)];
 
-        if (cam.localStreamIndex != 0) {
-            return out;
-        }
-
         cv::Point2d uv;
         Eigen::Vector3d ray_cam;
 
@@ -654,60 +660,16 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
         return out;
     }
 
-    // Blend mode:
-    // 1) Use the owning face's non-overlap stream if the ray lands
-    //    inside its non-overlap mask.
-    // No non-overlap hit. Try every overlap stream connected to the owning face.
+    /*
+     * Debug blend path:
+     * Check every logical stream against its own mask.
+     *
+     * This verifies whether all regions 0..regionCount-1 are making it
+     * into CameraView masks/images before applying stricter face ownership.
+     */
     for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
-        const CameraView& cam = cameras_[static_cast<std::size_t>(i)];
-    
-        if (cam.localStreamIndex <= 0) {
-            continue;
-        }
-    
-        const bool relatedToOwningFace =
-            cam.faceIndex == owningFace ||
-            cam.neighborFaceIndex == owningFace;
-    
-        if (!relatedToOwningFace) {
-            continue;
-        }
-    
-        cv::Point2d uv;
-        Eigen::Vector3d ray_cam;
-    
-        if (!projectIfValid(cam, uv, ray_cam)) {
-            continue;
-        }
-    
-        if (!cam.maskOverlap.empty() &&
-            IsInsideMask(cam.maskOverlap, uv)) {
-            appendContribution(i, uv, ray_cam, false);
-        }
-    }
-
-    // Debug blend mode:
-    // No non-overlap hit. Try every overlap stream connected to the owning face.
-    //
-    // This intentionally bypasses FindSeamLocalEdgeForRay() and edgeIndex pairing.
-    // If this removes the black gaps in contribution_debug.png, the strict seam
-    // edge selection is too restrictive or choosing the wrong edge.
-    //
-    // If the gaps remain, the overlap masks do not cover those projected UVs.
-    for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
-        const CameraView& cam = cameras_[static_cast<std::size_t>(i)];
-
-        if (cam.localStreamIndex <= 0) {
-            continue;
-        }
-
-        const bool relatedToOwningFace =
-            cam.faceIndex == owningFace ||
-            cam.neighborFaceIndex == owningFace;
-
-        if (!relatedToOwningFace) {
-            continue;
-        }
+        const CameraView& cam =
+            cameras_[static_cast<std::size_t>(i)];
 
         cv::Point2d uv;
         Eigen::Vector3d ray_cam;
@@ -715,20 +677,241 @@ SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
         if (!projectIfValid(cam, uv, ray_cam)) {
             continue;
         }
+
+        const bool inNonOverlap =
+            IsInsideMask(cam.maskNonOverlap, uv);
 
         const bool inOverlap =
-            !cam.maskOverlap.empty() &&
             IsInsideMask(cam.maskOverlap, uv);
 
-        if (!inOverlap) {
+        if (!inNonOverlap && !inOverlap) {
             continue;
         }
 
-        appendContribution(i, uv, ray_cam, false);
+        appendContribution(
+            i,
+            uv,
+            ray_cam,
+            inNonOverlap
+        );
     }
+    
+    //// TEMP DEBUG: contribution delta counts by logical camera stream.
+    //{
+        //static std::array<std::atomic<uint64_t>, 64> acceptedByCamera{};
+        //static std::array<uint64_t, 64> lastAcceptedByCamera{};
+        //static std::atomic<uint64_t> calls{0};
+        //static std::mutex printMutex;
 
+        //for (const auto& c : out) {
+            //if (c.cameraIndex >= 0 &&
+                //c.cameraIndex < static_cast<int>(acceptedByCamera.size())) {
+                //acceptedByCamera[static_cast<std::size_t>(c.cameraIndex)]++;
+            //}
+        //}
+
+        //if ((++calls % 1000000) == 0) {
+            //std::lock_guard<std::mutex> lock(printMutex);
+
+            //std::cout << "[contrib delta]";
+
+            //for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
+                //const auto& cam =
+                    //cameras_[static_cast<std::size_t>(i)];
+
+                //const uint64_t now =
+                    //acceptedByCamera[static_cast<std::size_t>(i)].load();
+
+                //const uint64_t delta =
+                    //now - lastAcceptedByCamera[static_cast<std::size_t>(i)];
+
+                //lastAcceptedByCamera[static_cast<std::size_t>(i)] = now;
+
+                //std::cout << " cam" << i
+                          //<< "(m" << cam.moduleIndex
+                          //<< "s" << cam.localStreamIndex
+                          //<< ")=" << delta;
+            //}
+
+            //std::cout << '\n';
+        //}
+    //}
+    ///////////////temp
+    
     return out;
 }
+
+//std::vector<Contribution>
+//SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world_f) const
+//{
+    //const Eigen::Vector3d ray_world = ray_world_f.cast<double>().normalized();
+
+    //std::vector<Contribution> out;
+    //out.reserve(cameras_.size());
+
+    //const int owningFace = FindOwningFace(ray_world_f);
+    //if (owningFace < 0) {
+        //return out;
+    //}
+
+    //auto projectIfValid = [&](const CameraView& cam,
+                              //cv::Point2d& uvOut,
+                              //Eigen::Vector3d& rayCamOut) -> bool
+    //{
+        //rayCamOut = cam.Rcw.transpose() * ray_world;
+
+        //if (rayCamOut.z() <= 0.0) {
+            //return false;
+        //}
+
+        //const ProjectionResult proj = cam.model->project(rayCamOut);
+        //if (!proj.valid) {
+            //return false;
+        //}
+
+        //if (!cam.sensorValidMask.empty()) {
+            //const int x = static_cast<int>(std::floor(proj.uv.x));
+            //const int y = static_cast<int>(std::floor(proj.uv.y));
+
+            //if (x < 0 || x >= cam.sensorValidMask.cols ||
+                //y < 0 || y >= cam.sensorValidMask.rows) {
+                //return false;
+            //}
+
+            //if (cam.sensorValidMask.at<std::uint8_t>(y, x) == 0) {
+                //return false;
+            //}
+        //}
+
+        //uvOut = proj.uv;
+        //return true;
+    //};
+
+    //auto appendContribution = [&](int camIndex,
+                                  //const cv::Point2d& uv,
+                                  //const Eigen::Vector3d& ray_cam,
+                                  //bool fromNonOverlap)
+    //{
+        //Contribution c;
+        //c.cameraIndex = camIndex;
+        //c.uv = uv;
+        //c.color = SampleBilinear(
+            //cameras_[static_cast<std::size_t>(camIndex)].image,
+            //uv);
+        //c.weight = OpticalWeight(ray_cam, config_.blendPower);
+        //c.fromNonOverlap = fromNonOverlap;
+
+        //out.push_back(std::move(c));
+    //};
+
+    //// Projection-only:
+    //// Use the owning face's mapped non-overlap stream directly.
+    //if (config_.mode == StitchMode::ProjectionOnly) {
+        //if (owningFace >= static_cast<int>(faceToCameraIndex_.size())) {
+            //return out;
+        //}
+
+        //const int camIndex =
+            //faceToCameraIndex_[static_cast<std::size_t>(owningFace)];
+
+        //if (camIndex < 0 ||
+            //camIndex >= static_cast<int>(cameras_.size())) {
+            //return out;
+        //}
+
+        //const CameraView& cam =
+            //cameras_[static_cast<std::size_t>(camIndex)];
+
+        //if (cam.localStreamIndex != 0) {
+            //return out;
+        //}
+
+        //cv::Point2d uv;
+        //Eigen::Vector3d ray_cam;
+
+        //if (!projectIfValid(cam, uv, ray_cam)) {
+            //return out;
+        //}
+
+        //appendContribution(camIndex, uv, ray_cam, true);
+        //return out;
+    //}
+
+    //// Blend mode:
+    //// 1) Use the owning face's non-overlap stream if the ray lands
+    ////    inside its non-overlap mask.
+    //// No non-overlap hit. Try every overlap stream connected to the owning face.
+    //for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
+        //const CameraView& cam = cameras_[static_cast<std::size_t>(i)];
+    
+        //if (cam.localStreamIndex <= 0) {
+            //continue;
+        //}
+    
+        //const bool relatedToOwningFace =
+            //cam.faceIndex == owningFace ||
+            //cam.neighborFaceIndex == owningFace;
+    
+        //if (!relatedToOwningFace) {
+            //continue;
+        //}
+    
+        //cv::Point2d uv;
+        //Eigen::Vector3d ray_cam;
+    
+        //if (!projectIfValid(cam, uv, ray_cam)) {
+            //continue;
+        //}
+    
+        //if (!cam.maskOverlap.empty() &&
+            //IsInsideMask(cam.maskOverlap, uv)) {
+            //appendContribution(i, uv, ray_cam, false);
+        //}
+    //}
+
+    //// Debug blend mode:
+    //// No non-overlap hit. Try every overlap stream connected to the owning face.
+    ////
+    //// This intentionally bypasses FindSeamLocalEdgeForRay() and edgeIndex pairing.
+    //// If this removes the black gaps in contribution_debug.png, the strict seam
+    //// edge selection is too restrictive or choosing the wrong edge.
+    ////
+    //// If the gaps remain, the overlap masks do not cover those projected UVs.
+    //for (int i = 0; i < static_cast<int>(cameras_.size()); ++i) {
+        //const CameraView& cam = cameras_[static_cast<std::size_t>(i)];
+
+        //if (cam.localStreamIndex <= 0) {
+            //continue;
+        //}
+
+        //const bool relatedToOwningFace =
+            //cam.faceIndex == owningFace ||
+            //cam.neighborFaceIndex == owningFace;
+
+        //if (!relatedToOwningFace) {
+            //continue;
+        //}
+
+        //cv::Point2d uv;
+        //Eigen::Vector3d ray_cam;
+
+        //if (!projectIfValid(cam, uv, ray_cam)) {
+            //continue;
+        //}
+
+        //const bool inOverlap =
+            //!cam.maskOverlap.empty() &&
+            //IsInsideMask(cam.maskOverlap, uv);
+
+        //if (!inOverlap) {
+            //continue;
+        //}
+
+        //appendContribution(i, uv, ray_cam, false);
+    //}
+
+    //return out;
+//}
 
 //std::vector<Contribution>
 //SphereStitcher::gatherContributions(const Eigen::Vector3f& ray_world) const {
@@ -858,6 +1041,94 @@ cv::Vec3b SphereStitcher::resolvePixel(
         return config_.backgroundColor;
     }
 
+    constexpr bool kRenderRegionDebug = false;//true;
+
+    if constexpr (kRenderRegionDebug) {
+        /*
+         * Region/module debug view.
+         *
+         * OpenCV uses BGR order.
+         *
+         * Module 0:
+         *   stream 0 = dark gray  = non-overlap
+         *   stream 1 = red        = overlap region 1
+         *   stream 2 = green      = overlap region 2
+         *   stream 3 = blue       = overlap region 3
+         *
+         * Module 1:
+         *   stream 0 = light gray = non-overlap
+         *   stream 1 = orange     = overlap region 1
+         *   stream 2 = cyan       = overlap region 2
+         *   stream 3 = magenta    = overlap region 3
+         *
+         * Multiple contributing regions are combined with max-channel blending.
+         * This prevents one stream from completely hiding the others.
+         */
+
+        auto colorForStream =
+            [](int moduleIndex, int localStreamIndex) -> cv::Vec3b
+        {
+            if (moduleIndex == 0) {
+                switch (localStreamIndex) {
+                case 0:
+                    return cv::Vec3b(60, 60, 60);     // dark gray
+                case 1:
+                    return cv::Vec3b(0, 0, 255);      // red
+                case 2:
+                    return cv::Vec3b(0, 255, 0);      // green
+                case 3:
+                    return cv::Vec3b(255, 0, 0);      // blue
+                default:
+                    return cv::Vec3b(0, 255, 255);    // unexpected
+                }
+            }
+
+            if (moduleIndex == 1) {
+                switch (localStreamIndex) {
+                case 0:
+                    return cv::Vec3b(130, 130, 130);  // light gray
+                case 1:
+                    return cv::Vec3b(0, 128, 255);    // orange
+                case 2:
+                    return cv::Vec3b(255, 255, 0);    // cyan
+                case 3:
+                    return cv::Vec3b(255, 0, 255);    // magenta
+                default:
+                    return cv::Vec3b(255, 255, 255);  // unexpected
+                }
+            }
+
+            return cv::Vec3b(255, 255, 255);
+        };
+
+        cv::Vec3b out(0, 0, 0);
+        bool wroteAny = false;
+
+        for (const Contribution& c : contributions) {
+            if (c.cameraIndex < 0 ||
+                c.cameraIndex >= static_cast<int>(cameras_.size())) {
+                continue;
+            }
+
+            const CameraView& cam =
+                cameras_[static_cast<std::size_t>(c.cameraIndex)];
+
+            const cv::Vec3b color =
+                colorForStream(
+                    cam.moduleIndex,
+                    cam.localStreamIndex
+                );
+
+            out[0] = std::max(out[0], color[0]);
+            out[1] = std::max(out[1], color[1]);
+            out[2] = std::max(out[2], color[2]);
+
+            wroteAny = true;
+        }
+
+        return wroteAny ? out : config_.backgroundColor;
+    }
+
     if (config_.mode == StitchMode::ProjectionOnly) {
         const cv::Vec3d& color = contributions.front().color;
 
@@ -869,6 +1140,7 @@ cv::Vec3b SphereStitcher::resolvePixel(
     }
 
     bool hasNonOverlap = false;
+
     for (const auto& c : contributions) {
         if (c.fromNonOverlap) {
             hasNonOverlap = true;

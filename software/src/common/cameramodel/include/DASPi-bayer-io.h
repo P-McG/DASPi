@@ -6,9 +6,9 @@
 
 namespace DASPi {
 
-cv::Mat LoadBayer16AsBgr8(const std::string& path,
-                          int width,
-                          int height,
-                          int bayerCode = cv::COLOR_BayerBG2BGR);
+cv::Mat decodeBayer16ToBgr8(const std::uint16_t* data,
+                            int width,
+                            int height,
+                            int bayerCode = cv::COLOR_BayerBG2BGR);
 
 }

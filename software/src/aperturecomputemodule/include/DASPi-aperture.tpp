@@ -715,10 +715,20 @@ void Aperture<FacetIndex>::ProcessRequestImpl(libcamera::Request *request)
     const uint64_t completedFrameId = request->sequence();
 
     GainMsg gainMsg{};
+    gainMsg.header.type = MessageType::GainMsg;
+    gainMsg.header.version = 1;
+    
     gainMsg.camera_id = cameraId_;
     gainMsg.frame_id = completedFrameId;
+    
+    gainMsg.mean_brightness = 0.0f;       // ComputeModule will calculate this.
+    gainMsg.target_brightness = 0.35f;    // normalized target, tune later.
+    
     gainMsg.r_gain = 1.0f;
     gainMsg.b_gain = 1.0f;
+    gainMsg.r_gain_apply = 1.0f;
+    gainMsg.b_gain_apply = 1.0f;
+    
     gainMsg.exposure_us = 0.0f;
     gainMsg.analogue_gain = 1.0f;
 

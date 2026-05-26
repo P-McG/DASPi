@@ -35,6 +35,9 @@ class AperturePeer : public AperturePeerBase
     
     using OverlapTopologyType =
         typename tpgy_t::template OverlapTopology_t<FacetIndex>;
+    
+    using NonOverlapFacetTopologyType =
+        typename OverlapTopologyType::NonOverlapFacetTopology_t;
 
     static constexpr unsigned int facetIndex_ = FacetIndex;
     static constexpr size_t verticesPerFaceN_{tpgy_t::FacetSpace_t<FacetIndex>::verticesPerFaceN_};

@@ -51,8 +51,6 @@ UDPClnt::UDPClnt(const in_addr_t clntAddr,
     std::cout << "sizeof(FrameHeader)=" << sizeof(FrameHeader) << '\n';
     std::cout << "sizeof(UdpChunkHeader)=" << sizeof(UdpChunkHeader) << '\n';
 
-    connect(sockfd_, (struct sockaddr*)&srvAddr_, sizeof(srvAddr_));
-
     FillingServerInformation(srvAddr);
     CreatingSocketFileDescriptor();
     BindSocketWithClientAddress();

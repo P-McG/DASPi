@@ -39,6 +39,7 @@
 #include "DASPi-flat_triangle_map.h"
 #include "DASPi-networkaddressplan.h"
 #include "DASPi-programoptions.h"
+#include "DASPi-bayer-io.h"
 
 using namespace DASPi;
 using namespace DASPi::spherical;
@@ -537,53 +538,53 @@ CameraView makeCameraView(const cv::Mat& image,
     return cam;
 }
 
-cv::Mat decodeBayer16ToBgr8(const std::vector<uint16_t>& data)
-{
-    constexpr bool kWriteRawDebugImage = false;
-    constexpr bool kVerboseDecode = false;
+//cv::Mat decodeBayer16ToBgr8(const std::vector<uint16_t>& data)
+//{
+    //constexpr bool kWriteRawDebugImage = false;
+    //constexpr bool kVerboseDecode = false;
 
-    const size_t expected =
-        static_cast<size_t>(kFrameWidth) * static_cast<size_t>(kFrameHeight);
+    //const size_t expected =
+        //static_cast<size_t>(kFrameWidth) * static_cast<size_t>(kFrameHeight);
 
-    if (data.size() != expected) {
-        std::cerr << "[decodeBayer16ToBgr8] bad input size: data.size()="
-                  << data.size()
-                  << " expected=" << expected
-                  << std::endl;
-        return {};
-    }
+    //if (data.size() != expected) {
+        //std::cerr << "[decodeBayer16ToBgr8] bad input size: data.size()="
+                  //<< data.size()
+                  //<< " expected=" << expected
+                  //<< std::endl;
+        //return {};
+    //}
 
-    cv::Mat raw16(kFrameHeight,
-                  kFrameWidth,
-                  CV_16UC1,
-                  const_cast<uint16_t*>(data.data()));
+    //cv::Mat raw16(kFrameHeight,
+                  //kFrameWidth,
+                  //CV_16UC1,
+                  //const_cast<uint16_t*>(data.data()));
 
-    if constexpr (kVerboseDecode || kWriteRawDebugImage) {
-        cv::Mat test8;
-        raw16.convertTo(test8, CV_8UC1, 1.0 / 256.0);
+    //if constexpr (kVerboseDecode || kWriteRawDebugImage) {
+        //cv::Mat test8;
+        //raw16.convertTo(test8, CV_8UC1, 1.0 / 256.0);
 
-        if constexpr (kVerboseDecode) {
-            std::cout << "[decodeBayer16ToBgr8] data.size()=" << data.size()
-                      << " expected=" << expected
-                      << " raw16.empty()=" << raw16.empty()
-                      << " test8.empty()=" << test8.empty()
-                      << " test8.type()=" << test8.type()
-                      << std::endl;
-        }
+        //if constexpr (kVerboseDecode) {
+            //std::cout << "[decodeBayer16ToBgr8] data.size()=" << data.size()
+                      //<< " expected=" << expected
+                      //<< " raw16.empty()=" << raw16.empty()
+                      //<< " test8.empty()=" << test8.empty()
+                      //<< " test8.type()=" << test8.type()
+                      //<< std::endl;
+        //}
 
-        if constexpr (kWriteRawDebugImage) {
-            cv::imwrite("/tmp/raw_debug.png", test8);
-        }
-    }
+        //if constexpr (kWriteRawDebugImage) {
+            //cv::imwrite("/tmp/raw_debug.png", test8);
+        //}
+    //}
 
-    cv::Mat bgr16;
-    cv::cvtColor(raw16, bgr16, cv::COLOR_BayerRG2BGR);
+    //cv::Mat bgr16;
+    //cv::cvtColor(raw16, bgr16, cv::COLOR_BayerRG2BGR);
 
-    cv::Mat bgr8;
-    bgr16.convertTo(bgr8, CV_8UC3, 1.0 / 256.0);
+    //cv::Mat bgr8;
+    //bgr16.convertTo(bgr8, CV_8UC3, 1.0 / 256.0);
 
-    return bgr8;
-}
+    //return bgr8;
+//}
 
 void updateLatestFrame(LiveFrameBuffer& dst, const cv::Mat& frameBgr8)
 {
@@ -1468,6 +1469,112 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
     }
 
     return cameras;
+}
+
+void SaveBayerPatternDebugOnce(const std::vector<uint16_t>& raw,
+                               std::size_t moduleIndex,
+                               std::size_t localCameraIndex)
+{
+    static std::mutex mtx;
+    static std::set<std::pair<std::size_t, std::size_t>> saved;
+
+    std::lock_guard<std::mutex> lock(mtx);
+
+    const auto key = std::make_pair(moduleIndex, localCameraIndex);
+    if (saved.contains(key)) {
+        return;
+    }
+
+    saved.insert(key);
+
+    struct Pattern {
+        const char* name;
+        int code;
+    };
+
+    const std::array<Pattern, 4> patterns{{
+        {"BG", cv::COLOR_BayerBG2BGR},
+        {"GB", cv::COLOR_BayerGB2BGR},
+        {"GR", cv::COLOR_BayerGR2BGR},
+        {"RG", cv::COLOR_BayerRG2BGR},
+    }};
+
+    for (const auto& p : patterns) {
+        cv::Mat bgr =
+            DASPi::decodeBayer16ToBgr8(
+                raw.data(),
+                kFrameWidth,
+                kFrameHeight,
+                p.code
+            );
+
+        const std::string path =
+            "/tmp/bayer_m" + std::to_string(moduleIndex) +
+            "_s" + std::to_string(localCameraIndex) +
+            "_" + p.name + ".png";
+
+        cv::imwrite(path, bgr);
+
+        std::cout << "[Bayer debug] saved "
+                  << path
+                  << '\n';
+    }
+}
+
+void SaveBayerRegionDebugOnce(const std::vector<uint16_t>& raw,
+                              std::size_t peerIndex,
+                              std::size_t moduleIndex,
+                              std::size_t localCameraIndex)
+{
+    static std::mutex mtx;
+
+    using Key = std::tuple<std::size_t, std::size_t, std::size_t>;
+    static std::set<Key> saved;
+
+    std::lock_guard<std::mutex> lock(mtx);
+
+    const Key key{peerIndex, moduleIndex, localCameraIndex};
+
+    if (saved.contains(key)) {
+        return;
+    }
+
+    saved.insert(key);
+
+    if (raw.empty()) {
+        std::cerr << "[Bayer region debug] empty raw"
+                  << " peer=" << peerIndex
+                  << " module=" << moduleIndex
+                  << " region=" << localCameraIndex
+                  << '\n';
+        return;
+    }
+
+    cv::Mat bgr =
+        DASPi::decodeBayer16ToBgr8(
+            raw.data(),
+            kFrameWidth,
+            kFrameHeight,
+            cv::COLOR_BayerBG2BGR
+        );
+
+    const std::string path =
+        "/tmp/bayer_BG_p" + std::to_string(peerIndex) +
+        "_m" + std::to_string(moduleIndex) +
+        "_region" + std::to_string(localCameraIndex) +
+        ".png";
+
+    const bool ok = cv::imwrite(path, bgr);
+
+    std::cout << "[Bayer region debug] "
+              << (ok ? "saved " : "FAILED ")
+              << path
+              << " peer=" << peerIndex
+              << " module=" << moduleIndex
+              << " region=" << localCameraIndex
+              << " raw.size()=" << raw.size()
+              << " bgr.empty()=" << bgr.empty()
+              << '\n';
 }
 
 //int PickBestNeighborFace(const std::vector<RigFace>& faces,
@@ -3044,9 +3151,10 @@ void StartPeerThreads(
 
                     runFrameLoopFailCount = 0;
 
+                    std::array<bool, kLocalCameraCount> gotStreamThisLoop{};
+                    gotStreamThisLoop.fill(false);
+
                     bool gotAnyFrameThisLoop = false;
-                    bool gotStream0ThisLoop = false;
-                    bool gotStream1ThisLoop = false;
 
                     for (std::size_t localCameraIndex = 0;
                          localCameraIndex < kLocalCameraCount;
@@ -3059,28 +3167,30 @@ void StartPeerThreads(
                         }
 
                         gotAnyFrameThisLoop = true;
+                        gotStreamThisLoop[localCameraIndex] = true;
 
-                        if (localCameraIndex == 0) {
-                            gotStream0ThisLoop = true;
-                        }
-
-                        if (localCameraIndex == 1) {
-                            gotStream1ThisLoop = true;
-                        }
-
-                        if (static_cast<int>(raw.size()) != kExpectedPixels) {
-                            std::cerr << "[frame thread] unexpected Bayer size for peer "
-                                      << peerIndex
-                                      << " (module " << moduleIndex << ")"
-                                      << " localCameraIndex=" << localCameraIndex
-                                      << " size=" << raw.size()
-                                      << " expected=" << kExpectedPixels
-                                      << '\n';
-                            continue;
-                        }
-
-                        const std::size_t globalIndex =
-                            GlobalCameraIndex(moduleIndex, localCameraIndex);
+                       if (static_cast<int>(raw.size()) != kExpectedPixels) {
+						    std::cerr << "[frame thread] unexpected Bayer size for peer "
+						              << peerIndex
+						              << " (module " << moduleIndex << ")"
+						              << " localCameraIndex=" << localCameraIndex
+						              << " size=" << raw.size()
+						              << " expected=" << kExpectedPixels
+						              << '\n';
+						
+						    gotStreamThisLoop[localCameraIndex] = false;
+						    continue;
+						}
+						
+						SaveBayerRegionDebugOnce(
+						    raw,
+						    peerIndex,
+						    moduleIndex,
+						    localCameraIndex
+						);
+						
+						const std::size_t globalIndex =
+						    GlobalCameraIndex(moduleIndex, localCameraIndex);
 
                         if (globalIndex >= liveCameras.size()) {
                             std::cerr << "[frame thread] globalIndex out of range "
@@ -3090,11 +3200,27 @@ void StartPeerThreads(
                                       << " liveCameras.size()="
                                       << liveCameras.size()
                                       << '\n';
+
+                            gotStreamThisLoop[localCameraIndex] = false;
                             continue;
                         }
+                        
+						if (localCameraIndex == 0) {
+						    SaveBayerPatternDebugOnce(raw, moduleIndex, localCameraIndex);
+						}
 
-                        cv::Mat bgr =
-                            decodeBayer16ToBgr8(raw);
+						cv::Mat bgr = decodeBayer16ToBgr8(raw.data(), kFrameWidth, kFrameHeight);
+
+                        if (bgr.empty()) {
+                            std::cerr << "[frame thread] decodeBayer16ToBgr8 returned empty "
+                                      << "for peer " << peerIndex
+                                      << " (module " << moduleIndex << ")"
+                                      << " localCameraIndex=" << localCameraIndex
+                                      << '\n';
+
+                            gotStreamThisLoop[localCameraIndex] = false;
+                            continue;
+                        }
 
                         updateLatestFrame(
                             liveCameras[globalIndex].frame,
@@ -3112,16 +3238,34 @@ void StartPeerThreads(
                                       << noFrameLoopCount
                                       << " RunFrameLoop cycles\n";
                         }
-                    } else if (!gotStream0ThisLoop || !gotStream1ThisLoop) {
+
+                        continue;
+                    }
+
+                    bool missingAnyStream = false;
+
+                    for (std::size_t i = 0; i < kLocalCameraCount; ++i) {
+                        if (!gotStreamThisLoop[i]) {
+                            missingAnyStream = true;
+                            break;
+                        }
+                    }
+
+                    if (missingAnyStream) {
                         ++noFrameLoopCount;
 
                         if ((noFrameLoopCount % kSignatureLogEvery) == 0) {
                             std::cout << "[frame warning] peer=" << peerIndex
                                       << " module=" << moduleIndex
-                                      << " missing stream(s):"
-                                      << (gotStream0ThisLoop ? "" : " 0")
-                                      << (gotStream1ThisLoop ? "" : " 1")
-                                      << " for "
+                                      << " missing stream(s):";
+
+                            for (std::size_t i = 0; i < kLocalCameraCount; ++i) {
+                                if (!gotStreamThisLoop[i]) {
+                                    std::cout << ' ' << i;
+                                }
+                            }
+
+                            std::cout << " for "
                                       << noFrameLoopCount
                                       << " RunFrameLoop cycles\n";
                         }
@@ -3202,16 +3346,42 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         throw std::runtime_error("RunStitchLoop: moduleFaceMasks is empty");
     }
 
+    //SphereStitchConfig stitchConfig;
+    //stitchConfig.outputWidth = 1456;
+    //stitchConfig.outputHeight = 1088;
+    //stitchConfig.blendPower = 4.0;
+    
     SphereStitchConfig stitchConfig;
-    stitchConfig.outputWidth = 1456;
-    stitchConfig.outputHeight = 1088;
-    stitchConfig.blendPower = 4.0;
+	stitchConfig.outputWidth = 1456;
+	stitchConfig.outputHeight = 1088;
+	stitchConfig.blendPower = 4.0;
+	stitchConfig.mode = StitchMode::Blend;
+	
+	const int forwardFaceIndex = 1;
+	
+	if (forwardFaceIndex < 0 ||
+	    forwardFaceIndex >= static_cast<int>(rig.faces.size())) {
+	    throw std::runtime_error("forwardFaceIndex out of range");
+	}
+	
+	stitchConfig.projectionToWorld =
+	    RotationAligningAToB(
+	        Eigen::Vector3d(0.0, 0.0, 1.0),
+	        rig.faces[static_cast<std::size_t>(forwardFaceIndex)].lookDir
+	    );
+	
+	std::cout << "[projection forward] face="
+	          << forwardFaceIndex
+	          << " dir=("
+	          << rig.faces[static_cast<std::size_t>(forwardFaceIndex)]
+	                .lookDir.transpose()
+	          << ")\n";
 
     // Benchmark mode: projection only.
     //stitchConfig.mode = StitchMode::ProjectionOnly;
 
     // Full spherical stitching mode:
-     stitchConfig.mode = StitchMode::Blend;
+     //stitchConfig.mode = StitchMode::Blend;
 
     constexpr bool kVerboseStitchTiming = true;
     constexpr bool kSaveDebugImagesEveryFrame = false;

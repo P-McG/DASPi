@@ -89,361 +89,460 @@ namespace DASPi{
 	    //return true;
 	//}        
 	     
-	template<unsigned int FacetIndex>
-	bool AperturePeer<FacetIndex>::RunFrameLoop()
-	{
-		constexpr bool kVerboseRunFrameLoopTiming = true;
-		constexpr bool kWriteBuffersToFile = false;
-	
-		using Clock = std::chrono::steady_clock;
-	
-		const auto tStart = Clock::now();
-	
-		FrameHeader frameHeader{};
-		std::vector<uint16_t> maskedBuffer;
-	
-		UDPClnt::EpollData epollData;
-	
-		if (!frameClnt_.InitEpollForSrvUDPPackets(epollData)) {
-			++rxStats_.rxFail;
-			MaybePrintRxSummary();
-			return false;
-		}
-	
-		const auto tEpollInitDone = Clock::now();
-	
-		auto finalizeEpoll = [&]() -> bool {
-			if (!frameClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
-				++rxStats_.rxFail;
-				MaybePrintRxSummary();
-				return false;
-			}
-			return true;
-		};
-	
-		const bool ok =
-			frameClnt_.ReceiveAndReassembleFramePacket(maskedBuffer, frameHeader);
-	
-		const auto tReceiveDone = Clock::now();
-	
-		const auto counters = frameClnt_.ConsumeRxCounters();
-	
-		rxStats_.rxDropOld += counters.dropOld;
-		rxStats_.rxTimeout += counters.timeout;
-	
-		if (ok) {
-			++rxStats_.rxComplete;
-		} else {
-			++rxStats_.rxFail;
-		}
-	
-		MaybePrintRxSummary();
-	
-		if (!ok) {
-			finalizeEpoll();
-			return false;
-		}
-	
-		if (!finalizeEpoll()) {
-			return false;
-		}
-	
-		const auto tEpollFinalizeDone = Clock::now();
-	
-		if constexpr (kRxOnlyBenchmark) {
-			if constexpr (kVerboseRunFrameLoopTiming) {
-				auto ms = [](const auto a, const auto b) {
-					return std::chrono::duration<double, std::milli>(b - a).count();
-				};
-	
-				static std::mutex timingMutex;
-	
-				struct TimingStats {
-					uint64_t frames = 0;
-					double epollInitMs = 0.0;
-					double receiveMs = 0.0;
-					double epollFinalizeMs = 0.0;
-					double totalMs = 0.0;
-					Clock::time_point lastPrint = Clock::now();
-				};
-	
-				static std::map<const void*, TimingStats> statsByPeer;
-	
-				std::lock_guard<std::mutex> lock(timingMutex);
-	
-				auto& s = statsByPeer[this];
-	
-				++s.frames;
-				s.epollInitMs += ms(tStart, tEpollInitDone);
-				s.receiveMs += ms(tEpollInitDone, tReceiveDone);
-				s.epollFinalizeMs += ms(tReceiveDone, tEpollFinalizeDone);
-				s.totalMs += ms(tStart, tEpollFinalizeDone);
-	
-				const auto now = Clock::now();
-				const double elapsed =
-					std::chrono::duration<double>(now - s.lastPrint).count();
-	
-				if (elapsed >= 1.0) {
-					std::cout << "[RunFrameLoop timing] " << peerLabel_
-							  << " frames=" << s.frames
-							  << " epoll_init_ms=" << s.epollInitMs / s.frames
-							  << " receive_ms=" << s.receiveMs / s.frames
-							  << " epoll_finalize_ms=" << s.epollFinalizeMs / s.frames
-							  << " unpack_ms=0"
-							  << " unmask_ms=0"
-							  << " publish_ms=0"
-							  << " buffer_file_ms=0"
-							  << " total_ms=" << s.totalMs / s.frames
-							  << '\n';
-	
-					s.frames = 0;
-					s.epollInitMs = 0.0;
-					s.receiveMs = 0.0;
-					s.epollFinalizeMs = 0.0;
-					s.totalMs = 0.0;
-					s.lastPrint = now;
-				}
-			}
-	
-			return true;
-		}
-	
-		/*
-		 * Normal processing starts here.
-		 * This code is skipped while kRxOnlyBenchmark=true.
-		 */
-	
-		this->tpgydp_.ResetValidSizes();
-	
-		size_t offset = 0;
-	
-		for (size_t i = 0; i < NUM_REGIONS; ++i) {
-			const size_t count = frameHeader.regionSizes_[i];
-	
-			if (count > this->tpgydp_[i].size()) {
-				std::cerr << "[RunFrameLoop] region overflow: i=" << i
-						  << " count=" << count
-						  << " capacity=" << this->tpgydp_[i].size()
-						  << '\n';
-				++rxStats_.rxFail;
-				MaybePrintRxSummary();
-				return false;
-			}
-	
-			if (offset + count > maskedBuffer.size()) {
-				std::cerr << "[RunFrameLoop] packed payload overflow: offset="
-						  << offset
-						  << " count=" << count
-						  << " maskedBuffer.size()=" << maskedBuffer.size()
-						  << '\n';
-				++rxStats_.rxFail;
-				MaybePrintRxSummary();
-				return false;
-			}
-	
-			if (count != 0) {
-				std::memcpy(this->tpgydp_[i].data(),
-							maskedBuffer.data() + offset,
-							count * sizeof(uint16_t));
-			}
-	
-			this->tpgydp_.SetRegionValidSize(i, count);
-			offset += count;
-		}
-	
-		if (offset != maskedBuffer.size()) {
-			std::cerr << "[RunFrameLoop] payload size mismatch after unpack: offset="
-					  << offset
-					  << " maskedBuffer.size()=" << maskedBuffer.size()
-					  << '\n';
-			++rxStats_.rxFail;
-			MaybePrintRxSummary();
-			return false;
-		}
-	
-		const auto tUnpackDone = Clock::now();
-	
-		//std::array<std::vector<uint16_t>, verticesPerFaceN_ + 1> newBuffers;
-		
-		//using FacetSpaceType =
-			//typename tpgy_t::template FacetSpace_t<FacetIndex>;
-		
-		//using OverlapSpaceType =
-			//typename FacetSpaceType::SubSpace_t;
-		
-		//using IcosahedronTopologyType =
-			//DASPi::IcosahedronTopology<FacetSpaceType>;
-		
-		//using OverlapTopologyType =
-			//typename IcosahedronTopologyType::template OverlapTopology<OverlapSpaceType>;
-		
-		//static_assert(
-			//std::is_base_of_v<IcosahedronTopologyType, tpgy_t>,
-			//"IcosahedronTopologyType is not a base of tpgy_t"
-		//);
-		
-		//static_assert(
-			//std::is_base_of_v<OverlapTopologyType, tpgy_t>,
-			//"OverlapTopologyType is not a base of tpgy_t"
-		//);
-		
-		//auto unmasked0 =
-			//this->tpgy_.OverlapTopologyType::FrameBufferUnmask(
-				//this->tpgydp_[0],
-				//0
-			//);
-			
-		std::array<std::vector<uint16_t>, verticesPerFaceN_ + 1> newBuffers;
-		
-		using FacetTopologyType =
-			typename tpgy_t::template FacetTopology_t<FacetIndex>;
-		
-		using OverlapTopologyType =
-			typename tpgy_t::template OverlapTopology_t<FacetIndex>;
-		
-		static_assert(
-			std::is_base_of_v<FacetTopologyType, tpgy_t>,
-			"FacetTopologyType is not a base of tpgy_t"
-		);
-		
-		static_assert(
-			std::is_base_of_v<OverlapTopologyType, FacetTopologyType>,
-			"OverlapTopologyType is not a base of FacetTopologyType"
-		);
-		
-		auto& facetTopology =
-			static_cast<FacetTopologyType&>(this->tpgy_);
-		
-		auto& overlapTopology =
-			static_cast<OverlapTopologyType&>(facetTopology);
-		
-		auto unmasked0 =
-			overlapTopology.FrameBufferUnmask(
-				this->tpgydp_[0],
-				0
-			);
-		
-		newBuffers[0].resize(unmasked0.size());
-		
-		if (!unmasked0.empty()) {
-			std::memcpy(
-				newBuffers[0].data(),
-				unmasked0.data(),
-				unmasked0.size() * sizeof(uint16_t)
-			);
-		}
-		
-		for (std::size_t i = 0; i < verticesPerFaceN_; ++i) {
-			auto unmasked =
-				overlapTopology.FrameBufferUnmask(
-					this->tpgydp_[i + 1],
-					i
-				);
-		
-			newBuffers[i + 1].resize(unmasked.size());
-		
-			if (!unmasked.empty()) {
-				std::memcpy(
-					newBuffers[i + 1].data(),
-					unmasked.data(),
-					unmasked.size() * sizeof(uint16_t)
-				);
-			}
-		}
-	
-		const auto tUnmaskDone = Clock::now();
-	
-		{
-			std::scoped_lock lock(bufferMutex_);
-			this->buffer_ = std::move(newBuffers);
-		}
-	
-		const auto tPublishDone = Clock::now();
-	
-		if constexpr (kWriteBuffersToFile) {
-			if (!this->BufferToFile()) {
-				std::cerr << "[RunFrameLoop] BufferToFile failed\n";
-				++rxStats_.rxFail;
-				MaybePrintRxSummary();
-				return false;
-			}
-		}
-	
-		const auto tBufferFileDone = Clock::now();
-	
-		if constexpr (kVerboseRunFrameLoopTiming) {
-			auto ms = [](const auto a, const auto b) {
-				return std::chrono::duration<double, std::milli>(b - a).count();
-			};
-	
-			static std::mutex timingMutex;
-	
-			struct TimingStats {
-				uint64_t frames = 0;
-	
-				double epollInitMs = 0.0;
-				double receiveMs = 0.0;
-				double epollFinalizeMs = 0.0;
-				double unpackMs = 0.0;
-				double unmaskMs = 0.0;
-				double publishMs = 0.0;
-				double bufferFileMs = 0.0;
-				double totalMs = 0.0;
-	
-				Clock::time_point lastPrint = Clock::now();
-			};
-	
-			static std::map<const void*, TimingStats> statsByPeer;
-	
-			std::lock_guard<std::mutex> lock(timingMutex);
-	
-			auto& s = statsByPeer[this];
-	
-			++s.frames;
-	
-			s.epollInitMs += ms(tStart, tEpollInitDone);
-			s.receiveMs += ms(tEpollInitDone, tReceiveDone);
-			s.epollFinalizeMs += ms(tReceiveDone, tEpollFinalizeDone);
-			s.unpackMs += ms(tEpollFinalizeDone, tUnpackDone);
-			s.unmaskMs += ms(tUnpackDone, tUnmaskDone);
-			s.publishMs += ms(tUnmaskDone, tPublishDone);
-			s.bufferFileMs += ms(tPublishDone, tBufferFileDone);
-			s.totalMs += ms(tStart, tBufferFileDone);
-	
-			const auto now = Clock::now();
-			const double elapsed =
-				std::chrono::duration<double>(now - s.lastPrint).count();
-	
-			if (elapsed >= 1.0) {
-				std::cout << "[RunFrameLoop timing] " << peerLabel_
-						  << " frames=" << s.frames
-						  << " epoll_init_ms=" << s.epollInitMs / s.frames
-						  << " receive_ms=" << s.receiveMs / s.frames
-						  << " epoll_finalize_ms=" << s.epollFinalizeMs / s.frames
-						  << " unpack_ms=" << s.unpackMs / s.frames
-						  << " unmask_ms=" << s.unmaskMs / s.frames
-						  << " publish_ms=" << s.publishMs / s.frames
-						  << " buffer_file_ms=" << s.bufferFileMs / s.frames
-						  << " total_ms=" << s.totalMs / s.frames
-						  << '\n';
-	
-				s.frames = 0;
-	
-				s.epollInitMs = 0.0;
-				s.receiveMs = 0.0;
-				s.epollFinalizeMs = 0.0;
-				s.unpackMs = 0.0;
-				s.unmaskMs = 0.0;
-				s.publishMs = 0.0;
-				s.bufferFileMs = 0.0;
-				s.totalMs = 0.0;
-	
-				s.lastPrint = now;
-			}
-		}
-	
-		return true;
+template<unsigned int FacetIndex>
+bool AperturePeer<FacetIndex>::RunFrameLoop()
+{
+    constexpr bool kVerboseRunFrameLoopTiming = true;
+    constexpr bool kWriteBuffersToFile = false;
+
+    constexpr std::size_t regionCount =
+        verticesPerFaceN_ + 1;
+
+    static_assert(
+        NUM_REGIONS == regionCount,
+        "NUM_REGIONS must match verticesPerFaceN_ + 1"
+    );
+
+    using Clock = std::chrono::steady_clock;
+
+    const auto tStart = Clock::now();
+
+    FrameHeader frameHeader{};
+    std::vector<uint16_t> maskedBuffer;
+
+    UDPClnt::EpollData epollData;
+
+    if (!frameClnt_.InitEpollForSrvUDPPackets(epollData)) {
+        ++rxStats_.rxFail;
+        MaybePrintRxSummary();
+        return false;
+    }
+
+    const auto tEpollInitDone = Clock::now();
+
+    auto finalizeEpoll = [&]() -> bool {
+        if (!frameClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
+            ++rxStats_.rxFail;
+            MaybePrintRxSummary();
+            return false;
+        }
+
+        return true;
+    };
+
+    const bool receiveOk =
+        frameClnt_.ReceiveAndReassembleFramePacket(
+            maskedBuffer,
+            frameHeader
+        );
+
+    const auto tReceiveDone = Clock::now();
+
+	// In ComputeModule AperturePeer::RunFrameLoop(), after receiving frameHeader:
+	if (frameHeader.gainMsg_.header.type == MessageType::GainMsg) {
+		HandleGainMsg(frameHeader.gainMsg_);
 	}
+
+    const auto counters =
+        frameClnt_.ConsumeRxCounters();
+
+    rxStats_.rxDropOld += counters.dropOld;
+    rxStats_.rxTimeout += counters.timeout;
+
+    if (receiveOk) {
+        ++rxStats_.rxComplete;
+    } else {
+        ++rxStats_.rxFail;
+    }
+
+    MaybePrintRxSummary();
+
+    if (!receiveOk) {
+        finalizeEpoll();
+        return false;
+    }
+
+    if (!finalizeEpoll()) {
+        return false;
+    }
+
+    const auto tEpollFinalizeDone = Clock::now();
+
+    auto ms = [](const auto a, const auto b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+
+    if constexpr (kRxOnlyBenchmark) {
+        if constexpr (kVerboseRunFrameLoopTiming) {
+            static std::mutex timingMutex;
+
+            struct TimingStats {
+                uint64_t frames = 0;
+                double epollInitMs = 0.0;
+                double receiveMs = 0.0;
+                double epollFinalizeMs = 0.0;
+                double totalMs = 0.0;
+                Clock::time_point lastPrint = Clock::now();
+            };
+
+            static std::map<const void*, TimingStats> statsByPeer;
+
+            std::lock_guard<std::mutex> lock(timingMutex);
+
+            auto& s = statsByPeer[this];
+
+            ++s.frames;
+            s.epollInitMs += ms(tStart, tEpollInitDone);
+            s.receiveMs += ms(tEpollInitDone, tReceiveDone);
+            s.epollFinalizeMs += ms(tReceiveDone, tEpollFinalizeDone);
+            s.totalMs += ms(tStart, tEpollFinalizeDone);
+
+            const auto now = Clock::now();
+            const double elapsed =
+                std::chrono::duration<double>(now - s.lastPrint).count();
+
+            if (elapsed >= 1.0) {
+                std::cout << "[RunFrameLoop timing] " << peerLabel_
+                          << " frames=" << s.frames
+                          << " epoll_init_ms=" << s.epollInitMs / s.frames
+                          << " receive_ms=" << s.receiveMs / s.frames
+                          << " epoll_finalize_ms="
+                          << s.epollFinalizeMs / s.frames
+                          << " unpack_ms=0"
+                          << " unmask_ms=0"
+                          << " publish_ms=0"
+                          << " buffer_file_ms=0"
+                          << " total_ms=" << s.totalMs / s.frames
+                          << '\n';
+
+                s.frames = 0;
+                s.epollInitMs = 0.0;
+                s.receiveMs = 0.0;
+                s.epollFinalizeMs = 0.0;
+                s.totalMs = 0.0;
+                s.lastPrint = now;
+            }
+        }
+
+        return true;
+    }
+
+    /*
+     * Normal RX processing.
+     *
+     * Wire layout:
+     *
+     *   region 0      = non-overlap / owning facet region
+     *   regions 1..N  = overlap regions
+     *
+     * RX must mirror TX exactly:
+     *
+     *   tpgydp_[0]    -> facetTopology.FrameBufferUnmask(...)
+     *   tpgydp_[1..N] -> overlapTopology.FrameBufferUnmask(..., region - 1)
+     */
+
+    this->tpgydp_.ResetValidSizes();
+
+    std::size_t offset = 0;
+
+    for (std::size_t regionIndex = 0;
+         regionIndex < regionCount;
+         ++regionIndex) {
+
+        const std::size_t count =
+            frameHeader.regionSizes_[regionIndex];
+
+        if (count > this->tpgydp_[regionIndex].size()) {
+            std::cerr << "[RunFrameLoop] region overflow:"
+                      << " regionIndex=" << regionIndex
+                      << " count=" << count
+                      << " capacity=" << this->tpgydp_[regionIndex].size()
+                      << '\n';
+
+            ++rxStats_.rxFail;
+            MaybePrintRxSummary();
+            return false;
+        }
+
+        if (offset + count > maskedBuffer.size()) {
+            std::cerr << "[RunFrameLoop] packed payload overflow:"
+                      << " regionIndex=" << regionIndex
+                      << " offset=" << offset
+                      << " count=" << count
+                      << " maskedBuffer.size()=" << maskedBuffer.size()
+                      << '\n';
+
+            ++rxStats_.rxFail;
+            MaybePrintRxSummary();
+            return false;
+        }
+
+        if (count != 0) {
+            std::memcpy(
+                this->tpgydp_[regionIndex].data(),
+                maskedBuffer.data() + offset,
+                count * sizeof(uint16_t)
+            );
+        }
+
+        this->tpgydp_.SetRegionValidSize(regionIndex, count);
+
+        offset += count;
+    }
+
+	if (offset != maskedBuffer.size()) {
+		std::cerr << "[RunFrameLoop] payload size mismatch after unpack:"
+				  << " offset=" << offset
+				  << " maskedBuffer.size()=" << maskedBuffer.size()
+				  << '\n';
+	
+		++rxStats_.rxFail;
+		MaybePrintRxSummary();
+		return false;
+	}
+	
+	/*
+	 * Compute brightness on the ComputeModule / AperturePeer side.
+	 *
+	 * Use packed region 0 first because it is the non-overlap / owning facet
+	 * region and should be the most stable brightness sample.
+	 */
+	auto computeMeanBrightness01 =
+		[](std::span<const uint16_t> data) -> float
+	{
+		if (data.empty()) {
+			return 0.0f;
+		}
+	
+		double sum = 0.0;
+		std::size_t count = 0;
+	
+		for (const uint16_t v : data) {
+			if (v == 0) {
+				continue;
+			}
+	
+			sum += static_cast<double>(v) / 65535.0;
+			++count;
+		}
+	
+		if (count == 0) {
+			return 0.0f;
+		}
+	
+		return static_cast<float>(sum / static_cast<double>(count));
+	};
+	
+	{
+		GainMsg gainMsg = frameHeader.gainMsg_;
+	
+		gainMsg.header.type = MessageType::GainMsg;
+		gainMsg.header.version = 1;
+	
+		gainMsg.mean_brightness =
+			computeMeanBrightness01(
+				std::span<const uint16_t>(
+					this->tpgydp_[0].data(),
+					this->tpgydp_.RegionValidSize(0)
+				)
+			);
+	
+		if (gainMsg.target_brightness <= 0.0f) {
+			gainMsg.target_brightness = 0.35f;
+		}
+	
+		HandleGainMsg(gainMsg);
+	}
+	
+	const auto tUnpackDone = Clock::now();
+	
+	std::array<std::vector<uint16_t>, regionCount> newBuffers;
+	
+	using FacetTopologyType =
+		typename tpgy_t::template FacetTopology_t<FacetIndex>;
+	
+	using OverlapTopologyType =
+		typename tpgy_t::template OverlapTopology_t<FacetIndex>;
+	
+	using NonOverlapFacetTopologyType =
+		typename OverlapTopologyType::NonOverlapFacetTopology_t;
+	
+	static_assert(
+		std::is_base_of_v<FacetTopologyType, tpgy_t>,
+		"FacetTopologyType is not a base of tpgy_t"
+	);
+	
+	static_assert(
+		std::is_base_of_v<OverlapTopologyType, FacetTopologyType>,
+		"OverlapTopologyType is not a base of FacetTopologyType"
+	);
+	
+	static_assert(
+		std::is_base_of_v<NonOverlapFacetTopologyType, OverlapTopologyType>,
+		"NonOverlapFacetTopologyType is not a base of OverlapTopologyType"
+	);
+	
+	auto& facetTopology =
+		static_cast<FacetTopologyType&>(this->tpgy_);
+	
+	auto& overlapTopology =
+		static_cast<OverlapTopologyType&>(facetTopology);
+	
+	auto& nonOverlapTopology =
+		static_cast<NonOverlapFacetTopologyType&>(overlapTopology);
+	
+	auto copyUnmaskedToBuffer =
+		[&](std::size_t regionIndex, auto&& unmasked)
+	{
+		newBuffers[regionIndex].resize(unmasked.size());
+	
+		if (!unmasked.empty()) {
+			std::memcpy(
+				newBuffers[regionIndex].data(),
+				unmasked.data(),
+				unmasked.size() * sizeof(uint16_t)
+			);
+		}
+	};
+	
+	// region 0 = non-overlap / owning facet
+	{
+		auto unmasked =
+			nonOverlapTopology.FrameBufferUnmask(
+				this->tpgydp_[0]
+			);
+	
+		copyUnmaskedToBuffer(0, unmasked);
+	}
+	
+	// regions 1..N = overlap regions
+	for (std::size_t regionIndex = 1;
+		 regionIndex < regionCount;
+		 ++regionIndex) {
+	
+		const std::size_t overlapIndex =
+			regionIndex - 1;
+	
+		auto unmasked =
+			overlapTopology.FrameBufferUnmask(
+				this->tpgydp_[regionIndex],
+				overlapIndex
+			);
+	
+		copyUnmaskedToBuffer(regionIndex, unmasked);
+	}
+
+    static std::once_flag printedRegionSizesOnce;
+
+    std::call_once(printedRegionSizesOnce, [&]() {
+        std::cout << "[RX unmask region sizes] " << peerLabel_;
+
+        for (std::size_t regionIndex = 0;
+             regionIndex < regionCount;
+             ++regionIndex) {
+
+            std::cout << " r" << regionIndex
+                      << "_packed="
+                      << this->tpgydp_.RegionValidSize(regionIndex)
+                      << " r" << regionIndex
+                      << "_unmasked="
+                      << newBuffers[regionIndex].size();
+        }
+
+        std::cout << '\n';
+    });
+
+    const auto tUnmaskDone = Clock::now();
+
+    {
+        std::scoped_lock lock(bufferMutex_);
+        this->buffer_ = std::move(newBuffers);
+    }
+
+    const auto tPublishDone = Clock::now();
+
+    if constexpr (kWriteBuffersToFile) {
+        if (!this->BufferToFile()) {
+            std::cerr << "[RunFrameLoop] BufferToFile failed\n";
+            ++rxStats_.rxFail;
+            MaybePrintRxSummary();
+            return false;
+        }
+    }
+
+    const auto tBufferFileDone = Clock::now();
+
+    if constexpr (kVerboseRunFrameLoopTiming) {
+        static std::mutex timingMutex;
+
+        struct TimingStats {
+            uint64_t frames = 0;
+
+            double epollInitMs = 0.0;
+            double receiveMs = 0.0;
+            double epollFinalizeMs = 0.0;
+            double unpackMs = 0.0;
+            double unmaskMs = 0.0;
+            double publishMs = 0.0;
+            double bufferFileMs = 0.0;
+            double totalMs = 0.0;
+
+            Clock::time_point lastPrint = Clock::now();
+        };
+
+        static std::map<const void*, TimingStats> statsByPeer;
+
+        std::lock_guard<std::mutex> lock(timingMutex);
+
+        auto& s = statsByPeer[this];
+
+        ++s.frames;
+
+        s.epollInitMs += ms(tStart, tEpollInitDone);
+        s.receiveMs += ms(tEpollInitDone, tReceiveDone);
+        s.epollFinalizeMs += ms(tReceiveDone, tEpollFinalizeDone);
+        s.unpackMs += ms(tEpollFinalizeDone, tUnpackDone);
+        s.unmaskMs += ms(tUnpackDone, tUnmaskDone);
+        s.publishMs += ms(tUnmaskDone, tPublishDone);
+        s.bufferFileMs += ms(tPublishDone, tBufferFileDone);
+        s.totalMs += ms(tStart, tBufferFileDone);
+
+        const auto now = Clock::now();
+        const double elapsed =
+            std::chrono::duration<double>(now - s.lastPrint).count();
+
+        if (elapsed >= 1.0) {
+            std::cout << "[RunFrameLoop timing] " << peerLabel_
+                      << " frames=" << s.frames
+                      << " epoll_init_ms=" << s.epollInitMs / s.frames
+                      << " receive_ms=" << s.receiveMs / s.frames
+                      << " epoll_finalize_ms="
+                      << s.epollFinalizeMs / s.frames
+                      << " unpack_ms=" << s.unpackMs / s.frames
+                      << " unmask_ms=" << s.unmaskMs / s.frames
+                      << " publish_ms=" << s.publishMs / s.frames
+                      << " buffer_file_ms="
+                      << s.bufferFileMs / s.frames
+                      << " total_ms=" << s.totalMs / s.frames
+                      << '\n';
+
+            s.frames = 0;
+
+            s.epollInitMs = 0.0;
+            s.receiveMs = 0.0;
+            s.epollFinalizeMs = 0.0;
+            s.unpackMs = 0.0;
+            s.unmaskMs = 0.0;
+            s.publishMs = 0.0;
+            s.bufferFileMs = 0.0;
+            s.totalMs = 0.0;
+
+            s.lastPrint = now;
+        }
+    }
+
+    return true;
+}
 	
 	template<unsigned int FacetIndex>
 	bool AperturePeer<FacetIndex>::BufferToFile()
@@ -905,6 +1004,10 @@ namespace DASPi{
 	void AperturePeer<FacetIndex>::HandleGainMsg(const GainMsg& msg)
 	{
 		GainReply reply{};
+	
+		reply.header.type = MessageType::GainReply;
+		reply.header.version = 1;
+	
 		reply.camera_id = msg.camera_id;
 		reply.frame_id = msg.frame_id;
 	
@@ -922,13 +1025,16 @@ namespace DASPi{
 			latestFrameId_ = reply.frame_id;
 			gainValid_ = true;
 		}
-		
-		std::cout << "[GainReply] camera_id=" << reply.camera_id
-          << " frame_id=" << reply.frame_id
-          << " requested_gain=" << reply.requested_gain
-          << " r_apply=" << reply.r_gain_apply
-          << " b_apply=" << reply.b_gain_apply
-          << std::endl;
+	
+		std::cout << "[GainReply]"
+				  << " camera_id=" << reply.camera_id
+				  << " frame_id=" << reply.frame_id
+				  << " mean=" << msg.mean_brightness
+				  << " target=" << msg.target_brightness
+				  << " requested_gain=" << reply.requested_gain
+				  << " r_apply=" << reply.r_gain_apply
+				  << " b_apply=" << reply.b_gain_apply
+				  << '\n';
 	}
 	
 	//template<size_t n>

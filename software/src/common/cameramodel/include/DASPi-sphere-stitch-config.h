@@ -13,7 +13,7 @@ struct SphereStitchConfig {
     int outputHeight = 2048;
     double blendPower = 4.0;
     cv::Vec3b backgroundColor = {0, 0, 0};
-    
+    Eigen::Matrix3d projectionToWorld = Eigen::Matrix3d::Identity();
     StitchMode mode = StitchMode::Blend;
 };
 }//DASPi
