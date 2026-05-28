@@ -965,8 +965,8 @@ void Aperture<FacetIndex>::RunEventLoop(int timeout){
 
 template<unsigned int FacetIndex>
 void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
-                                   const libcamera::FrameBuffer *buffer,
-                                   const GainMsg& gainMsg)
+                                            const libcamera::FrameBuffer* buffer,
+                                            const GainMsg& gainMsg)
 {
     constexpr bool kWriteBayerDebugImages = false;
     constexpr bool kVerboseTxTiming = true;
@@ -984,33 +984,33 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
         std::exit(EXIT_FAILURE);
     }
 
-    const auto &plane = planes.back();
+    const auto& plane = planes.back();
     if (!plane.fd.isValid()) {
         std::cerr << "Invalid file descriptor for plane\n";
         std::exit(EXIT_FAILURE);
     }
 
-    const libcamera::StreamConfiguration &cfg = config_->at(0);
+    const libcamera::StreamConfiguration& cfg = config_->at(0);
     const libcamera::PixelFormat pixelFormat = cfg.pixelFormat;
-    const size_t strideBytes = cfg.stride;
+    const std::size_t strideBytes = cfg.stride;
 
-    constexpr size_t activeWidth = sensorWidthValue_;
-    constexpr size_t activeHeight = sensorHeightValue_;
-    constexpr size_t expectedElems = activeWidth * activeHeight;
+    constexpr std::size_t activeWidth = sensorWidthValue_;
+    constexpr std::size_t activeHeight = sensorHeightValue_;
+    constexpr std::size_t expectedElems = activeWidth * activeHeight;
 
-    const bool isSBGGR16 =
+    const bool isBGGR16 =
         (pixelFormat == libcamera::formats::SBGGR16);
 
-    const bool isSBGGR10Packed =
+    const bool isBGGR10Packed =
         (pixelFormat == libcamera::formats::SBGGR10_CSI2P);
 
-    if (!isSBGGR16 && !isSBGGR10Packed) {
-        std::cerr << "Unsupported validated pixel format for current UDP path: "
+    if (!isBGGR16 && !isBGGR10Packed) {
+        std::cerr << "Unsupported validated pixel format for BGGR UDP path: "
                   << pixelFormat.toString() << '\n';
         std::exit(EXIT_FAILURE);
     }
 
-    const size_t requiredBytes = strideBytes * activeHeight;
+    const std::size_t requiredBytes = strideBytes * activeHeight;
     if (plane.length < requiredBytes) {
         std::cerr << "Plane too small for configured stride/height: plane.length="
                   << plane.length
@@ -1021,7 +1021,7 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
 
     const auto tValidateDone = std::chrono::steady_clock::now();
 
-    void *mapped = mmap(nullptr,
+    void* mapped = mmap(nullptr,
                         plane.length,
                         PROT_READ,
                         MAP_SHARED,
@@ -1037,12 +1037,13 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
         if (mapped != MAP_FAILED && munmap(mapped, plane.length) != 0) {
             perror("Failed to unmap plane data");
         }
+
         mapped = MAP_FAILED;
     };
 
     std::vector<uint16_t> activeFrame(expectedElems);
 
-    if (isSBGGR16) {
+    if (isBGGR16) {
         if ((strideBytes % sizeof(uint16_t)) != 0) {
             std::cerr << "Stride is not 16-bit aligned for SBGGR16: strideBytes="
                       << strideBytes << '\n';
@@ -1050,7 +1051,7 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
             std::exit(EXIT_FAILURE);
         }
 
-        const size_t strideElems = strideBytes / sizeof(uint16_t);
+        const std::size_t strideElems = strideBytes / sizeof(uint16_t);
 
         if (strideElems < activeWidth) {
             std::cerr << "Stride smaller than active width: strideElems="
@@ -1061,16 +1062,24 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
             std::exit(EXIT_FAILURE);
         }
 
-        const auto *mappedData = static_cast<const uint16_t *>(mapped);
+        const auto* mappedData =
+            static_cast<const uint16_t*>(mapped);
 
-        for (size_t y = 0; y < activeHeight; ++y) {
-            const uint16_t *srcRow = mappedData + y * strideElems;
-            uint16_t *dstRow = activeFrame.data() + y * activeWidth;
+        for (std::size_t y = 0; y < activeHeight; ++y) {
+            const uint16_t* srcRow =
+                mappedData + y * strideElems;
+
+            uint16_t* dstRow =
+                activeFrame.data() + y * activeWidth;
+
             std::copy_n(srcRow, activeWidth, dstRow);
         }
     } else {
-        const auto *mappedData = static_cast<const uint8_t *>(mapped);
-        const size_t packedRowBytes = (activeWidth * 10 + 7) / 8;
+        const auto* mappedData =
+            static_cast<const uint8_t*>(mapped);
+
+        const std::size_t packedRowBytes =
+            (activeWidth * 10 + 7) / 8;
 
         if (strideBytes < packedRowBytes) {
             std::cerr << "Stride smaller than packed RAW10 row size: strideBytes="
@@ -1081,12 +1090,15 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
             std::exit(EXIT_FAILURE);
         }
 
-        for (size_t y = 0; y < activeHeight; ++y) {
-            const uint8_t *srcRow = mappedData + y * strideBytes;
-            uint16_t *dstRow = activeFrame.data() + y * activeWidth;
+        for (std::size_t y = 0; y < activeHeight; ++y) {
+            const uint8_t* srcRow =
+                mappedData + y * strideBytes;
 
-            size_t x = 0;
-            size_t byteIdx = 0;
+            uint16_t* dstRow =
+                activeFrame.data() + y * activeWidth;
+
+            std::size_t x = 0;
+            std::size_t byteIdx = 0;
 
             for (; x + 3 < activeWidth; x += 4, byteIdx += 5) {
                 const uint8_t b0 = srcRow[byteIdx + 0];
@@ -1095,18 +1107,34 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
                 const uint8_t b3 = srcRow[byteIdx + 3];
                 const uint8_t b4 = srcRow[byteIdx + 4];
 
-                dstRow[x + 0] = static_cast<uint16_t>(
-                    (static_cast<uint16_t>(b0) << 2) | ((b4 >> 0) & 0x03));
-                dstRow[x + 1] = static_cast<uint16_t>(
-                    (static_cast<uint16_t>(b1) << 2) | ((b4 >> 2) & 0x03));
-                dstRow[x + 2] = static_cast<uint16_t>(
-                    (static_cast<uint16_t>(b2) << 2) | ((b4 >> 4) & 0x03));
-                dstRow[x + 3] = static_cast<uint16_t>(
-                    (static_cast<uint16_t>(b3) << 2) | ((b4 >> 6) & 0x03));
+                dstRow[x + 0] =
+                    static_cast<uint16_t>(
+                        (static_cast<uint16_t>(b0) << 2) |
+                        ((b4 >> 0) & 0x03)
+                    );
+
+                dstRow[x + 1] =
+                    static_cast<uint16_t>(
+                        (static_cast<uint16_t>(b1) << 2) |
+                        ((b4 >> 2) & 0x03)
+                    );
+
+                dstRow[x + 2] =
+                    static_cast<uint16_t>(
+                        (static_cast<uint16_t>(b2) << 2) |
+                        ((b4 >> 4) & 0x03)
+                    );
+
+                dstRow[x + 3] =
+                    static_cast<uint16_t>(
+                        (static_cast<uint16_t>(b3) << 2) |
+                        ((b4 >> 6) & 0x03)
+                    );
             }
 
             if (x != activeWidth) {
-                std::cerr << "Active width must currently be divisible by 4 for RAW10 unpack: "
+                std::cerr << "Active width must currently be divisible by 4 "
+                          << "for RAW10 unpack: "
                           << activeWidth << '\n';
                 unmapPlane();
                 std::exit(EXIT_FAILURE);
@@ -1122,35 +1150,34 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
                       CV_16UC1,
                       activeFrame.data());
 
-        cv::Mat bgr_bg_16, bgr_gb_16, bgr_rg_16, bgr_gr_16;
-        cv::Mat bgr_bg_8,  bgr_gb_8,  bgr_rg_8,  bgr_gr_8;
+        cv::Mat bgr16;
+        cv::Mat bgr8;
 
-        cv::cvtColor(raw16, bgr_bg_16, cv::COLOR_BayerBG2BGR);
-        cv::cvtColor(raw16, bgr_gb_16, cv::COLOR_BayerGB2BGR);
-        cv::cvtColor(raw16, bgr_rg_16, cv::COLOR_BayerRG2BGR);
-        cv::cvtColor(raw16, bgr_gr_16, cv::COLOR_BayerGR2BGR);
+        cv::cvtColor(raw16, bgr16, cv::COLOR_BayerBG2BGR);
+        bgr16.convertTo(bgr8, CV_8UC3, 1.0 / 256.0);
 
-        bgr_bg_16.convertTo(bgr_bg_8, CV_8UC3, 1.0 / 256.0);
-        bgr_gb_16.convertTo(bgr_gb_8, CV_8UC3, 1.0 / 256.0);
-        bgr_rg_16.convertTo(bgr_rg_8, CV_8UC3, 1.0 / 256.0);
-        bgr_gr_16.convertTo(bgr_gr_8, CV_8UC3, 1.0 / 256.0);
-
-        cv::imwrite("/tmp/bayer_bg.png", bgr_bg_8);
-        cv::imwrite("/tmp/bayer_gb.png", bgr_gb_8);
-        cv::imwrite("/tmp/bayer_rg.png", bgr_rg_8);
-        cv::imwrite("/tmp/bayer_gr.png", bgr_gr_8);
+        cv::imwrite("/tmp/bayer_bggr.png", bgr8);
     }
 
     const auto tDebugDone = std::chrono::steady_clock::now();
 
-    std::span<uint16_t> mappedDataSpan(activeFrame.data(), activeFrame.size());
+    std::span<uint16_t> mappedDataSpan(
+        activeFrame.data(),
+        activeFrame.size()
+    );
 
     GainMsg appliedGainMsg = gainMsg;
+
+    /*
+     * Start from camera-provided red/blue gains, then override with the
+     * ComputeModule feedback gain once a valid GainReply has arrived.
+     */
     appliedGainMsg.r_gain_apply = appliedGainMsg.r_gain;
     appliedGainMsg.b_gain_apply = appliedGainMsg.b_gain;
 
     {
         std::lock_guard<std::mutex> lock(gainMutex_);
+
         if (gainValid_) {
             appliedGainMsg.r_gain_apply = latestRGainApply_;
             appliedGainMsg.b_gain_apply = latestBGainApply_;
@@ -1169,13 +1196,16 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
     auto data = tpgydp.TakeContiguousMemory();
 
     std::array<uint32_t, NUM_REGIONS> regionSizes{};
-    size_t totalElems = 0;
-    
-    for (size_t i = 0; i < regionCount_; ++i) {
+    std::size_t totalElems = 0;
+
+    for (std::size_t i = 0; i < regionCount_; ++i) {
         const auto valid = tpgydp.RegionValidSize(i);
-        regionSizes[i] = static_cast<uint32_t>(valid);
+
+        regionSizes[i] =
+            static_cast<uint32_t>(valid);
+
         totalElems += valid;
-    
+
         std::cout << "[TX region] facet=" << FacetIndex
                   << " region=" << i
                   << " valid=" << valid
@@ -1188,6 +1218,7 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
                   << "sum(validSizes)=" << totalElems
                   << " packed=" << data.size()
                   << '\n';
+
         unmapPlane();
         std::exit(EXIT_FAILURE);
     }
@@ -1229,7 +1260,8 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
         static double unmapMs = 0.0;
         static double totalMs = 0.0;
 
-        static auto lastTimingPrint = std::chrono::steady_clock::now();
+        static auto lastTimingPrint =
+            std::chrono::steady_clock::now();
 
         std::lock_guard<std::mutex> lock(timingMutex);
 
@@ -1245,9 +1277,13 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
         unmapMs     += ms(tSendDone, tUnmapDone);
         totalMs     += ms(t0, tUnmapDone);
 
-        const auto now = std::chrono::steady_clock::now();
+        const auto now =
+            std::chrono::steady_clock::now();
+
         const double elapsed =
-            std::chrono::duration<double>(now - lastTimingPrint).count();
+            std::chrono::duration<double>(
+                now - lastTimingPrint
+            ).count();
 
         if (elapsed >= 1.0) {
             std::cout << "[TX timing] frames=" << timingFrames
@@ -1547,92 +1583,88 @@ inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_BGGR(
 		const uint32_t v{ data[i]};
 		//const uint32_t v = row[globalPt.x_];
 		uint16_t out;
-		//if (evenRow) {
-			//out = evenCol ? mulSatQ10(v, bQ) : mulSatQ10(v, gQ);
-		//} else {
-			//out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, rQ);
-		//}
-        if (evenRow) {
-            out = evenCol ? mulSatQ10(v, rQ) : mulSatQ10(v, gQ);
-        } else {
-            out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, bQ);
-        }
+		if (evenRow) {
+			out = evenCol ? mulSatQ10(v, bQ) : mulSatQ10(v, gQ);
+		} else {
+			out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, rQ);
+		}
+
 		data[i] = out;
 	}
 	//std::cout << "Check-Point 3" << std::endl;
 }
 
-template<unsigned int FacetIndex>
-inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_RGGB(
-    size_t region,
-    std::span<uint16_t> data,
-    const GainMsg& gainMsg
-){
-    //log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_RGGB]");
+//template<unsigned int FacetIndex>
+//inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_RGGB(
+    //size_t region,
+    //std::span<uint16_t> data,
+    //const GainMsg& gainMsg
+//){
+    ////log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_RGGB]");
 
-    const auto& overlapTopology =
-        OverlapTopologyRef();
+    //const auto& overlapTopology =
+        //OverlapTopologyRef();
     
-    const auto& nonOverlapTopology =
-        NonOverlapTopologyRef();
+    //const auto& nonOverlapTopology =
+        //NonOverlapTopologyRef();
     
-    const size_t elems =
-        (region == 0)
-            ? nonOverlapTopology.size()
-            : overlapTopology.size(region - 1);
+    //const size_t elems =
+        //(region == 0)
+            //? nonOverlapTopology.size()
+            //: overlapTopology.size(region - 1);
                                        
-    if (data.size() != elems) {
-        std::cerr << "[WB] size mismatch: data=" << data.size()
-                  << " expected=" << elems << "\n";
-        std::exit(EXIT_FAILURE);
-    }
+    //if (data.size() != elems) {
+        //std::cerr << "[WB] size mismatch: data=" << data.size()
+                  //<< " expected=" << elems << "\n";
+        //std::exit(EXIT_FAILURE);
+    //}
 
-    auto toQ10 = [](double g) -> uint32_t {
-        if (g < 0.0) g = 0.0;
-        return static_cast<uint32_t>(std::lround(g * 1024.0));
-    };
+    //auto toQ10 = [](double g) -> uint32_t {
+        //if (g < 0.0) g = 0.0;
+        //return static_cast<uint32_t>(std::lround(g * 1024.0));
+    //};
 
-    const uint32_t rQ = toQ10(gainMsg.r_gain_apply);
-    const uint32_t gQ = toQ10(1.0);
-    const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
+    //const uint32_t rQ = toQ10(gainMsg.r_gain_apply);
+    //const uint32_t gQ = toQ10(1.0);
+    //const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
 
-    auto mulSatQ10 = [](uint32_t v, uint32_t gainQ) -> uint16_t {
-        uint64_t t = static_cast<uint64_t>(v) * gainQ + 512;
-        t >>= 10;
-        if (t > 65535u) t = 65535u;
-        return static_cast<uint16_t>(t);
-    };
+    //auto mulSatQ10 = [](uint32_t v, uint32_t gainQ) -> uint16_t {
+        //uint64_t t = static_cast<uint64_t>(v) * gainQ + 512;
+        //t >>= 10;
+        //if (t > 65535u) t = 65535u;
+        //return static_cast<uint16_t>(t);
+    //};
 
-    const size_t maskedSize = elems;
+    //const size_t maskedSize = elems;
 
-    for (size_t i = 0; i < maskedSize; ++i) {
-        typename GlobalLinearTopologyType::Index globalIndex{
-            (region == 0)
-                ? (*nonOverlapTopology.indexLinearMax_)[i].value()
-                : (*overlapTopology.indexLinearMaxs_[region - 1])[i].value()
-        };
+    //for (size_t i = 0; i < maskedSize; ++i) {
+        //typename GlobalLinearTopologyType::Index globalIndex{
+            //(region == 0)
+                //? (*nonOverlapTopology.indexLinearMax_)[i].value()
+                //: (*overlapTopology.indexLinearMaxs_[region - 1])[i].value()
+        //};
         
-        typename GlobalLinearTopologyType::Point globalPt{
-            GlobalLinearTopologyType::Transform(globalIndex)
-        };
+        //typename GlobalLinearTopologyType::Point globalPt{
+            //GlobalLinearTopologyType::Transform(globalIndex)
+        //};
 
-        const bool evenRow = (globalPt.y_ & 1) == 0;
-        const bool evenCol = (globalPt.x_ & 1) == 0;
+        //const bool evenRow = (globalPt.y_ & 1) == 0;
+        //const bool evenCol = (globalPt.x_ & 1) == 0;
 
-        // RGGB pattern:
-        // row 0: R G R G ...
-        // row 1: G B G B ...
-        const uint32_t v = data[i];
-        uint16_t out;
-        if (evenRow) {
-            out = evenCol ? mulSatQ10(v, rQ) : mulSatQ10(v, gQ);
-        } else {
-            out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, bQ);
-        }
+        //// RGGB pattern:
+        //// row 0: R G R G ...
+        //// row 1: G B G B ...
+        //const uint32_t v = data[i];
+        //uint16_t out;
+        //if (evenRow) {
+            //out = evenCol ? mulSatQ10(v, rQ) : mulSatQ10(v, gQ);
+        //} else {
+            //out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, bQ);
+        //}
 
-        data[i] = out;
-    }
-}
+        //data[i] = out;
+    //}
+//}
 	
 template<unsigned int FacetIndex>
 std::string Aperture<FacetIndex>::GetBoardSerial()
@@ -1729,20 +1761,48 @@ bool Aperture<FacetIndex>::ReceiveGainReply()
     GainReply reply{};
 
     const ssize_t bytes = controlClnt_.ReceiveFromServer(reply);
-    if (bytes <= 0) {
+
+    if (bytes < 0) {
+        std::cerr << "[ReceiveGainReply] recv failed\n";
         return false;
     }
 
+    if (bytes == 0) {
+        return false;
+    }
+
+    std::cout << "[ReceiveGainReply]"
+              << " bytes=" << bytes
+              << " expected=" << sizeof(GainReply)
+              << " type=" << static_cast<int>(reply.header.type)
+              << " version=" << reply.header.version
+              << " camera_id=" << reply.camera_id
+              << " frame_id=" << reply.frame_id
+              << " requested_gain=" << reply.requested_gain
+              << " status=" << reply.status
+              << '\n';
+
     if (bytes != static_cast<ssize_t>(sizeof(GainReply))) {
-        std::cerr << "ReceiveGainReply: wrong size: " << bytes << '\n';
+        std::cerr << "[ReceiveGainReply] wrong size: "
+                  << bytes
+                  << " expected=" << sizeof(GainReply)
+                  << '\n';
         return false;
     }
 
     if (reply.header.type != MessageType::GainReply) {
+        std::cerr << "[ReceiveGainReply] invalid type="
+                  << static_cast<int>(reply.header.type)
+                  << " expected="
+                  << static_cast<int>(MessageType::GainReply)
+                  << '\n';
         return false;
     }
 
     if (reply.header.version != 1) {
+        std::cerr << "[ReceiveGainReply] invalid version="
+                  << reply.header.version
+                  << '\n';
         return false;
     }
 
@@ -1776,17 +1836,24 @@ void Aperture<FacetIndex>::HandleGainReply(const GainReply& reply)
 template<unsigned int FacetIndex>
 bool Aperture<FacetIndex>::RunControlLoop()
 {
+    std::cout << "[Aperture RunControlLoop] started"
+              << " controlPort=" << controlClnt_.clntPort_
+              << '\n';
+
     while (running_) {
         if (!ReceiveGainReply()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
+
+    std::cout << "[Aperture RunControlLoop] stopped\n";
+
     return true;
 }
 
 template<unsigned int FacetIndex>
 template<typename InputT>
-constexpr void Aperture<FacetIndex>::FrameBufferTransformation(
+void Aperture<FacetIndex>::FrameBufferTransformation(
     InputT&& input,
     const GainMsg& gainMsg,
     tpgydp_t& output,
@@ -1849,11 +1916,22 @@ constexpr void Aperture<FacetIndex>::FrameBufferTransformation(
 
         output.SetRegionValidSize(regionIndex, maskedOutput.size());
     };
+    
+    static std::atomic<uint64_t> gainApplyPrintCount{0};
+
+    if ((gainApplyPrintCount++ % 60) == 0) {
+        std::cout << "[TX applying gain]"
+                  << " facet=" << FacetIndex
+                  << " r_gain_apply=" << gainMsg.r_gain_apply
+                  << " b_gain_apply=" << gainMsg.b_gain_apply
+                  << " gainValid=" << gainValid_
+                  << '\n';
+    }
 
     auto applyWhiteBalanceAndCopy =
         [&](std::size_t regionIndex, auto& maskedOutput)
     {
-        ApplyWhiteBalanceToMosaic_RGGB(
+        ApplyWhiteBalanceToMosaic_BGGR(
             regionIndex,
             std::span<uint16_t>(
                 maskedOutput.data(),

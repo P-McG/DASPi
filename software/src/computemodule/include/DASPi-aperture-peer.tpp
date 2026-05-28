@@ -7,6 +7,10 @@
 #include <utility>
 #include <map>
 #include <mutex>
+#include <cerrno>
+#include <cstring>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 
 #include "DASPi-logger.h"
 #include "DASPi-udp-clnt.h"
@@ -983,6 +987,44 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 template<unsigned int FacetIndex>
 bool AperturePeer<FacetIndex>::SendGainReply(const GainReply& reply)
 {
+    char dstIp[INET_ADDRSTRLEN] = {};
+    inet_ntop(
+        AF_INET,
+        &controlClnt_.srvAddr_.sin_addr,
+        dstIp,
+        sizeof(dstIp)
+    );
+
+    sockaddr_in localAddr{};
+    socklen_t localLen = sizeof(localAddr);
+
+    if (getsockname(
+            controlClnt_.sockfd_,
+            reinterpret_cast<sockaddr*>(&localAddr),
+            &localLen) != 0) {
+        perror("SendGainReply getsockname");
+    }
+
+    char localIp[INET_ADDRSTRLEN] = {};
+    inet_ntop(
+        AF_INET,
+        &localAddr.sin_addr,
+        localIp,
+        sizeof(localIp)
+    );
+
+    std::cout << "[SendGainReply raw attempt]"
+              << " fd=" << controlClnt_.sockfd_
+              << " src=" << localIp
+              << ":" << ntohs(localAddr.sin_port)
+              << " dst=" << dstIp
+              << ":" << ntohs(controlClnt_.srvAddr_.sin_port)
+              << " bytes=" << sizeof(reply)
+              << " camera_id=" << reply.camera_id
+              << " frame_id=" << reply.frame_id
+              << " requested_gain=" << reply.requested_gain
+              << '\n';
+
     const ssize_t sent =
         sendto(
             controlClnt_.sockfd_,
@@ -994,27 +1036,19 @@ bool AperturePeer<FacetIndex>::SendGainReply(const GainReply& reply)
         );
 
     if (sent < 0) {
-        perror("SendGainReply sendto");
-        return false;
-    }
-
-    if (sent != static_cast<ssize_t>(sizeof(reply))) {
-        std::cerr << "[SendGainReply] partial send: sent="
-                  << sent
-                  << " expected=" << sizeof(reply)
+        std::cerr << "[SendGainReply raw FAILED]"
+                  << " errno=" << errno
+                  << " " << std::strerror(errno)
                   << '\n';
         return false;
     }
 
-    std::cout << "[SendGainReply raw]"
+    std::cout << "[SendGainReply raw sent]"
               << " bytes=" << sent
-              << " camera_id=" << reply.camera_id
-              << " frame_id=" << reply.frame_id
-              << " requested_gain=" << reply.requested_gain
-              << " dstPort=" << controlClnt_.srvPort_
+              << " expected=" << sizeof(reply)
               << '\n';
 
-    return true;
+    return sent == static_cast<ssize_t>(sizeof(reply));
 }
 	
 	template<unsigned int FacetIndex>

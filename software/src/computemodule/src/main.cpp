@@ -1471,54 +1471,54 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
     return cameras;
 }
 
-void SaveBayerPatternDebugOnce(const std::vector<uint16_t>& raw,
-                               std::size_t moduleIndex,
-                               std::size_t localCameraIndex)
+void SaveBayerBGGRDebugOnce(const std::vector<uint16_t>& raw,
+                            std::size_t moduleIndex,
+                            std::size_t localCameraIndex)
 {
     static std::mutex mtx;
     static std::set<std::pair<std::size_t, std::size_t>> saved;
 
     std::lock_guard<std::mutex> lock(mtx);
 
-    const auto key = std::make_pair(moduleIndex, localCameraIndex);
+    const auto key =
+        std::make_pair(moduleIndex, localCameraIndex);
+
     if (saved.contains(key)) {
         return;
     }
 
     saved.insert(key);
 
-    struct Pattern {
-        const char* name;
-        int code;
-    };
-
-    const std::array<Pattern, 4> patterns{{
-        {"BG", cv::COLOR_BayerBG2BGR},
-        {"GB", cv::COLOR_BayerGB2BGR},
-        {"GR", cv::COLOR_BayerGR2BGR},
-        {"RG", cv::COLOR_BayerRG2BGR},
-    }};
-
-    for (const auto& p : patterns) {
-        cv::Mat bgr =
-            DASPi::decodeBayer16ToBgr8(
-                raw.data(),
-                kFrameWidth,
-                kFrameHeight,
-                p.code
-            );
-
-        const std::string path =
-            "/tmp/bayer_m" + std::to_string(moduleIndex) +
-            "_s" + std::to_string(localCameraIndex) +
-            "_" + p.name + ".png";
-
-        cv::imwrite(path, bgr);
-
-        std::cout << "[Bayer debug] saved "
-                  << path
+    if (raw.empty()) {
+        std::cerr << "[Bayer BGGR debug] empty raw"
+                  << " module=" << moduleIndex
+                  << " stream=" << localCameraIndex
                   << '\n';
+        return;
     }
+
+    cv::Mat bgr =
+        DASPi::decodeBayer16ToBgr8(
+            raw.data(),
+            kFrameWidth,
+            kFrameHeight,
+            cv::COLOR_BayerBG2BGR
+        );
+
+    const std::string path =
+        "/tmp/bayer_bggr_m" + std::to_string(moduleIndex) +
+        "_s" + std::to_string(localCameraIndex) +
+        ".png";
+
+    const bool ok = cv::imwrite(path, bgr);
+
+    std::cout << "[Bayer BGGR debug] "
+              << (ok ? "saved " : "FAILED ")
+              << path
+              << " module=" << moduleIndex
+              << " stream=" << localCameraIndex
+              << " raw.size()=" << raw.size()
+              << '\n';
 }
 
 void SaveBayerRegionDebugOnce(const std::vector<uint16_t>& raw,
@@ -3206,7 +3206,7 @@ void StartPeerThreads(
                         }
                         
 						if (localCameraIndex == 0) {
-						    SaveBayerPatternDebugOnce(raw, moduleIndex, localCameraIndex);
+						    SaveBayerBGGRDebugOnce(raw, moduleIndex, localCameraIndex);
 						}
 
 						cv::Mat bgr = decodeBayer16ToBgr8(raw.data(), kFrameWidth, kFrameHeight);
