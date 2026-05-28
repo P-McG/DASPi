@@ -1304,6 +1304,13 @@ bool Aperture<FacetIndex>::ContinuousCapture(unsigned int index){
     BufferAllocation();
 
     StartUDPSender();
+    
+    if (!controlThread_.joinable()) {
+        controlThread_ = std::thread([this]() {
+            this->RunControlLoop();
+        });
+    }
+    
     StartRequestProcessingThreads(processingThreads_);
     StartPostProcessingThreads(processingThreads_);
 
@@ -1751,10 +1758,19 @@ void Aperture<FacetIndex>::HandleGainReply(const GainReply& reply)
     }
 
     std::lock_guard<std::mutex> lock(gainMutex_);
-	latestRGainApply_ = reply.r_gain_apply;
-	latestBGainApply_ = reply.b_gain_apply;
-	latestGainFrameId_ = reply.frame_id;
-	gainValid_ = true;
+
+    latestRGainApply_ = reply.r_gain_apply;
+    latestBGainApply_ = reply.b_gain_apply;
+    latestGainFrameId_ = reply.frame_id;
+    gainValid_ = true;
+
+    std::cout << "[Aperture GainReply received]"
+              << " camera_id=" << reply.camera_id
+              << " frame_id=" << reply.frame_id
+              << " requested_gain=" << reply.requested_gain
+              << " r_apply=" << reply.r_gain_apply
+              << " b_apply=" << reply.b_gain_apply
+              << '\n';
 }
 
 template<unsigned int FacetIndex>

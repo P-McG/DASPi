@@ -138,11 +138,6 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 
     const auto tReceiveDone = Clock::now();
 
-	// In ComputeModule AperturePeer::RunFrameLoop(), after receiving frameHeader:
-	if (frameHeader.gainMsg_.header.type == MessageType::GainMsg) {
-		HandleGainMsg(frameHeader.gainMsg_);
-	}
-
     const auto counters =
         frameClnt_.ConsumeRxCounters();
 
@@ -985,20 +980,42 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 		return true;
 	}
 	
-	template<unsigned int FacetIndex>
-	bool AperturePeer<FacetIndex>::SendGainReply(const GainReply& reply)
-	{
-		GainReply copy = reply;
-	
-		ssize_t sent = controlClnt_.SendToServer(&copy, sizeof(copy));
-	
-		if (sent < 0) {
-			perror("SendGainReply sendto");
-			return false;
-		}
-	
-		return sent == sizeof(copy);
-	}
+template<unsigned int FacetIndex>
+bool AperturePeer<FacetIndex>::SendGainReply(const GainReply& reply)
+{
+    const ssize_t sent =
+        sendto(
+            controlClnt_.sockfd_,
+            &reply,
+            sizeof(reply),
+            0,
+            reinterpret_cast<const sockaddr*>(&controlClnt_.srvAddr_),
+            sizeof(controlClnt_.srvAddr_)
+        );
+
+    if (sent < 0) {
+        perror("SendGainReply sendto");
+        return false;
+    }
+
+    if (sent != static_cast<ssize_t>(sizeof(reply))) {
+        std::cerr << "[SendGainReply] partial send: sent="
+                  << sent
+                  << " expected=" << sizeof(reply)
+                  << '\n';
+        return false;
+    }
+
+    std::cout << "[SendGainReply raw]"
+              << " bytes=" << sent
+              << " camera_id=" << reply.camera_id
+              << " frame_id=" << reply.frame_id
+              << " requested_gain=" << reply.requested_gain
+              << " dstPort=" << controlClnt_.srvPort_
+              << '\n';
+
+    return true;
+}
 	
 	template<unsigned int FacetIndex>
 	void AperturePeer<FacetIndex>::HandleGainMsg(const GainMsg& msg)
