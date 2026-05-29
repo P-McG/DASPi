@@ -1063,8 +1063,14 @@ bool AperturePeer<FacetIndex>::SendGainReply(const GainReply& reply)
 		reply.frame_id = msg.frame_id;
 	
 		reply.requested_gain = ComputeRequestedGain(msg);
-		reply.r_gain_apply = reply.requested_gain;
-		reply.b_gain_apply = reply.requested_gain;
+		reply.brightness_gain_apply = reply.requested_gain;
+		
+		/*
+		 * Keep red/blue as white-balance multipliers.
+		 * Do not use them for global brightness.
+		 */
+		reply.r_gain_apply = 1.0f;
+		reply.b_gain_apply = 1.0f;
 		reply.status = 0;
 	
 		SendGainReply(reply);

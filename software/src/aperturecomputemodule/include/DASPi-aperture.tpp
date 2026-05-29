@@ -293,7 +293,13 @@ void Aperture<FacetIndex>::CameraConfiguration() {
               << std::endl;
 
     const libcamera::CameraConfiguration::Status status = config_->validate();
-
+    
+    if (config_->at(0).pixelFormat != libcamera::formats::SBGGR16) {
+        std::cerr << "[CameraConfiguration] expected SBGGR16 but validated format is "
+                  << config_->at(0).pixelFormat.toString()
+                  << '\n';
+        std::exit(EXIT_FAILURE);
+    }
     std::cout << "[ValidatedConfig] pixelFormat="
               << config_->at(0).pixelFormat.toString()
               << " width=" << config_->at(0).size.width
@@ -1167,18 +1173,16 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
     );
 
     GainMsg appliedGainMsg = gainMsg;
-
-    /*
-     * Start from camera-provided red/blue gains, then override with the
-     * ComputeModule feedback gain once a valid GainReply has arrived.
-     */
+    
+    appliedGainMsg.brightness_gain_apply = 1.0f;
     appliedGainMsg.r_gain_apply = appliedGainMsg.r_gain;
     appliedGainMsg.b_gain_apply = appliedGainMsg.b_gain;
-
+    
     {
         std::lock_guard<std::mutex> lock(gainMutex_);
-
+    
         if (gainValid_) {
+            appliedGainMsg.brightness_gain_apply = latestBrightnessGainApply_;
             appliedGainMsg.r_gain_apply = latestRGainApply_;
             appliedGainMsg.b_gain_apply = latestBGainApply_;
         }
@@ -1543,9 +1547,10 @@ inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_BGGR(
 		if (g < 0.0) g = 0.0;
 		return static_cast<uint32_t>(std::lround(g * 1024.0));
 	};
-	const uint32_t rQ = toQ10(gainMsg.r_gain_apply);
-	const uint32_t gQ = toQ10(1.0);
-	const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
+    const uint32_t brightnessQ = toQ10(gainMsg.brightness_gain_apply);
+    const uint32_t rQ = toQ10(gainMsg.r_gain_apply);
+    const uint32_t gQ = toQ10(1.0);
+    const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
 
 	// Saturating multiply: (v * gainQ + 512) >> 10, clamped to 65535
 	auto mulSatQ10 = [](uint32_t v, uint32_t gainQ) -> uint16_t {
@@ -1577,95 +1582,27 @@ inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_BGGR(
 		//uint16_t* row = data.data() + globalPt.y_ * sf.GlobalLinearShapeFunction_t::sensorWidth().value();
 
 		
-		// BGGR pattern:
-		// row 0: B G B G ...
-		// row 1: G R G R ...
-		const uint32_t v{ data[i]};
-		//const uint32_t v = row[globalPt.x_];
-		uint16_t out;
-		if (evenRow) {
-			out = evenCol ? mulSatQ10(v, bQ) : mulSatQ10(v, gQ);
-		} else {
-			out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, rQ);
-		}
-
-		data[i] = out;
+        const uint32_t v = data[i];
+        
+        uint16_t brightened = mulSatQ10(v, brightnessQ);
+        uint16_t out;
+        
+        // BGGR:
+        // row 0: B G B G ...
+        // row 1: G R G R ...
+        if (evenRow) {
+            out = evenCol ? mulSatQ10(brightened, bQ)
+                          : mulSatQ10(brightened, gQ);
+        } else {
+            out = evenCol ? mulSatQ10(brightened, gQ)
+                          : mulSatQ10(brightened, rQ);
+        }
+        
+        data[i] = out;
 	}
 	//std::cout << "Check-Point 3" << std::endl;
 }
 
-//template<unsigned int FacetIndex>
-//inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_RGGB(
-    //size_t region,
-    //std::span<uint16_t> data,
-    //const GainMsg& gainMsg
-//){
-    ////log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_RGGB]");
-
-    //const auto& overlapTopology =
-        //OverlapTopologyRef();
-    
-    //const auto& nonOverlapTopology =
-        //NonOverlapTopologyRef();
-    
-    //const size_t elems =
-        //(region == 0)
-            //? nonOverlapTopology.size()
-            //: overlapTopology.size(region - 1);
-                                       
-    //if (data.size() != elems) {
-        //std::cerr << "[WB] size mismatch: data=" << data.size()
-                  //<< " expected=" << elems << "\n";
-        //std::exit(EXIT_FAILURE);
-    //}
-
-    //auto toQ10 = [](double g) -> uint32_t {
-        //if (g < 0.0) g = 0.0;
-        //return static_cast<uint32_t>(std::lround(g * 1024.0));
-    //};
-
-    //const uint32_t rQ = toQ10(gainMsg.r_gain_apply);
-    //const uint32_t gQ = toQ10(1.0);
-    //const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
-
-    //auto mulSatQ10 = [](uint32_t v, uint32_t gainQ) -> uint16_t {
-        //uint64_t t = static_cast<uint64_t>(v) * gainQ + 512;
-        //t >>= 10;
-        //if (t > 65535u) t = 65535u;
-        //return static_cast<uint16_t>(t);
-    //};
-
-    //const size_t maskedSize = elems;
-
-    //for (size_t i = 0; i < maskedSize; ++i) {
-        //typename GlobalLinearTopologyType::Index globalIndex{
-            //(region == 0)
-                //? (*nonOverlapTopology.indexLinearMax_)[i].value()
-                //: (*overlapTopology.indexLinearMaxs_[region - 1])[i].value()
-        //};
-        
-        //typename GlobalLinearTopologyType::Point globalPt{
-            //GlobalLinearTopologyType::Transform(globalIndex)
-        //};
-
-        //const bool evenRow = (globalPt.y_ & 1) == 0;
-        //const bool evenCol = (globalPt.x_ & 1) == 0;
-
-        //// RGGB pattern:
-        //// row 0: R G R G ...
-        //// row 1: G B G B ...
-        //const uint32_t v = data[i];
-        //uint16_t out;
-        //if (evenRow) {
-            //out = evenCol ? mulSatQ10(v, rQ) : mulSatQ10(v, gQ);
-        //} else {
-            //out = evenCol ? mulSatQ10(v, gQ) : mulSatQ10(v, bQ);
-        //}
-
-        //data[i] = out;
-    //}
-//}
-	
 template<unsigned int FacetIndex>
 std::string Aperture<FacetIndex>::GetBoardSerial()
 {
@@ -1819,6 +1756,7 @@ void Aperture<FacetIndex>::HandleGainReply(const GainReply& reply)
 
     std::lock_guard<std::mutex> lock(gainMutex_);
 
+    latestBrightnessGainApply_ = reply.brightness_gain_apply;
     latestRGainApply_ = reply.r_gain_apply;
     latestBGainApply_ = reply.b_gain_apply;
     latestGainFrameId_ = reply.frame_id;

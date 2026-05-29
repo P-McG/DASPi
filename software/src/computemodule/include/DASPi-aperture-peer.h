@@ -12,7 +12,9 @@
 
 #include "DASPi-shape-config.h"
 #include "DASPi-udp-clnt.h"
-#include "DASPi-messages.h"
+#include "DASPi-message-header.h"
+#include "DASPi-gain-msg.h"
+#include "DASPi-gain-reply.h"
 #include "DASPi-overlaptopology.h"
 #include "DASPi-topologydatapacket.h"
 #include "DASPi-fps-counter.h"

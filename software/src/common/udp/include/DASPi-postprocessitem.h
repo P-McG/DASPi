@@ -1,6 +1,8 @@
 //postprocessitem.h
 #pragma once
-#include "DASPi-messages.h"
+#include "DASPi-message-header.h"
+#include "DASPi-gain-msg.h"
+#include "DASPi-gain-reply.h"
 
 namespace DASPi{
 struct PostProcessItem {

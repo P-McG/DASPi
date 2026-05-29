@@ -191,6 +191,7 @@ namespace DASPi{
         std::thread controlThread_;
         
         mutable std::mutex gainMutex_;
+        float latestBrightnessGainApply_{1.0f};
         float latestRGainApply_{1.0f};
         float latestBGainApply_{1.0f};
         uint32_t latestGainFrameId_{0};

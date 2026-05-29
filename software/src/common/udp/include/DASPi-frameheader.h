@@ -5,7 +5,9 @@
 #include <type_traits>
 
 #include "DASPi-config.h"
-#include "DASPi-messages.h"
+#include "DASPi-message-header.h"
+#include "DASPi-gain-msg.h"
+#include "DASPi-gain-reply.h"
 
 namespace DASPi {
 
