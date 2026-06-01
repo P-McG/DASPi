@@ -17,6 +17,10 @@
 #include "DASPi-aperture-peer.h"
 #include "DASPi-benchmark-config.h"
 //#include "DASPi-spherespacetype.h"
+#include "DASPi-bayerstats.h"
+#include "DASPi-region0bayerstats.h"
+#include "DASPi-region0whitebalancegains.h"
+#include "DASPi-region0whitebalanceaggregator.h"
 
 namespace DASPi{
 	
@@ -97,7 +101,7 @@ template<unsigned int FacetIndex>
 bool AperturePeer<FacetIndex>::RunFrameLoop()
 {
     constexpr bool kVerboseRunFrameLoopTiming = true;
-    constexpr bool kWriteBuffersToFile = false;
+    constexpr bool kWriteBuffersToFile = true;
 
     constexpr std::size_t regionCount =
         verticesPerFaceN_ + 1;
@@ -236,7 +240,7 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
      *
      * RX must mirror TX exactly:
      *
-     *   tpgydp_[0]    -> facetTopology.FrameBufferUnmask(...)
+     *   tpgydp_[0]    -> nonOverlapTopology.FrameBufferUnmask(...)
      *   tpgydp_[1..N] -> overlapTopology.FrameBufferUnmask(..., region - 1)
      */
 
@@ -289,147 +293,240 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
         offset += count;
     }
 
-	if (offset != maskedBuffer.size()) {
-		std::cerr << "[RunFrameLoop] payload size mismatch after unpack:"
-				  << " offset=" << offset
-				  << " maskedBuffer.size()=" << maskedBuffer.size()
-				  << '\n';
-	
-		++rxStats_.rxFail;
-		MaybePrintRxSummary();
-		return false;
-	}
-	
-	/*
-	 * Compute brightness on the ComputeModule / AperturePeer side.
-	 *
-	 * Use packed region 0 first because it is the non-overlap / owning facet
-	 * region and should be the most stable brightness sample.
-	 */
-	auto computeMeanBrightness01 =
-		[](std::span<const uint16_t> data) -> float
-	{
-		if (data.empty()) {
-			return 0.0f;
-		}
-	
-		double sum = 0.0;
-		std::size_t count = 0;
-	
-		for (const uint16_t v : data) {
-			if (v == 0) {
-				continue;
-			}
-	
-			sum += static_cast<double>(v) / 65535.0;
-			++count;
-		}
-	
-		if (count == 0) {
-			return 0.0f;
-		}
-	
-		return static_cast<float>(sum / static_cast<double>(count));
-	};
-	
-	{
-		GainMsg gainMsg = frameHeader.gainMsg_;
-	
-		gainMsg.header.type = MessageType::GainMsg;
-		gainMsg.header.version = 1;
-	
-		gainMsg.mean_brightness =
-			computeMeanBrightness01(
-				std::span<const uint16_t>(
-					this->tpgydp_[0].data(),
-					this->tpgydp_.RegionValidSize(0)
-				)
-			);
-	
-		if (gainMsg.target_brightness <= 0.0f) {
-			gainMsg.target_brightness = 0.35f;
-		}
-	
-		HandleGainMsg(gainMsg);
-	}
-	
-	const auto tUnpackDone = Clock::now();
-	
-	std::array<std::vector<uint16_t>, regionCount> newBuffers;
-	
-	using FacetTopologyType =
-		typename tpgy_t::template FacetTopology_t<FacetIndex>;
-	
-	using OverlapTopologyType =
-		typename tpgy_t::template OverlapTopology_t<FacetIndex>;
-	
-	using NonOverlapFacetTopologyType =
-		typename OverlapTopologyType::NonOverlapFacetTopology_t;
-	
-	static_assert(
-		std::is_base_of_v<FacetTopologyType, tpgy_t>,
-		"FacetTopologyType is not a base of tpgy_t"
-	);
-	
-	static_assert(
-		std::is_base_of_v<OverlapTopologyType, FacetTopologyType>,
-		"OverlapTopologyType is not a base of FacetTopologyType"
-	);
-	
-	static_assert(
-		std::is_base_of_v<NonOverlapFacetTopologyType, OverlapTopologyType>,
-		"NonOverlapFacetTopologyType is not a base of OverlapTopologyType"
-	);
-	
-	auto& facetTopology =
-		static_cast<FacetTopologyType&>(this->tpgy_);
-	
-	auto& overlapTopology =
-		static_cast<OverlapTopologyType&>(facetTopology);
-	
-	auto& nonOverlapTopology =
-		static_cast<NonOverlapFacetTopologyType&>(overlapTopology);
-	
-	auto copyUnmaskedToBuffer =
-		[&](std::size_t regionIndex, auto&& unmasked)
-	{
-		newBuffers[regionIndex].resize(unmasked.size());
-	
-		if (!unmasked.empty()) {
-			std::memcpy(
-				newBuffers[regionIndex].data(),
-				unmasked.data(),
-				unmasked.size() * sizeof(uint16_t)
-			);
-		}
-	};
-	
-	// region 0 = non-overlap / owning facet
-	{
-		auto unmasked =
-			nonOverlapTopology.FrameBufferUnmask(
-				this->tpgydp_[0]
-			);
-	
-		copyUnmaskedToBuffer(0, unmasked);
-	}
-	
-	// regions 1..N = overlap regions
-	for (std::size_t regionIndex = 1;
-		 regionIndex < regionCount;
-		 ++regionIndex) {
-	
-		const std::size_t overlapIndex =
-			regionIndex - 1;
-	
-		auto unmasked =
-			overlapTopology.FrameBufferUnmask(
-				this->tpgydp_[regionIndex],
-				overlapIndex
-			);
-	
-		copyUnmaskedToBuffer(regionIndex, unmasked);
-	}
+    if (offset != maskedBuffer.size()) {
+        std::cerr << "[RunFrameLoop] payload size mismatch after unpack:"
+                  << " offset=" << offset
+                  << " maskedBuffer.size()=" << maskedBuffer.size()
+                  << '\n';
+
+        ++rxStats_.rxFail;
+        MaybePrintRxSummary();
+        return false;
+    }
+
+    /*
+     * Topology references are needed both for:
+     *
+     *   1. region-0 Bayer statistics for aggregate white balance
+     *   2. unmasking region 0 and overlap regions into full-size buffers
+     */
+    using FacetTopologyType =
+        typename tpgy_t::template FacetTopology_t<FacetIndex>;
+
+    using OverlapTopologyType =
+        typename tpgy_t::template OverlapTopology_t<FacetIndex>;
+
+    using NonOverlapFacetTopologyType =
+        typename OverlapTopologyType::NonOverlapFacetTopology_t;
+
+    using GlobalLinearTopologyType =
+        typename OverlapTopologyType::GlobalLinearTopology_t;
+
+    static_assert(
+        std::is_base_of_v<FacetTopologyType, tpgy_t>,
+        "FacetTopologyType is not a base of tpgy_t"
+    );
+
+    static_assert(
+        std::is_base_of_v<OverlapTopologyType, FacetTopologyType>,
+        "OverlapTopologyType is not a base of FacetTopologyType"
+    );
+
+    static_assert(
+        std::is_base_of_v<NonOverlapFacetTopologyType, OverlapTopologyType>,
+        "NonOverlapFacetTopologyType is not a base of OverlapTopologyType"
+    );
+
+    auto& facetTopology =
+        static_cast<FacetTopologyType&>(this->tpgy_);
+
+    auto& overlapTopology =
+        static_cast<OverlapTopologyType&>(facetTopology);
+
+    auto& nonOverlapTopology =
+        static_cast<NonOverlapFacetTopologyType&>(overlapTopology);
+
+    /*
+     * Measure brightness and white balance from packed region 0 only.
+     *
+     * region 0 = non-overlap / owning facet region.
+     *
+     * This avoids overlap/edge regions influencing WB.
+     */
+    auto computeRegion0BayerStats =
+        [&](std::span<const uint16_t> region0Data)
+            -> detail::Region0BayerStats
+    {
+        detail::Region0BayerStats stats{};
+
+        const auto* indexMap =
+            nonOverlapTopology.indexLinearMax_.get();
+
+        if (indexMap == nullptr) {
+            std::cerr << "[RunFrameLoop] region 0 index map is null\n";
+            return stats;
+        }
+
+        const std::size_t sampleCount =
+            std::min(region0Data.size(), indexMap->size());
+
+        if (sampleCount != region0Data.size()) {
+            std::cerr << "[RunFrameLoop] region 0 WB sample size mismatch:"
+                      << " data=" << region0Data.size()
+                      << " indexMap=" << indexMap->size()
+                      << " using=" << sampleCount
+                      << '\n';
+        }
+
+        for (std::size_t i = 0; i < sampleCount; ++i) {
+            const uint16_t v = region0Data[i];
+
+            if (v == 0) {
+                continue;
+            }
+
+            typename GlobalLinearTopologyType::Index globalIndex{
+                (*indexMap)[i].value()
+            };
+
+            typename GlobalLinearTopologyType::Point globalPt{
+                GlobalLinearTopologyType::Transform(globalIndex)
+            };
+
+            const bool evenRow = (globalPt.y_ & 1) == 0;
+            const bool evenCol = (globalPt.x_ & 1) == 0;
+
+            /*
+             * BGGR:
+             *
+             *   row 0: B G B G ...
+             *   row 1: G R G R ...
+             */
+            if (evenRow) {
+                if (evenCol) {
+                    stats.addBlue(v);
+                } else {
+                    stats.addGreen(v);
+                }
+            } else {
+                if (evenCol) {
+                    stats.addGreen(v);
+                } else {
+                    stats.addRed(v);
+                }
+            }
+        }
+
+        return stats;
+    };
+
+    {
+        GainMsg gainMsg = frameHeader.gainMsg_;
+
+        gainMsg.header.type = MessageType::GainMsg;
+        gainMsg.header.version = 1;
+
+        const detail::Region0BayerStats region0Stats =
+            computeRegion0BayerStats(
+                std::span<const uint16_t>(
+                    this->tpgydp_[0].data(),
+                    this->tpgydp_.RegionValidSize(0)
+                )
+            );
+
+        /*
+         * Keep brightness feedback based on region 0 only.
+         */
+        gainMsg.mean_brightness =
+            region0Stats.meanBrightness01();
+
+        if (gainMsg.target_brightness <= 0.0f) {
+            gainMsg.target_brightness = 0.35f;
+        }
+
+        /*
+         * Aggregate white balance across the latest region 0 from all peers.
+         *
+         * The aggregator must be non-template / process-wide so
+         * AperturePeer<0>, AperturePeer<1>, etc. contribute to the same
+         * running aggregate.
+         */
+        const detail::Region0WhiteBalanceGains wbGains =
+            detail::Region0WhiteBalanceAggregatorInstance().Update(
+                this,
+                gainMsg.frame_id,
+                region0Stats
+            );
+
+        if (wbGains.valid) {
+            gainMsg.r_gain_apply = wbGains.rGainApply;
+            gainMsg.b_gain_apply = wbGains.bGainApply;
+        }
+
+        static std::atomic<uint64_t> wbPrintCount{0};
+
+        if ((wbPrintCount++ % 60) == 0) {
+            std::cout << "[Region0 aggregate WB]"
+                      << " peer=" << peerLabel_
+                      << " frame_id=" << gainMsg.frame_id
+                      << " mean=" << gainMsg.mean_brightness
+                      << " region0s=" << wbGains.contributingRegion0s
+                      << " r_apply=" << gainMsg.r_gain_apply
+                      << " b_apply=" << gainMsg.b_gain_apply
+                      << '\n';
+        }
+
+        HandleGainMsg(gainMsg);
+    }
+
+    const auto tUnpackDone = Clock::now();
+
+    std::array<std::vector<uint16_t>, regionCount> newBuffers;
+
+    auto copyUnmaskedToBuffer =
+        [&](std::size_t regionIndex, auto&& unmasked)
+    {
+        newBuffers[regionIndex].resize(unmasked.size());
+
+        if (!unmasked.empty()) {
+            std::memcpy(
+                newBuffers[regionIndex].data(),
+                unmasked.data(),
+                unmasked.size() * sizeof(uint16_t)
+            );
+        }
+    };
+
+    /*
+     * region 0 = non-overlap / owning facet
+     */
+    {
+        auto unmasked =
+            nonOverlapTopology.FrameBufferUnmask(
+                this->tpgydp_[0]
+            );
+
+        copyUnmaskedToBuffer(0, unmasked);
+    }
+
+    /*
+     * regions 1..N = overlap regions
+     */
+    for (std::size_t regionIndex = 1;
+         regionIndex < regionCount;
+         ++regionIndex) {
+
+        const std::size_t overlapIndex =
+            regionIndex - 1;
+
+        auto unmasked =
+            overlapTopology.FrameBufferUnmask(
+                this->tpgydp_[regionIndex],
+                overlapIndex
+            );
+
+        copyUnmaskedToBuffer(regionIndex, unmasked);
+    }
 
     static std::once_flag printedRegionSizesOnce;
 

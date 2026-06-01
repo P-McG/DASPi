@@ -1553,8 +1553,8 @@ inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_BGGR(
     //const uint32_t gQ = toQ10(1.0);
     //const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
     
-    constexpr bool kEnableBrightnessFeedback = false;
-    constexpr bool kEnableWhiteBalance = false;
+    constexpr bool kEnableBrightnessFeedback = true;
+    constexpr bool kEnableWhiteBalance = true;
     
     const uint32_t brightnessQ =
         toQ10(kEnableBrightnessFeedback
