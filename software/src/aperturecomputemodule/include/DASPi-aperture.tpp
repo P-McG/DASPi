@@ -1547,10 +1547,31 @@ inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_BGGR(
 		if (g < 0.0) g = 0.0;
 		return static_cast<uint32_t>(std::lround(g * 1024.0));
 	};
-    const uint32_t brightnessQ = toQ10(gainMsg.brightness_gain_apply);
-    const uint32_t rQ = toQ10(gainMsg.r_gain_apply);
+    
+    //const uint32_t brightnessQ = toQ10(gainMsg.brightness_gain_apply);
+    //const uint32_t rQ = toQ10(gainMsg.r_gain_apply);
+    //const uint32_t gQ = toQ10(1.0);
+    //const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
+    
+    constexpr bool kEnableBrightnessFeedback = false;
+    constexpr bool kEnableWhiteBalance = false;
+    
+    const uint32_t brightnessQ =
+        toQ10(kEnableBrightnessFeedback
+            ? gainMsg.brightness_gain_apply
+            : 1.0);
+    
+    const uint32_t rQ =
+        toQ10(kEnableWhiteBalance
+            ? gainMsg.r_gain_apply
+            : 1.0);
+    
     const uint32_t gQ = toQ10(1.0);
-    const uint32_t bQ = toQ10(gainMsg.b_gain_apply);
+    
+    const uint32_t bQ =
+        toQ10(kEnableWhiteBalance
+            ? gainMsg.b_gain_apply
+            : 1.0);
 
 	// Saturating multiply: (v * gainQ + 512) >> 10, clamped to 65535
 	auto mulSatQ10 = [](uint32_t v, uint32_t gainQ) -> uint16_t {

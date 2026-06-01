@@ -1054,23 +1054,50 @@ bool AperturePeer<FacetIndex>::SendGainReply(const GainReply& reply)
 	template<unsigned int FacetIndex>
 	void AperturePeer<FacetIndex>::HandleGainMsg(const GainMsg& msg)
 	{
-		GainReply reply{};
+		//GainReply reply{};
 	
-		reply.header.type = MessageType::GainReply;
-		reply.header.version = 1;
+		//reply.header.type = MessageType::GainReply;
+		//reply.header.version = 1;
 	
-		reply.camera_id = msg.camera_id;
-		reply.frame_id = msg.frame_id;
+		//reply.camera_id = msg.camera_id;
+		//reply.frame_id = msg.frame_id;
 	
-		reply.requested_gain = ComputeRequestedGain(msg);
-		reply.brightness_gain_apply = reply.requested_gain;
+		//reply.requested_gain = ComputeRequestedGain(msg);
+		//reply.brightness_gain_apply = reply.requested_gain;
 		
 		/*
 		 * Keep red/blue as white-balance multipliers.
 		 * Do not use them for global brightness.
 		 */
-		reply.r_gain_apply = 1.0f;
-		reply.b_gain_apply = 1.0f;
+		auto validGain = [](float v) {
+			return std::isfinite(v) && v > 0.0f && v < 16.0f;
+		};
+		
+		const float rApply =
+			validGain(msg.r_gain_apply) ? msg.r_gain_apply :
+			validGain(msg.r_gain)       ? msg.r_gain :
+										  1.0f;
+		
+		const float bApply =
+			validGain(msg.b_gain_apply) ? msg.b_gain_apply :
+			validGain(msg.b_gain)       ? msg.b_gain :
+										  1.0f;
+		
+		GainReply reply{};
+		
+		reply.header.type = MessageType::GainReply;
+		reply.header.version = 1;
+		
+		reply.camera_id = msg.camera_id;
+		reply.frame_id = msg.frame_id;
+		
+		reply.requested_gain = ComputeRequestedGain(msg);
+		reply.brightness_gain_apply = reply.requested_gain;
+		
+		// Preserve white-balance gains from the Aperture/camera metadata.
+		reply.r_gain_apply = rApply;
+		reply.b_gain_apply = bApply;
+		
 		reply.status = 0;
 	
 		SendGainReply(reply);
@@ -1092,6 +1119,7 @@ bool AperturePeer<FacetIndex>::SendGainReply(const GainReply& reply)
 				  << " r_apply=" << reply.r_gain_apply
 				  << " b_apply=" << reply.b_gain_apply
 				  << '\n';
+		
 	}
 	
 	//template<size_t n>

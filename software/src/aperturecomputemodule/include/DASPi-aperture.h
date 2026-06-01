@@ -76,7 +76,7 @@ namespace DASPi{
         inline static unsigned int frameNumber_{0};
         //constexpr inline static unsigned int width_{1536};
         //constexpr inline static unsigned int height_{864};
-        libcamera::PixelFormat codec_{libcamera::formats::SBGGR16};
+        libcamera::PixelFormat codec_{libcamera::formats::SRGGB16};//SBGGR16};
         inline static std::atomic<bool> isStartCaptureThreadDone_{false}; // Atomic flag
         inline static std::atomic<bool> isStartCaptureRunning_{false}; // Atomic flag
         tpgy_t sf_;
