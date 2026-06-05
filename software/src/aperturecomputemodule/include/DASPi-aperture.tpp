@@ -283,7 +283,9 @@ void Aperture<FacetIndex>::CameraConfiguration() {
     auto &cfg = config_->at(0);
 
     // Force requested raw format here
-    cfg.pixelFormat = libcamera::formats::SBGGR16;
+    //cfg.pixelFormat = libcamera::formats::SBGGR16;
+    cfg.pixelFormat = libcamera::formats::SRGGB16;
+
     cfg.size = {1456, 1088};
 
     std::cout << "[RequestedConfig] pixelFormat="
@@ -294,8 +296,10 @@ void Aperture<FacetIndex>::CameraConfiguration() {
 
     const libcamera::CameraConfiguration::Status status = config_->validate();
     
-    if (config_->at(0).pixelFormat != libcamera::formats::SBGGR16) {
-        std::cerr << "[CameraConfiguration] expected SBGGR16 but validated format is "
+    //if (config_->at(0).pixelFormat != libcamera::formats::SBGGR16) {
+    if (config_->at(0).pixelFormat != libcamera::formats::SRGGB16) {
+
+        std::cerr << "[CameraConfiguration] expected SRGGB16 but validated format is "
                   << config_->at(0).pixelFormat.toString()
                   << '\n';
         std::exit(EXIT_FAILURE);
@@ -1004,14 +1008,14 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
     constexpr std::size_t activeHeight = sensorHeightValue_;
     constexpr std::size_t expectedElems = activeWidth * activeHeight;
 
-    const bool isBGGR16 =
-        (pixelFormat == libcamera::formats::SBGGR16);
+    const bool isRGGB16 =
+        (pixelFormat == libcamera::formats::SRGGB16);
 
-    const bool isBGGR10Packed =
-        (pixelFormat == libcamera::formats::SBGGR10_CSI2P);
+    const bool isRGGB10Packed =
+        (pixelFormat == libcamera::formats::SRGGB10_CSI2P);
 
-    if (!isBGGR16 && !isBGGR10Packed) {
-        std::cerr << "Unsupported validated pixel format for BGGR UDP path: "
+    if (!isRGGB16 && !isRGGB10Packed) {
+        std::cerr << "Unsupported validated pixel format for RGGB UDP path: "
                   << pixelFormat.toString() << '\n';
         std::exit(EXIT_FAILURE);
     }
@@ -1049,9 +1053,9 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
 
     std::vector<uint16_t> activeFrame(expectedElems);
 
-    if (isBGGR16) {
+    if (isRGGB16) {
         if ((strideBytes % sizeof(uint16_t)) != 0) {
-            std::cerr << "Stride is not 16-bit aligned for SBGGR16: strideBytes="
+            std::cerr << "Stride is not 16-bit aligned for SRGGB16: strideBytes="
                       << strideBytes << '\n';
             unmapPlane();
             std::exit(EXIT_FAILURE);
@@ -1162,7 +1166,7 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
         cv::cvtColor(raw16, bgr16, cv::COLOR_BayerBG2BGR);
         bgr16.convertTo(bgr8, CV_8UC3, 1.0 / 256.0);
 
-        cv::imwrite("/tmp/bayer_bggr.png", bgr8);
+        cv::imwrite("/tmp/bayer_rggb.png", bgr8);
     }
 
     const auto tDebugDone = std::chrono::steady_clock::now();
@@ -1508,21 +1512,21 @@ void Aperture<FacetIndex>::StopPostProcessingThreads()
     postProcessingThreads_.clear();
 }
 
-/// Apply white balance gains to a RAW16 Bayer BGGR mosaic in-place.
+/// Apply white balance gains to a RAW16 Bayer RGGG mosaic in-place.
 /// Layout BGGR:
-///   row 0: B G B G ...
-///   row 1: G R G R ...
-///   row 2: B G B G ...
-///   row 3: G R G R ...
+///   row 0: R G R G ...
+///   row 1: G B G B ...
+///   row 2: R G R G ...
+///   row 3: G B G B ...
 ///
 /// data.size() must be width*height.
 template<unsigned int FacetIndex>
-inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_BGGR(
+inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_RGGB(
     size_t region,
 	std::span<uint16_t> data,
 	const GainMsg& gainMsg
 ){
-	log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_BGGR]");
+	log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_RGGB]");
 	
 	// Validate sizes (elements == pixels)
     const auto& overlapTopology =
@@ -1611,12 +1615,20 @@ inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_BGGR(
         // BGGR:
         // row 0: B G B G ...
         // row 1: G R G R ...
+        //if (evenRow) {
+            //out = evenCol ? mulSatQ10(brightened, bQ)
+                          //: mulSatQ10(brightened, gQ);
+        //} else {
+            //out = evenCol ? mulSatQ10(brightened, gQ)
+                          //: mulSatQ10(brightened, rQ);
+        //}
+        
         if (evenRow) {
-            out = evenCol ? mulSatQ10(brightened, bQ)
+            out = evenCol ? mulSatQ10(brightened, rQ)
                           : mulSatQ10(brightened, gQ);
         } else {
             out = evenCol ? mulSatQ10(brightened, gQ)
-                          : mulSatQ10(brightened, rQ);
+                          : mulSatQ10(brightened, bQ);
         }
         
         data[i] = out;
@@ -1890,7 +1902,7 @@ void Aperture<FacetIndex>::FrameBufferTransformation(
     auto applyWhiteBalanceAndCopy =
         [&](std::size_t regionIndex, auto& maskedOutput)
     {
-        ApplyWhiteBalanceToMosaic_BGGR(
+        ApplyWhiteBalanceToMosaic_RGGB(
             regionIndex,
             std::span<uint16_t>(
                 maskedOutput.data(),
