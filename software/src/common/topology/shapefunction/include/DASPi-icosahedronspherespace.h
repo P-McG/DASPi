@@ -103,6 +103,24 @@ struct SphereSpaceImpl<
     {
         return ((FacetIndex == ModuleFaceIndices) || ...);
     }
+    template<std::size_t ModuleIndex>
+    static consteval std::size_t ModuleFaceIndex()
+    {
+        static_assert(
+            ModuleIndex < moduleFacesN_,
+            "ModuleIndex is outside this SphereSpace module face list"
+        );
+    
+        return moduleFaceIndices_[ModuleIndex];
+    }
+    
+    template<std::size_t ModuleIndex>
+    using ModuleFacetSpace_t =
+        FacetSpace_t<ModuleFaceIndex<ModuleIndex>()>;
+    
+    template<std::size_t ModuleIndex>
+    using ModuleSubSpace_t =
+        typename ModuleFacetSpace_t<ModuleIndex>::SubSpace_t;
 };
 
 template<std::size_t... ModuleFaceIndices>

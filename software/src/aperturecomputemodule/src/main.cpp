@@ -33,12 +33,12 @@
 
 using namespace DASPi;
 
-template<std::size_t ModuleFaceIndex>
-int RunAperture(const std::string& clientIp, int port)
+template<std::size_t FaceIndex>
+int RunApertureForFace(const std::string& clientIp, int port)
 {
-    std::cout << "ModuleFaceIndex: " << ModuleFaceIndex << std::endl;
+    std::cout << "Global FaceIndex: " << FaceIndex << std::endl;
 
-    DASPi::Aperture<static_cast<unsigned int>(ModuleFaceIndex)> aperture(
+    DASPi::Aperture<static_cast<unsigned int>(FaceIndex)> aperture(
         clientIp,
         static_cast<std::size_t>(port)
     );
@@ -50,59 +50,125 @@ int RunAperture(const std::string& clientIp, int port)
     return 0;
 }
 
-template<class IndexType, IndexType... ModuleFaceIndices>
-int RunApertureForModuleFaceIndexImpl(
-    std::size_t requestedModuleFaceIndex,
+template<class SphereSpaceType, std::size_t ModuleIndex>
+int RunApertureForModule(const std::string& clientIp, int port)
+{
+    static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
+    static_assert(ModuleIndex < SphereSpaceType::moduleFacesN_);
+
+    constexpr std::size_t FaceIndex =
+        SphereSpaceType::template ModuleFaceIndex<ModuleIndex>();
+
+    std::cout << "ModuleIndex: " << ModuleIndex
+              << " -> Global FaceIndex: " << FaceIndex
+              << std::endl;
+
+    return RunApertureForFace<FaceIndex>(clientIp, port);
+}
+
+template<class SphereSpaceType, std::size_t... ModuleIndices>
+int RunApertureForModuleIndexImpl(
+    std::size_t requestedModuleIndex,
     const std::string& clientIp,
     int port,
-    std::integer_sequence<IndexType, ModuleFaceIndices...>)
+    std::index_sequence<ModuleIndices...>)
 {
     using RunFunction = int (*)(const std::string&, int);
 
     static constexpr std::array<
         std::pair<std::size_t, RunFunction>,
-        sizeof...(ModuleFaceIndices)
+        sizeof...(ModuleIndices)
     > dispatchTable{{
         {
-            static_cast<std::size_t>(ModuleFaceIndices),
-            &RunAperture<static_cast<std::size_t>(ModuleFaceIndices)>
+            ModuleIndices,
+            &RunApertureForModule<SphereSpaceType, ModuleIndices>
         }...
     }};
 
-    for (const auto& [moduleFaceIndex, run] : dispatchTable) {
-        if (requestedModuleFaceIndex == moduleFaceIndex) {
+    for (const auto& [moduleIndex, run] : dispatchTable) {
+        if (requestedModuleIndex == moduleIndex) {
             return run(clientIp, port);
         }
     }
 
-    std::cerr << "Invalid --moduleFaceIndex="
-              << requestedModuleFaceIndex
-              << ". This binary was built for module face indices: ";
+    std::cerr << "Invalid --moduleIndex="
+              << requestedModuleIndex
+              << ". This binary was built for module indices: ";
 
-    ((std::cerr << static_cast<std::size_t>(ModuleFaceIndices) << " "), ...);
+    ((std::cerr << ModuleIndices << " "), ...);
 
     std::cerr << std::endl;
-
     return 1;
 }
 
-int RunApertureForModuleFaceIndex(
-    std::size_t requestedModuleFaceIndex,
+int RunApertureForModuleIndex(
+    std::size_t requestedModuleIndex,
     const std::string& clientIp,
     int port)
 {
     using SphereSpaceType = typename DASPi::tpgy_t::Space_t;
 
-    using ModuleFaceIndexSequence =
-        typename SphereSpaceType::module_face_index_sequence_t;
-
-    return RunApertureForModuleFaceIndexImpl(
-        requestedModuleFaceIndex,
+    return RunApertureForModuleIndexImpl<SphereSpaceType>(
+        requestedModuleIndex,
         clientIp,
         port,
-        ModuleFaceIndexSequence{}
+        std::make_index_sequence<SphereSpaceType::moduleFacesN_>{}
     );
 }
+
+//template<class IndexType, IndexType... ModuleFaceIndices>
+//int RunApertureForModuleFaceIndexImpl(
+    //std::size_t requestedModuleFaceIndex,
+    //const std::string& clientIp,
+    //int port,
+    //std::integer_sequence<IndexType, ModuleFaceIndices...>)
+//{
+    //using RunFunction = int (*)(const std::string&, int);
+
+    //static constexpr std::array<
+        //std::pair<std::size_t, RunFunction>,
+        //sizeof...(ModuleFaceIndices)
+    //> dispatchTable{{
+        //{
+            //static_cast<std::size_t>(ModuleFaceIndices),
+            //&RunAperture<static_cast<std::size_t>(ModuleFaceIndices)>
+        //}...
+    //}};
+
+    //for (const auto& [moduleFaceIndex, run] : dispatchTable) {
+        //if (requestedModuleFaceIndex == moduleFaceIndex) {
+            //return run(clientIp, port);
+        //}
+    //}
+
+    //std::cerr << "Invalid --moduleFaceIndex="
+              //<< requestedModuleFaceIndex
+              //<< ". This binary was built for module face indices: ";
+
+    //((std::cerr << static_cast<std::size_t>(ModuleFaceIndices) << " "), ...);
+
+    //std::cerr << std::endl;
+
+    //return 1;
+//}
+
+//int RunApertureForModuleFaceIndex(
+    //std::size_t requestedModuleFaceIndex,
+    //const std::string& clientIp,
+    //int port)
+//{
+    //using SphereSpaceType = typename DASPi::tpgy_t::Space_t;
+
+    //using ModuleFaceIndexSequence =
+        //typename SphereSpaceType::module_face_index_sequence_t;
+
+    //return RunApertureForModuleFaceIndexImpl(
+        //requestedModuleFaceIndex,
+        //clientIp,
+        //port,
+        //ModuleFaceIndexSequence{}
+    //);
+//}
 
 int main(int argc, char* argv[])
 {
@@ -116,8 +182,9 @@ int main(int argc, char* argv[])
 
     std::string clientIp;
     int port{5000};
-    std::size_t moduleFaceIndex{};
-    bool hasModuleFaceIndex{false};
+    
+    std::size_t moduleIndex{};
+    bool hasModuleIndex{false};
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -136,16 +203,16 @@ int main(int argc, char* argv[])
                 return 1;
             }
         }
-        else if (arg.rfind("--moduleFaceIndex=", 0) == 0) {
+        else if (arg.rfind("--moduleIndex=", 0) == 0) {
             try {
-                moduleFaceIndex =
+                moduleIndex =
                     static_cast<std::size_t>(
-                        std::stoul(arg.substr(std::string("--moduleFaceIndex=").size()))
+                        std::stoul(arg.substr(std::string("--moduleIndex=").size()))
                     );
 
-                hasModuleFaceIndex = true;
+                hasModuleIndex = true;
             } catch (const std::exception& e) {
-                std::cerr << "Invalid module face index: " << e.what() << std::endl;
+                std::cerr << "Invalid module index: " << e.what() << std::endl;
                 return 1;
             }
         }
@@ -167,15 +234,15 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (!hasModuleFaceIndex) {
-        std::cerr << "No valid --moduleFaceIndex argument provided." << std::endl;
+    if (!hasModuleIndex) {
+        std::cerr << "No valid --moduleIndex argument provided." << std::endl;
         return 1;
     }
 
     std::cout << "Client Ip: " << clientIp << std::endl;
     std::cout << "Port: " << port << std::endl;
-    std::cout << "ModuleFaceIndex: " << moduleFaceIndex << std::endl;
+    std::cout << "ModuleIndex: " << moduleIndex << std::endl;
 
-    return RunApertureForModuleFaceIndex(moduleFaceIndex, clientIp, port);
+    return RunApertureForModuleIndex(moduleIndex, clientIp, port);
 }
 

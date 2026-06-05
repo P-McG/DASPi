@@ -2132,23 +2132,10 @@ std::vector<int> DefaultModuleOwningFacesFromSphereSpace(
         throw std::runtime_error("nApertureComputeModules must be > 0");
     }
 
-    /*
-     * Keep the same current physical assignment behavior:
-     *
-     * module 0 -> face 0
-     * module 1 -> face 1
-     *
-     * This can later become a compile-time table in IcosahedronSphereSpace.
-     */
-    static constexpr std::array<int, 2> kDefaultOwningFaces{{
-        0,
-        1
-    }};
-
-    if (nApertureComputeModules >
-        static_cast<int>(kDefaultOwningFaces.size())) {
+    if (static_cast<std::size_t>(nApertureComputeModules) >
+        SphereSpace::moduleFacesN_) {
         throw std::runtime_error(
-            "Requested more modules than hardcoded sphere face assignments"
+            "Requested more modules than SphereSpace owns"
         );
     }
 
@@ -2156,17 +2143,20 @@ std::vector<int> DefaultModuleOwningFacesFromSphereSpace(
     owningFaces.reserve(static_cast<std::size_t>(nApertureComputeModules));
 
     for (int module = 0; module < nApertureComputeModules; ++module) {
-        const int faceIndex =
-            kDefaultOwningFaces[static_cast<std::size_t>(module)];
+        const std::size_t faceIndex =
+            SphereSpace::moduleFaceIndices_[
+                static_cast<std::size_t>(module)
+            ];
 
-        if (faceIndex < 0 ||
-            faceIndex >= static_cast<int>(SphereSpace::facetsN_)) {
+        if (faceIndex >= SphereSpace::totalFacetsN_) {
             throw std::runtime_error(
-                "Default owning face is outside IcosahedronSphereSpace"
+                "SphereSpace module face is outside total facet range"
             );
         }
 
-        owningFaces.push_back(faceIndex);
+        owningFaces.push_back(
+            static_cast<int>(faceIndex)
+        );
     }
 
     return owningFaces;
