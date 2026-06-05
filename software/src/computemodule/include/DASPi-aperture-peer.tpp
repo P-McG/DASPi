@@ -453,18 +453,18 @@ auto computeRegion0BayerStats =
                 static_cast<double>(v) / 65535.0;
     
             /*
-             * RGGB / SRGGB16:
+             * BGGR / SBGGR16:
              *
-             *   row 0: R G R G ...
-             *   row 1: G B G B ...
+             *   row 0: B G B G ...
+             *   row 1: G R G R ...
              *
              * Red and blue are divided by the gain that was already applied
              * to this received frame. Green is the reference channel.
              */
             if (evenRow) {
                 if (evenCol) {
-                    // R pixel
-                    addRed01(received01 / currentRGain);
+                    // B pixel
+                    addBlue01(received01 / currentBGain);
                 } else {
                     // G pixel
                     addGreen01(received01);
@@ -474,8 +474,8 @@ auto computeRegion0BayerStats =
                     // G pixel
                     addGreen01(received01);
                 } else {
-                    // B pixel
-                    addBlue01(received01 / currentBGain);
+                    // R pixel
+                    addRed01(received01 / currentRGain);
                 }
             }
         }

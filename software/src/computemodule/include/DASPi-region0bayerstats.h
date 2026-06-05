@@ -1,5 +1,10 @@
 // DASPi-region0bayerstats.h
 #pragma once
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <map>
+#include <mutex>
 
 namespace DASPi::detail{
 
