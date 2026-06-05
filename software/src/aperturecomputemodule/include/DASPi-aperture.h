@@ -161,11 +161,8 @@ namespace DASPi{
         void RequestComplete(libcamera::Request *request);
         void RequestReuse(libcamera::Request::ReuseFlag Flags = libcamera::Request::ReuseFlag::ReuseBuffers);
         std::string CameraName(libcamera::Camera *camera);
-        //template<typename input_t>
-            //void constexpr FrameBufferTransformation(input_t&& input, std::array<std::vector<uint16_t>, n_ + 1>& output, const size_t numThreads);
         template<typename input_t>
             void FrameBufferTransformation(input_t&& input, const GainMsg &gainMsg, tpgydp_t& output, const size_t numThreads);
-        //template<typename T0> void constexpr FrameBufferTransformation2(T0&& input, std::vector<uint16_t>& output, const size_t numThreads);
         
         void FrameBufferToUDP(const uint64_t frameNumber,
                       const libcamera::FrameBuffer *buffer,
@@ -182,7 +179,6 @@ namespace DASPi{
         void StopPostProcessingThreads();
         inline void ApplyWhiteBalanceToMosaic_BGGR(size_t region, std::span<uint16_t> data, const GainMsg& gainMsg);
         std::string GetBoardSerial();
-        //uint32_t ParseCameraAddressId(const std::string& libcameraId);
         std::string ExtractCameraBusAddr(const std::string& libcameraId);
         uint32_t ParseBusAndAddressCameraId(const std::string& libcameraId);
 
