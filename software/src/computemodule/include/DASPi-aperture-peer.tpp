@@ -101,7 +101,7 @@ template<unsigned int FacetIndex>
 bool AperturePeer<FacetIndex>::RunFrameLoop()
 {
     constexpr bool kVerboseRunFrameLoopTiming = true;
-    constexpr bool kWriteBuffersToFile = true;
+    constexpr bool kWriteBuffersToFile = false;
 
     constexpr std::size_t regionCount =
         verticesPerFaceN_ + 1;
@@ -353,23 +353,23 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
      *
      * This avoids overlap/edge regions influencing WB.
      */
-    auto computeRegion0BayerStats =
-        [&](std::span<const uint16_t> region0Data)
-            -> detail::Region0BayerStats
+auto computeRegion0BayerStats =
+    [&](std::span<const uint16_t> region0Data)
+        -> detail::Region0BayerStats
     {
         detail::Region0BayerStats stats{};
-
+    
         const auto* indexMap =
             nonOverlapTopology.indexLinearMax_.get();
-
+    
         if (indexMap == nullptr) {
             std::cerr << "[RunFrameLoop] region 0 index map is null\n";
             return stats;
         }
-
+    
         const std::size_t sampleCount =
             std::min(region0Data.size(), indexMap->size());
-
+    
         if (sampleCount != region0Data.size()) {
             std::cerr << "[RunFrameLoop] region 0 WB sample size mismatch:"
                       << " data=" << region0Data.size()
@@ -377,46 +377,123 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
                       << " using=" << sampleCount
                       << '\n';
         }
-
+    
+        /*
+         * The received region 0 may already have the previous WB correction
+         * applied by the Aperture side. Undo that correction before measuring
+         * the next WB estimate, otherwise WB can oscillate frame-to-frame.
+         */
+        auto validAppliedGain = [](float gain) -> double {
+            if (std::isfinite(gain) && gain > 0.001f && gain < 64.0f) {
+                return static_cast<double>(gain);
+            }
+    
+            return 1.0;
+        };
+    
+        const double currentRGain =
+            validAppliedGain(frameHeader.gainMsg_.r_gain_apply);
+    
+        const double currentBGain =
+            validAppliedGain(frameHeader.gainMsg_.b_gain_apply);
+    
+        auto addRed01 = [&](double value01) {
+            if (!std::isfinite(value01)) {
+                return;
+            }
+    
+            stats.rSum01 += std::clamp(value01, 0.0, 1.0);
+            ++stats.rCount;
+        };
+    
+        auto addGreen01 = [&](double value01) {
+            if (!std::isfinite(value01)) {
+                return;
+            }
+    
+            stats.gSum01 += std::clamp(value01, 0.0, 1.0);
+            ++stats.gCount;
+        };
+    
+        auto addBlue01 = [&](double value01) {
+            if (!std::isfinite(value01)) {
+                return;
+            }
+    
+            stats.bSum01 += std::clamp(value01, 0.0, 1.0);
+            ++stats.bCount;
+        };
+    
         for (std::size_t i = 0; i < sampleCount; ++i) {
             const uint16_t v = region0Data[i];
-
-            if (v == 0) {
+    
+            /*
+             * Ignore black and clipped samples.
+             *
+             * Black samples do not help colour ratios.
+             * Clipped samples break the channel-ratio estimate because the
+             * saturated channel no longer represents the real light level.
+             */
+            if (v <= 16 || v >= 65000) {
                 continue;
             }
-
+    
             typename GlobalLinearTopologyType::Index globalIndex{
                 (*indexMap)[i].value()
             };
-
+    
             typename GlobalLinearTopologyType::Point globalPt{
                 GlobalLinearTopologyType::Transform(globalIndex)
             };
-
+    
             const bool evenRow = (globalPt.y_ & 1) == 0;
             const bool evenCol = (globalPt.x_ & 1) == 0;
-
+    
+            const double received01 =
+                static_cast<double>(v) / 65535.0;
+    
             /*
-             * BGGR:
+             * RGGB / SRGGB16:
              *
-             *   row 0: B G B G ...
-             *   row 1: G R G R ...
+             *   row 0: R G R G ...
+             *   row 1: G B G B ...
+             *
+             * Red and blue are divided by the gain that was already applied
+             * to this received frame. Green is the reference channel.
              */
             if (evenRow) {
                 if (evenCol) {
-                    stats.addBlue(v);
+                    // R pixel
+                    addRed01(received01 / currentRGain);
                 } else {
-                    stats.addGreen(v);
+                    // G pixel
+                    addGreen01(received01);
                 }
             } else {
                 if (evenCol) {
-                    stats.addGreen(v);
+                    // G pixel
+                    addGreen01(received01);
                 } else {
-                    stats.addRed(v);
+                    // B pixel
+                    addBlue01(received01 / currentBGain);
                 }
             }
         }
-
+    
+        static std::atomic<uint64_t> statsPrintCount{0};
+    
+        if ((statsPrintCount++ % 120) == 0) {
+            std::cout << "[Region0 WB stats]"
+                      << " peer=" << peerLabel_
+                      << " frame_id=" << frameHeader.gainMsg_.frame_id
+                      << " rCount=" << stats.rCount
+                      << " gCount=" << stats.gCount
+                      << " bCount=" << stats.bCount
+                      << " prev_r_apply=" << currentRGain
+                      << " prev_b_apply=" << currentBGain
+                      << '\n';
+        }
+    
         return stats;
     };
 
@@ -1077,7 +1154,8 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 			return true;   // ignore bad packet, keep thread alive
 		}
 	
-		HandleGainMsg(msg);
+		// Do not send GainReply from the old control path.
+        // Aggregate WB is computed from frame region 0 in RunFrameLoop().
 		return true;
 	}
 	

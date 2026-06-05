@@ -1512,7 +1512,7 @@ void Aperture<FacetIndex>::StopPostProcessingThreads()
     postProcessingThreads_.clear();
 }
 
-/// Apply white balance gains to a RAW16 Bayer RGGG mosaic in-place.
+/// Apply white balance gains to a RAW16 Bayer RGGB mosaic in-place.
 /// Layout BGGR:
 ///   row 0: R G R G ...
 ///   row 1: G B G B ...
