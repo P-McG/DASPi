@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <stdexcept>
 #include <vector>
+#include <numbers>
+#include <string>
 
 #include <Eigen/Dense>
 
@@ -32,6 +34,20 @@ inline Eigen::Matrix3d ToEigenMatrix3d(const Matrix3dData& m)
 
     return out;
 }
+
+inline Eigen::Matrix3d RotationAligningAToB(
+    const Eigen::Vector3d& a,
+    const Eigen::Vector3d& b)
+{
+    const Eigen::Vector3d an = a.normalized();
+    const Eigen::Vector3d bn = b.normalized();
+
+    Eigen::Quaterniond q;
+    q.setFromTwoVectors(an, bn);
+
+    return q.normalized().toRotationMatrix();
+}
+
 
 template<std::size_t N>
 inline MeshTopology<N> MakeMeshTopologyFromSphereSpaceTables()
@@ -215,6 +231,64 @@ inline Eigen::Matrix3d CameraModelToRigAlignment()
     return Eigen::Matrix3d::Identity();
 }
 
+template<std::size_t N>
+inline std::array<std::size_t, 2> FindSharedEdgeVertices(
+    const RigFace<N>& a,
+    const RigFace<N>& b)
+{
+    static_assert(N >= 2, "Faces must have at least 2 vertices");
+
+    std::array<std::size_t, 2> shared{};
+    std::size_t count = 0;
+
+    for (std::size_t va : a.indices) {
+        for (std::size_t vb : b.indices) {
+            if (va == vb) {
+                if (count >= 2) {
+                    throw std::runtime_error("Faces share more than one edge");
+                }
+
+                shared[count++] = va;
+            }
+        }
+    }
+
+    if (count != 2) {
+        throw std::runtime_error("Faces do not share exactly one edge");
+    }
+
+    return shared;
+}
+
+template<std::size_t N>
+inline Eigen::Vector3d MakeFaceSeamTangent(
+    const RigFace<N>& face,
+    const std::vector<Eigen::Vector3d>& vertices,
+    std::size_t vi0,
+    std::size_t vi1)
+{
+    if (vi0 >= vertices.size() || vi1 >= vertices.size()) {
+        throw std::runtime_error("Shared edge vertex index out of range");
+    }
+
+    Eigen::Vector3d edgeWorld =
+        (vertices[vi1] - vertices[vi0]).normalized();
+
+    const Eigen::Vector3d forward =
+        face.lookDir.normalized();
+
+    edgeWorld -= forward * forward.dot(edgeWorld);
+
+    const double norm = edgeWorld.norm();
+
+    if (norm < 1.0e-12) {
+        throw std::runtime_error("Degenerate seam tangent");
+    }
+
+    return edgeWorld / norm;
+}
+
+
 template<
     class SphereSpaceType,
     std::size_t ModuleIndex,
@@ -222,30 +296,51 @@ template<
 >
 inline Eigen::Matrix3d MakeModuleCameraRcw()
 {
-    static_assert(IcosahedronSphereSpace_t<SphereSpaceType>);
+    static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
+
     static_assert(
         SphereSpaceType::template ModuleFaceIndex<ModuleIndex>() ==
-        FacetIndex
+        FacetIndex,
+        "ModuleIndex does not map to FacetIndex"
     );
 
     constexpr std::size_t N =
         SphereSpaceType::verticesPerFaceN_;
 
+    constexpr std::size_t kModuleCount =
+        SphereSpaceType::moduleFacesN_;
+
+    static_assert(ModuleIndex < kModuleCount);
+
     const MeshTopology<N> topo =
-        MakeMeshTopologyFromSphereSpaceTables<N>();
+        MakeMeshTopologyFromSphereSpace<SphereSpaceType, N>();
 
     const RigData<N> rig =
-        BuildRigDataFromMeshTopology(topo);
+        BuildRigDataFromTopology(topo);
 
-    if (FacetIndex >= rig.faces.size()) {
-        throw std::runtime_error("FacetIndex out of rig face range");
-    }
+    const auto& faces =
+        rig.faces;
+
+    const auto& vertices =
+        rig.vertices;
 
     constexpr std::size_t anchorFaceIndex =
         SphereSpaceType::moduleFaceIndices_[0];
 
+    if (anchorFaceIndex >= faces.size()) {
+        throw std::runtime_error(
+            "Anchor face index outside rig face range"
+        );
+    }
+
+    if (FacetIndex >= faces.size()) {
+        throw std::runtime_error(
+            "FacetIndex outside rig face range"
+        );
+    }
+
     const RigFace<N>& anchorFace =
-        rig.faces.at(anchorFaceIndex);
+        faces[anchorFaceIndex];
 
     const Eigen::Matrix3d Rrig =
         RotationAligningAToB(
@@ -253,17 +348,83 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
             Eigen::Vector3d(0.0, 0.0, 1.0)
         );
 
-    const RigFace<N>& face =
-        rig.faces.at(FacetIndex);
-
-    const Eigen::Matrix3d Rface =
-        MakeCameraRcwFromFace<N>(
-            face,
-            rig.vertices
-        );
-
     const Eigen::Matrix3d Ralign =
         CameraModelToRigAlignment();
+
+    Eigen::Matrix3d Rface =
+        Eigen::Matrix3d::Identity();
+
+    if constexpr (kModuleCount == 1) {
+        const RigFace<N>& face =
+            faces[FacetIndex];
+
+        Rface =
+            MakeCameraRcwFromFace<N>(
+                face,
+                vertices
+            );
+    } else if constexpr (kModuleCount == 2) {
+        constexpr std::size_t faceIndex0 =
+            SphereSpaceType::moduleFaceIndices_[0];
+
+        constexpr std::size_t faceIndex1 =
+            SphereSpaceType::moduleFaceIndices_[1];
+
+        const RigFace<N>& face0 =
+            faces[faceIndex0];
+
+        const RigFace<N>& face1 =
+            faces[faceIndex1];
+
+        const auto sharedEdge =
+            FindSharedEdgeVertices<N>(
+                face0,
+                face1
+            );
+
+        Eigen::Vector3d seam0 =
+            MakeFaceSeamTangent<N>(
+                face0,
+                vertices,
+                sharedEdge[0],
+                sharedEdge[1]
+            );
+
+        Eigen::Vector3d seam1 =
+            MakeFaceSeamTangent<N>(
+                face1,
+                vertices,
+                sharedEdge[0],
+                sharedEdge[1]
+            );
+
+        if (seam0.dot(seam1) < 0.0) {
+            seam1 = -seam1;
+        }
+
+        if constexpr (ModuleIndex == 0) {
+            Rface =
+                MakeCameraRcwFromForwardAndUpHint(
+                    face0.lookDir,
+                    seam0
+                );
+        } else {
+            Rface =
+                MakeCameraRcwFromForwardAndUpHint(
+                    face1.lookDir,
+                    seam1
+                );
+        }
+    } else {
+        const RigFace<N>& face =
+            faces[FacetIndex];
+
+        Rface =
+            MakeCameraRcwFromFace<N>(
+                face,
+                vertices
+            );
+    }
 
     const Eigen::Matrix3d Rimg =
         CameraRollDeg(
