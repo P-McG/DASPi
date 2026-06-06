@@ -70,8 +70,22 @@ class AperturePeer : public AperturePeerBase
     mutable RxStats rxStats_;
     
     using SphereMapType = std::array<std::vector<std::uint32_t>, verticesPerFaceN_ + 1>;
+    
+    struct SphereMapSnapshot {
+        std::uint32_t outputWidth{static_cast<std::uint32_t>(sensorWidthValue_)};
+        std::uint32_t outputHeight{static_cast<std::uint32_t>(sensorHeightValue_)};
+        std::uint32_t outputSize{
+            static_cast<std::uint32_t>(
+                static_cast<std::size_t>(sensorWidthValue_) *
+                static_cast<std::size_t>(sensorHeightValue_)
+            )
+        };
+    
+        SphereMapType regions{};
+    };
+    
     mutable std::mutex sphereMapMutex_;
-    std::shared_ptr<const SphereMapType> sphereMap_;
+    std::shared_ptr<const SphereMapSnapshot> sphereMap_;
     
 public:
     AperturePeer(in_addr_t clntAddr,

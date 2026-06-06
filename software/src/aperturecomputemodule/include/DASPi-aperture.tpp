@@ -1946,8 +1946,39 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferTransformation(
 template<unsigned int FacetIndex, std::size_t ModuleIndex>
 void Aperture<FacetIndex, ModuleIndex>::SendSphereMap()
 {
-    std::array<uint32_t, NUM_REGIONS> regionWordSizes{};
-    std::vector<uint16_t> payload;
+    /*
+     * SphereMap payload layout, stored as uint16_t words:
+     *
+     *   uint32 magic
+     *   uint32 version
+     *   uint32 outputWidth
+     *   uint32 outputHeight
+     *   uint32 outputSize
+     *   uint32 region0 indices...
+     *   uint32 region1 indices...
+     *   ...
+     *
+     * regionWordSizes[] stores uint16_t word counts, not byte counts.
+     * The header is counted as part of region 0 so the existing
+     * FrameHeader::regionSizes_ layout can be reused.
+     */
+    constexpr std::uint32_t kSphereMapWireMagic = 0x31504D53u; // "SMP1"
+    constexpr std::uint32_t kSphereMapWireVersion = 1;
+    constexpr std::size_t kSphereMapWireHeaderWords = 10; // 5 uint32_t values
+
+    static_assert(NUM_REGIONS > 0);
+
+    std::array<std::uint32_t, NUM_REGIONS> regionWordSizes{};
+    std::vector<std::uint16_t> payload;
+
+    UDPSrv::AppendU32AsU16Words(payload, kSphereMapWireMagic);
+    UDPSrv::AppendU32AsU16Words(payload, kSphereMapWireVersion);
+    UDPSrv::AppendU32AsU16Words(payload, sphericalMap_.OutputWidth());
+    UDPSrv::AppendU32AsU16Words(payload, sphericalMap_.OutputHeight());
+    UDPSrv::AppendU32AsU16Words(payload, sphericalMap_.OutputSize());
+
+    regionWordSizes[0] =
+        static_cast<std::uint32_t>(kSphereMapWireHeaderWords);
 
     for (std::size_t region = 0; region < NUM_REGIONS; ++region) {
         const std::size_t before = payload.size();
@@ -1957,8 +1988,8 @@ void Aperture<FacetIndex, ModuleIndex>::SendSphereMap()
             UDPSrv::AppendU32AsU16Words(payload, globalIndex);
         }
 
-        regionWordSizes[region] =
-            static_cast<uint32_t>(payload.size() - before);
+        regionWordSizes[region] +=
+            static_cast<std::uint32_t>(payload.size() - before);
     }
 
     GainMsg msg{};
@@ -1978,7 +2009,13 @@ void Aperture<FacetIndex, ModuleIndex>::SendSphereMap()
 
     std::cout << "[SendSphereMap]"
               << " moduleIndex=" << moduleIndex_
-              << " facetIndex=" << facetIndex_;
+              << " facetIndex=" << facetIndex_
+              << " output="
+              << sphericalMap_.OutputWidth()
+              << "x"
+              << sphericalMap_.OutputHeight()
+              << " size="
+              << sphericalMap_.OutputSize();
 
     for (std::size_t r = 0; r < NUM_REGIONS; ++r) {
         std::cout << " r" << r << "_words=" << regionWordSizes[r];
