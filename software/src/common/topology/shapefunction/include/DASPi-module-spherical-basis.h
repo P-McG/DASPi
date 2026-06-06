@@ -49,8 +49,8 @@ inline Eigen::Matrix3d RotationAligningAToB(
 }
 
 
-template<std::size_t N>
-inline MeshTopology<N> MakeMeshTopologyFromSphereSpaceTables()
+template<class SphereSpace, std::size_t N>
+inline MeshTopology<N> MakeMeshTopologyFromSphereSpace()
 {
     using Tables = DASPi::detail::IcosahedronTables;
 
@@ -91,7 +91,7 @@ inline MeshTopology<N> MakeMeshTopologyFromSphereSpaceTables()
 }
 
 template<std::size_t N>
-inline RigData<N> BuildRigDataFromMeshTopology(const MeshTopology<N>& topo)
+inline RigData<N> BuildRigDataFromTopology(const MeshTopology<N>& topo)
 {
     RigData<N> rig;
 
