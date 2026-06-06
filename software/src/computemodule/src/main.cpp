@@ -1504,38 +1504,38 @@ cv::Mat raw16ProjectedToGrayBgr8(
     return bgr;
 }
 
-cv::Mat raw16ProjectedToGrayBgr8(
-    const std::vector<uint16_t>& raw,
-    int width,
-    int height)
-{
-    const std::size_t expected =
-        static_cast<std::size_t>(width) *
-        static_cast<std::size_t>(height);
+//cv::Mat raw16ProjectedToGrayBgr8(
+    //const std::vector<uint16_t>& raw,
+    //int width,
+    //int height)
+//{
+    //const std::size_t expected =
+        //static_cast<std::size_t>(width) *
+        //static_cast<std::size_t>(height);
 
-    if (raw.size() != expected) {
-        std::cerr << "[raw16ProjectedToGrayBgr8] size mismatch:"
-                  << " raw.size()=" << raw.size()
-                  << " expected=" << expected
-                  << '\n';
-        return {};
-    }
+    //if (raw.size() != expected) {
+        //std::cerr << "[raw16ProjectedToGrayBgr8] size mismatch:"
+                  //<< " raw.size()=" << raw.size()
+                  //<< " expected=" << expected
+                  //<< '\n';
+        //return {};
+    //}
 
-    cv::Mat gray16(
-        height,
-        width,
-        CV_16UC1,
-        const_cast<uint16_t*>(raw.data())
-    );
+    //cv::Mat gray16(
+        //height,
+        //width,
+        //CV_16UC1,
+        //const_cast<uint16_t*>(raw.data())
+    //);
 
-    cv::Mat gray8;
-    gray16.convertTo(gray8, CV_8UC1, 1.0 / 256.0);
+    //cv::Mat gray8;
+    //gray16.convertTo(gray8, CV_8UC1, 1.0 / 256.0);
 
-    cv::Mat bgr;
-    cv::cvtColor(gray8, bgr, cv::COLOR_GRAY2BGR);
+    //cv::Mat bgr;
+    //cv::cvtColor(gray8, bgr, cv::COLOR_GRAY2BGR);
 
-    return bgr;
-}
+    //return bgr;
+//}
 
 
 void SaveBayerBGGRDebugOnce(const std::vector<uint16_t>& raw,
@@ -2842,6 +2842,7 @@ int CountNonZeroSafe(const cv::Mat& mask)
     return mask.empty() ? 0 : cv::countNonZero(mask);
 }
 
+[[maybe_unused]]
 void updateCameraImages(std::vector<CameraView>& cameras,
                         const std::vector<CameraConfig>& configs,
                         std::vector<LiveCameraState>& liveCameras,
@@ -3393,13 +3394,13 @@ void DrawPanoramaOverlay(cv::Mat& img,
 }
 
 cv::Mat CompositePreprojectedFrames(
-    const std::vector<LiveCameraState>& liveCameras,
+    std::vector<LiveCameraState>& liveCameras,
     cv::Mat* validMask)
 {
     cv::Mat pano;
     cv::Mat mask;
 
-    for (const auto& live : liveCameras) {
+    for (auto& live : liveCameras) {
         cv::Mat frame;
 
         if (!tryGetLatestFrame(live.frame, frame)) {
@@ -3838,34 +3839,34 @@ cv::Mat BuildFaceMaskForCamera(const ICameraModel& model,
     return mask;
 }
 
-cv::Mat raw16ProjectedToGrayBgr8(
-    const std::vector<uint16_t>& raw,
-    int width,
-    int height)
-{
-    if (raw.size() != static_cast<std::size_t>(width * height)) {
-        std::cerr << "[raw16ProjectedToGrayBgr8] size mismatch:"
-                  << " raw.size()=" << raw.size()
-                  << " expected=" << (width * height)
-                  << '\n';
-        return {};
-    }
+//cv::Mat raw16ProjectedToGrayBgr8(
+    //const std::vector<uint16_t>& raw,
+    //int width,
+    //int height)
+//{
+    //if (raw.size() != static_cast<std::size_t>(width * height)) {
+        //std::cerr << "[raw16ProjectedToGrayBgr8] size mismatch:"
+                  //<< " raw.size()=" << raw.size()
+                  //<< " expected=" << (width * height)
+                  //<< '\n';
+        //return {};
+    //}
 
-    cv::Mat gray16(
-        height,
-        width,
-        CV_16UC1,
-        const_cast<uint16_t*>(raw.data())
-    );
+    //cv::Mat gray16(
+        //height,
+        //width,
+        //CV_16UC1,
+        //const_cast<uint16_t*>(raw.data())
+    //);
 
-    cv::Mat gray8;
-    gray16.convertTo(gray8, CV_8UC1, 1.0 / 256.0);
+    //cv::Mat gray8;
+    //gray16.convertTo(gray8, CV_8UC1, 1.0 / 256.0);
 
-    cv::Mat bgr;
-    cv::cvtColor(gray8, bgr, cv::COLOR_GRAY2BGR);
+    //cv::Mat bgr;
+    //cv::cvtColor(gray8, bgr, cv::COLOR_GRAY2BGR);
 
-    return bgr;
-}
+    //return bgr;
+//}
 
 
 } // namespace
