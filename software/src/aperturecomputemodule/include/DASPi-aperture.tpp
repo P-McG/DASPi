@@ -35,8 +35,8 @@ inline constexpr bool kApertureTxLogRequest = false;
 inline constexpr bool kApertureTxLogUdpFrame = false;
 
 // Constructor
-template<unsigned int FacetIndex>
-Aperture<FacetIndex>::Aperture(
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+Aperture<FacetIndex, ModuleIndex>::Aperture(
     const std::string clientIp,
     const size_t port
 )
@@ -60,6 +60,8 @@ Aperture<FacetIndex>::Aperture(
     CreateCameraManager();
     AquireCamera();
     Stream();
+    
+    SendSphereMap();
 
     fpsTimer_ = std::chrono::high_resolution_clock::now();
 }
@@ -71,8 +73,8 @@ Aperture<FacetIndex>::Aperture(
  * Stop the Camera, release resources and stop the CameraManager.
  * libcamera has now released all resources it owned.
 */
-template<unsigned int FacetIndex>
-Aperture<FacetIndex>::~Aperture(){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+Aperture<FacetIndex, ModuleIndex>::~Aperture(){
     log_verbose("[Aperture::~Aperture]");
 	
     running_ = false;
@@ -86,9 +88,9 @@ Aperture<FacetIndex>::~Aperture(){
 
 }
 
-template<unsigned int FacetIndex>
-auto Aperture<FacetIndex>::OverlapTopologyRef()
-    -> typename Aperture<FacetIndex>::OverlapTopologyType&
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+auto Aperture<FacetIndex, ModuleIndex>::OverlapTopologyRef()
+    -> typename Aperture<FacetIndex, ModuleIndex>::OverlapTopologyType&
 {
     auto& facetTopology =
         static_cast<FacetTopologyType&>(tpgy_);
@@ -96,9 +98,9 @@ auto Aperture<FacetIndex>::OverlapTopologyRef()
     return static_cast<OverlapTopologyType&>(facetTopology);
 }
 
-template<unsigned int FacetIndex>
-auto Aperture<FacetIndex>::OverlapTopologyRef() const
-    -> const typename Aperture<FacetIndex>::OverlapTopologyType&
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+auto Aperture<FacetIndex, ModuleIndex>::OverlapTopologyRef() const
+    -> const typename Aperture<FacetIndex, ModuleIndex>::OverlapTopologyType&
 {
     const auto& facetTopology =
         static_cast<const FacetTopologyType&>(tpgy_);
@@ -106,32 +108,32 @@ auto Aperture<FacetIndex>::OverlapTopologyRef() const
     return static_cast<const OverlapTopologyType&>(facetTopology);
 }
 
-template<unsigned int FacetIndex>
-auto Aperture<FacetIndex>::NonOverlapTopologyRef()
-    -> typename Aperture<FacetIndex>::NonOverlapFacetTopologyType&
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+auto Aperture<FacetIndex, ModuleIndex>::NonOverlapTopologyRef()
+    -> typename Aperture<FacetIndex, ModuleIndex>::NonOverlapFacetTopologyType&
 {
     return static_cast<NonOverlapFacetTopologyType&>(
         OverlapTopologyRef()
     );
 }
 
-template<unsigned int FacetIndex>
-auto Aperture<FacetIndex>::NonOverlapTopologyRef() const
-    -> const typename Aperture<FacetIndex>::NonOverlapFacetTopologyType&
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+auto Aperture<FacetIndex, ModuleIndex>::NonOverlapTopologyRef() const
+    -> const typename Aperture<FacetIndex, ModuleIndex>::NonOverlapFacetTopologyType&
 {
     return static_cast<const NonOverlapFacetTopologyType&>(
         OverlapTopologyRef()
     );
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::PrintThreadInfo() {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::PrintThreadInfo() {
     std::cout << " (std::thread ID: " << std::this_thread::get_id() << ")"
               << " is running on CPU " << sched_getcpu() << std::endl;
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::CleanupCamera() {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::CleanupCamera() {
     log_verbose("[Aperture::CleanupCamera]");
     if (camera_->stop() != 0) {
         std::cerr << "Failed to stop the camera." << std::endl;
@@ -168,8 +170,8 @@ void Aperture<FacetIndex>::CleanupCamera() {
  * There can only be a single CameraManager constructed within any
  * process space.
  */
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::CreateCameraManager(){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::CreateCameraManager(){
 
 	log_verbose("[Aperture::CreateCameraManager]");
 	 
@@ -206,8 +208,8 @@ void Aperture<FacetIndex>::CreateCameraManager(){
  * the camera associated with that ID (which is of course the same as
  * cm->cameras()[0]).
  */
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::AquireCamera(unsigned int index){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::AquireCamera(unsigned int index){
 
 	log_verbose("[Aperture::AquireCamera]");
 	if (cm_->cameras().empty()) {
@@ -245,8 +247,8 @@ void Aperture<FacetIndex>::AquireCamera(unsigned int index){
  * implementation that has the responsibility of correctly
  * report them.
  */
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::Stream(){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::Stream(){
 	log_verbose("[Aperture::Stream]");
          CameraConfiguration();
          StreamConfiguration();
@@ -268,8 +270,8 @@ void Aperture<FacetIndex>::Stream(){
  * A Camera produces a CameraConfigration based on a set of intended
  * roles for each Stream the application requires.
  */
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::CameraConfiguration() {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::CameraConfiguration() {
     log_verbose("[Aperture::CameraConfiguration]");
 
     config_ = camera_->generateConfiguration({ libcamera::StreamRole::Raw });
@@ -320,8 +322,8 @@ void Aperture<FacetIndex>::CameraConfiguration() {
     std::cout << "Unique ID    : " << cameraUniqueId_ << "\n";
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::StreamConfiguration(unsigned int index) {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::StreamConfiguration(unsigned int index) {
     log_verbose("[Aperture::StreamConfiguration] enter");
     std::cout << "[StreamConfiguration] index=" << index << std::endl;
 
@@ -349,8 +351,8 @@ void Aperture<FacetIndex>::StreamConfiguration(unsigned int index) {
  * Each StreamConfiguration has default size and format, assigned
  * by the Camera depending on the Role the application has requested.
  */
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::StreamConfigurationValidation(unsigned int index){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::StreamConfigurationValidation(unsigned int index){
     log_verbose("[Aperture::StreamConfigurationValidation]");
 	/*
 	 * Each StreamConfiguration parameter which is part of a
@@ -398,8 +400,8 @@ void Aperture<FacetIndex>::StreamConfigurationValidation(unsigned int index){
         << std::endl;
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::StreamConfigurationSet(){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::StreamConfigurationSet(){
 	/*
 	 * Once we have a validated configuration, we can apply it to the
 	 * Camera.
@@ -429,8 +431,8 @@ void Aperture<FacetIndex>::StreamConfigurationSet(){
  * instance and referencing a configured Camera to determine the
  * appropriate buffer size and types to create.
  */
- template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::BufferAllocation(){
+ template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::BufferAllocation(){
 
 	log_verbose("[Aperture::BufferAllocation]");
     allocator_ = std::make_unique<libcamera::FrameBufferAllocator>(camera_);
@@ -462,8 +464,8 @@ void Aperture<FacetIndex>::BufferAllocation(){
  * that applications can access and for each of them a list of metadata
  * properties that reports the capture parameters applied to the image.
  */
-template<unsigned int FacetIndex>
-std::unique_ptr<libcamera::Request> Aperture<FacetIndex>::CreateRequestWithControls(){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+std::unique_ptr<libcamera::Request> Aperture<FacetIndex, ModuleIndex>::CreateRequestWithControls(){
 	log_verbose("[Aperture::CreateRequestWithControls]");
     auto request = camera_->createRequest();
     if (!request) return nullptr;
@@ -482,8 +484,8 @@ std::unique_ptr<libcamera::Request> Aperture<FacetIndex>::CreateRequestWithContr
     return request;
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::FrameCapture(unsigned int index)
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::FrameCapture(unsigned int index)
 {
     log_verbose("[FrameCapture]");
 
@@ -571,8 +573,8 @@ void Aperture<FacetIndex>::FrameCapture(unsigned int index)
 }
 
 //Not used
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::QueueCameraRequests(bool isRequests){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::QueueCameraRequests(bool isRequests){
 	log_verbose("[Aperture::QueueCameraRequests]");
     if(isRequests){
         for (std::unique_ptr<libcamera::Request> &request : requests_){
@@ -594,8 +596,8 @@ void Aperture<FacetIndex>::QueueCameraRequests(bool isRequests){
  *
  * The Slot receives the Request as a parameter.
  */
- template<unsigned int FacetIndex>
- void Aperture<FacetIndex>::RequestComplete(libcamera::Request *request){
+ template<unsigned int FacetIndex, std::size_t ModuleIndex>
+ void Aperture<FacetIndex, ModuleIndex>::RequestComplete(libcamera::Request *request){
     if constexpr (kApertureTxLogRequest) {
         std::cout << "[RequestComplete] req=" << request
                   << " status=" << static_cast<int>(request->status())
@@ -636,8 +638,8 @@ void Aperture<FacetIndex>::QueueCameraRequests(bool isRequests){
     //loop_.callLater(std::bind([this, request]() { this->ProcessRequest(request); }));
 //}
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::StartRequestProcessingThreads(int numThreads) {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::StartRequestProcessingThreads(int numThreads) {
 	log_verbose("[Aperture::StartRequestProcessingThreads]");
     stopWorkers_ = false;
     for (int i = 0; i < numThreads; ++i) {
@@ -670,8 +672,8 @@ void Aperture<FacetIndex>::StartRequestProcessingThreads(int numThreads) {
     }
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::StopRequestProcessingThreads() {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::StopRequestProcessingThreads() {
 	log_verbose("[Aperture::StopRequestProcessingThreads]");
     {
         std::lock_guard<std::mutex> lock(queueMutex_);
@@ -688,8 +690,8 @@ void Aperture<FacetIndex>::StopRequestProcessingThreads() {
 }
 
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::RequestProcessingThread() {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::RequestProcessingThread() {
 	log_verbose("[Aperture::RequestProcessingThread]");
     while (!stopWorkers_) {
         libcamera::Request* req = nullptr;
@@ -706,8 +708,8 @@ void Aperture<FacetIndex>::RequestProcessingThread() {
     }
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::ProcessRequestImpl(libcamera::Request *request)
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::ProcessRequestImpl(libcamera::Request *request)
 {
     //log_verbose("[Aperture::ProcessRequestImpl]");
 
@@ -797,8 +799,8 @@ void Aperture<FacetIndex>::ProcessRequestImpl(libcamera::Request *request)
     }
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::PostProcessingThread()
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::PostProcessingThread()
 {
 	log_verbose("[Aperture::PostProcessingThread]");
     while (true) {
@@ -828,8 +830,8 @@ void Aperture<FacetIndex>::PostProcessingThread()
     }
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::ProcessRequest(libcamera::Request* request) {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::ProcessRequest(libcamera::Request* request) {
     if constexpr (kApertureTxLogRequest) {
         std::cout << "[ProcessRequest] req=" << request
                   << " seq=" << request->sequence() << '\n';
@@ -859,8 +861,8 @@ void Aperture<FacetIndex>::ProcessRequest(libcamera::Request* request) {
  *
  * The unique camera ID is appended for informative purposes.
  */
-template<unsigned int FacetIndex>
-std::string Aperture<FacetIndex>::CameraName(libcamera::Camera *camera)
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+std::string Aperture<FacetIndex, ModuleIndex>::CameraName(libcamera::Camera *camera)
 {
 	log_verbose("[Aperture::CameraName]");
 
@@ -910,11 +912,11 @@ std::string Aperture<FacetIndex>::CameraName(libcamera::Camera *camera)
  * applications shall connect a Slot to the Camera 'requestCompleted'
  * Signal before the camera is started.
  */
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::SignalAndSlots(){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::SignalAndSlots(){
 	log_verbose("[Aperture::SignalAndSlots]");
 	camera_->requestCompleted.connect(
-	    this, &DASPi::Aperture<FacetIndex>::RequestComplete
+	    this, &DASPi::Aperture<FacetIndex, ModuleIndex>::RequestComplete
 	);
 }
 
@@ -929,8 +931,8 @@ void Aperture<FacetIndex>::SignalAndSlots(){
  * For each delivered frame, the Slot connected to the
  * Camera::requestCompleted Signal is called.
  */
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::StartCapture() {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::StartCapture() {
     log_verbose("[Aperture::StartCapture]");
     if (camera_->start() != 0) {
         std::cerr << "Camera failed to start" << std::endl;
@@ -958,8 +960,8 @@ void Aperture<FacetIndex>::StartCapture() {
  * In order to dispatch events received from the video devices, such
  * as buffer completions, an event loop has to be run.
  */
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::RunEventLoop(int timeout){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::RunEventLoop(int timeout){
 	//std::cout << "[EventLoop] ENTER" << std::endl;
 	//log_verbose("[Aperture::RunEventLoop]");
 
@@ -968,8 +970,8 @@ void Aperture<FacetIndex>::RunEventLoop(int timeout){
 	
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(const uint64_t frameNumber,
                                             const libcamera::FrameBuffer* buffer,
                                             const GainMsg& gainMsg)
 {
@@ -1318,8 +1320,8 @@ void Aperture<FacetIndex>::FrameBufferToUDP(const uint64_t frameNumber,
     }
 }
 
-template<unsigned int FacetIndex>
-void* Aperture<FacetIndex>::StartCaptureThread(void* arg){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void* Aperture<FacetIndex, ModuleIndex>::StartCaptureThread(void* arg){
 	log_verbose("[Aperture::StartCaptureThread]");
    StartCapture();
    {
@@ -1332,8 +1334,8 @@ void* Aperture<FacetIndex>::StartCaptureThread(void* arg){
    return nullptr;
 }
 
-template<unsigned int FacetIndex>
-bool Aperture<FacetIndex>::ContinuousCapture(unsigned int index){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+bool Aperture<FacetIndex, ModuleIndex>::ContinuousCapture(unsigned int index){
 	std::cout << ">>> ENTER ContinuousCapture <<<" << std::endl;
     log_verbose("[Aperture::ContinuousCapture]");
 
@@ -1389,8 +1391,8 @@ bool Aperture<FacetIndex>::ContinuousCapture(unsigned int index){
     return true;
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::CaptureLoop(unsigned int index) {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::CaptureLoop(unsigned int index) {
     log_verbose("[Aperture::CaptureLoop]");
     FrameCapture(index);
 
@@ -1408,22 +1410,22 @@ void Aperture<FacetIndex>::CaptureLoop(unsigned int index) {
     }
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::FreeStream(unsigned int indexCount){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::FreeStream(unsigned int indexCount){
 	log_verbose("[Aperture::FreeStream]");
     for(unsigned int i = 0; i<indexCount; i++)
          allocator_->free(config_->at(i).stream());
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::RequestReuse(libcamera::Request::ReuseFlag Flags){
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::RequestReuse(libcamera::Request::ReuseFlag Flags){
 	log_verbose("[Aperture::RequestReuse]");
     for( auto& request : requests_)
         request->reuse(Flags);
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::StartUDPSender() {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::StartUDPSender() {
 	log_verbose("[Aperture::StartUDPSender]");
     udpSending_ = true;
 
@@ -1448,8 +1450,8 @@ void Aperture<FacetIndex>::StartUDPSender() {
     });
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::StopUDPSender() {
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::StopUDPSender() {
 	log_verbose("[Aperture::StopUDPSender]");
 	{
 		std::lock_guard<std::mutex> lock(udpQueueMutex_);
@@ -1460,8 +1462,8 @@ void Aperture<FacetIndex>::StopUDPSender() {
 		udpSenderThread_.join();
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::StartPostProcessingThreads(int numThreads)
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::StartPostProcessingThreads(int numThreads)
 {
     stopPostProcessing_ = false;
 
@@ -1492,8 +1494,8 @@ void Aperture<FacetIndex>::StartPostProcessingThreads(int numThreads)
     }
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::StopPostProcessingThreads()
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::StopPostProcessingThreads()
 {
     stopPostProcessing_ = true;
     postProcessingQueueCV_.notify_all();
@@ -1515,8 +1517,8 @@ void Aperture<FacetIndex>::StopPostProcessingThreads()
 ///   row 3: G R G R ...
 ///
 /// data.size() must be width*height.
-template<unsigned int FacetIndex>
-inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_BGGR(
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+inline void Aperture<FacetIndex, ModuleIndex>::ApplyWhiteBalanceToMosaic_BGGR(
     size_t region,
 	std::span<uint16_t> data,
 	const GainMsg& gainMsg
@@ -1620,8 +1622,8 @@ inline void Aperture<FacetIndex>::ApplyWhiteBalanceToMosaic_BGGR(
 	//std::cout << "Check-Point 3" << std::endl;
 }
 
-template<unsigned int FacetIndex>
-std::string Aperture<FacetIndex>::GetBoardSerial()
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+std::string Aperture<FacetIndex, ModuleIndex>::GetBoardSerial()
 {
     std::ifstream cpuinfo("/proc/cpuinfo");
     std::string line;
@@ -1643,8 +1645,8 @@ std::string Aperture<FacetIndex>::GetBoardSerial()
     return "UNKNOWN";
 }
 
-template<unsigned int FacetIndex>
-std::string Aperture<FacetIndex>::ExtractCameraBusAddr(const std::string& libcameraId)
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+std::string Aperture<FacetIndex, ModuleIndex>::ExtractCameraBusAddr(const std::string& libcameraId)
 {
     // Format 1:
     //   "imx296 10-001a"
@@ -1690,8 +1692,8 @@ std::string Aperture<FacetIndex>::ExtractCameraBusAddr(const std::string& libcam
     }
 }
 
-template<unsigned int FacetIndex>
-uint32_t Aperture<FacetIndex>::ParseBusAndAddressCameraId(const std::string& libcameraId)
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+uint32_t Aperture<FacetIndex, ModuleIndex>::ParseBusAndAddressCameraId(const std::string& libcameraId)
 {
     const std::string busAddr = ExtractCameraBusAddr(libcameraId);
 
@@ -1709,8 +1711,8 @@ uint32_t Aperture<FacetIndex>::ParseBusAndAddressCameraId(const std::string& lib
     return (bus << 16) | addr;
 }
 
-template<unsigned int FacetIndex>
-bool Aperture<FacetIndex>::ReceiveGainReply()
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+bool Aperture<FacetIndex, ModuleIndex>::ReceiveGainReply()
 {
     GainReply reply{};
 
@@ -1764,8 +1766,8 @@ bool Aperture<FacetIndex>::ReceiveGainReply()
     return true;
 }
 
-template<unsigned int FacetIndex>
-void Aperture<FacetIndex>::HandleGainReply(const GainReply& reply)
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::HandleGainReply(const GainReply& reply)
 {
     if (reply.status != 0) {
         return;
@@ -1788,8 +1790,8 @@ void Aperture<FacetIndex>::HandleGainReply(const GainReply& reply)
               << '\n';
 }
 
-template<unsigned int FacetIndex>
-bool Aperture<FacetIndex>::RunControlLoop()
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+bool Aperture<FacetIndex, ModuleIndex>::RunControlLoop()
 {
     std::cout << "[Aperture RunControlLoop] started"
               << " controlPort=" << controlClnt_.clntPort_
@@ -1806,9 +1808,9 @@ bool Aperture<FacetIndex>::RunControlLoop()
     return true;
 }
 
-template<unsigned int FacetIndex>
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
 template<typename InputT>
-void Aperture<FacetIndex>::FrameBufferTransformation(
+void Aperture<FacetIndex, ModuleIndex>::FrameBufferTransformation(
     InputT&& input,
     const GainMsg& gainMsg,
     tpgydp_t& output,
@@ -1936,5 +1938,50 @@ void Aperture<FacetIndex>::FrameBufferTransformation(
     // std::cout << "[FrameBufferTransformation] total valid elements="
     //           << totalValid << std::endl;
 }
+
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::SendSphereMap()
+{
+    std::array<uint32_t, NUM_REGIONS> regionWordSizes{};
+    std::vector<uint16_t> payload;
+
+    for (std::size_t region = 0; region < NUM_REGIONS; ++region) {
+        const std::size_t before = payload.size();
+
+        for (const std::uint32_t globalIndex :
+             sphericalMap_.Region(region)) {
+            UDPSrv::AppendU32AsU16Words(payload, globalIndex);
+        }
+
+        regionWordSizes[region] =
+            static_cast<uint32_t>(payload.size() - before);
+    }
+
+    GainMsg msg{};
+    msg.header.type = MessageType::SphereMap;
+    msg.header.version = 1;
+    msg.camera_id = cameraId_;
+    msg.frame_id = 0;
+
+    FramePacket pkt =
+        frameSrv_.CreateFramePacket(
+            msg,
+            regionWordSizes,
+            std::move(payload)
+        );
+
+    frameSrv_.TransmitFrame(pkt);
+
+    std::cout << "[SendSphereMap]"
+              << " moduleIndex=" << moduleIndex_
+              << " facetIndex=" << facetIndex_;
+
+    for (std::size_t r = 0; r < NUM_REGIONS; ++r) {
+        std::cout << " r" << r << "_words=" << regionWordSizes[r];
+    }
+
+    std::cout << '\n';
+}
+
 
 };//end namespace DASPi

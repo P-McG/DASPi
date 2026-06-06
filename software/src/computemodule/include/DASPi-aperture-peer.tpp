@@ -146,9 +146,12 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 
     if (receiveOk &&
         frameHeader.gainMsg_.header.type == MessageType::SphereMap) {
-        StoreSphereMapFromPayload(maskedBuffer, frameHeader);
+        const bool stored =
+            StoreSphereMapFromPayload(maskedBuffer, frameHeader);
+    
         finalizeEpoll();
-        return true;
+    
+        return stored;
     }
 
     const auto tReceiveDone = Clock::now();
@@ -1611,6 +1614,89 @@ void AperturePeer<FacetIndex>::MaybePrintRxSummary()
     rxStats_.lastRxTimeout = rxStats_.rxTimeout;
     rxStats_.lastRxFail = rxStats_.rxFail;
     rxStats_.lastPrint = now;
+}
+
+template<unsigned int FacetIndex>
+std::uint32_t AperturePeer<FacetIndex>::ReadU32FromU16Words(
+    const std::vector<uint16_t>& payload,
+    std::size_t wordOffset
+)
+{
+    if (wordOffset + 1 >= payload.size()) {
+        throw std::out_of_range("ReadU32FromU16Words wordOffset out of range");
+    }
+
+    return static_cast<std::uint32_t>(payload[wordOffset]) |
+           (static_cast<std::uint32_t>(payload[wordOffset + 1]) << 16u);
+}
+
+template<unsigned int FacetIndex>
+bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
+    const std::vector<uint16_t>& payload,
+    const FrameHeader& frameHeader
+)
+{
+    constexpr std::size_t regionCount = verticesPerFaceN_ + 1;
+    static_assert(NUM_REGIONS == regionCount);
+
+    std::array<std::vector<std::uint32_t>, regionCount> newMap{};
+
+    std::size_t wordOffset = 0;
+
+    for (std::size_t region = 0; region < regionCount; ++region) {
+        const std::size_t words = frameHeader.regionSizes_[region];
+
+        if ((words % 2) != 0) {
+            std::cerr << "[SphereMap RX] odd word count"
+                      << " region=" << region
+                      << " words=" << words
+                      << '\n';
+            return false;
+        }
+
+        if (wordOffset + words > payload.size()) {
+            std::cerr << "[SphereMap RX] payload overflow"
+                      << " region=" << region
+                      << " wordOffset=" << wordOffset
+                      << " words=" << words
+                      << " payload.size()=" << payload.size()
+                      << '\n';
+            return false;
+        }
+
+        auto& dst = newMap[region];
+        dst.reserve(words / 2);
+
+        for (std::size_t i = 0; i < words; i += 2) {
+            dst.push_back(ReadU32FromU16Words(payload, wordOffset + i));
+        }
+
+        wordOffset += words;
+    }
+
+    if (wordOffset != payload.size()) {
+        std::cerr << "[SphereMap RX] size mismatch"
+                  << " consumed=" << wordOffset
+                  << " payload.size()=" << payload.size()
+                  << '\n';
+        return false;
+    }
+
+    {
+        std::scoped_lock lock(bufferMutex_);
+        sphereMap_ = std::move(newMap);
+        hasSphereMap_ = true;
+    }
+
+    std::cout << "[SphereMap RX] " << peerLabel_;
+
+    for (std::size_t r = 0; r < regionCount; ++r) {
+        std::cout << " r" << r << "_indices=" << sphereMap_[r].size();
+    }
+
+    std::cout << '\n';
+
+    return true;
 }
 					  
 };//ending namespace DASPi

@@ -5,20 +5,12 @@
 #include <cstdint>
 #include <vector>
 
+#include "DASPi-config.h"
+#include "DASPi-icosahedronspherespace.h"
+
 namespace DASPi {
 
-struct GlobalSphereSample {
-    std::uint32_t panoIndex{};
-    std::uint16_t panoX{};
-    std::uint16_t panoY{};
-    std::uint16_t sensorIndex{};
-};
-
-template<
-    class SphereSpaceType,
-    std::size_t ModuleIndex,
-    unsigned int FacetIndex
->
+template<class SphereSpaceType, std::size_t ModuleIndex, unsigned int FacetIndex>
 class ModuleSphericalMap {
 public:
     static_assert(IcosahedronSphereSpace_t<SphereSpaceType>);
@@ -31,40 +23,54 @@ public:
         "ModuleIndex does not map to this FacetIndex"
     );
 
-    using FacetSpaceType =
-        typename SphereSpaceType::template FacetSpace_t<FacetIndex>;
+    static constexpr std::size_t regionCount_ = NUM_REGIONS;
 
-    using OverlapSpaceType =
-        typename FacetSpaceType::SubSpace_t;
+    std::array<std::vector<std::uint32_t>, regionCount_> regionGlobalIndices_{};
 
-    using OverlapTopologyType =
-        OverlapTopology<OverlapSpaceType>;
-
-    static constexpr std::size_t regionCount =
-        FacetSpaceType::verticesPerFaceN_ + 1;
-
-    std::array<std::vector<GlobalSphereSample>, regionCount> regionMaps;
-
+    template<class OverlapTopologyType>
     explicit ModuleSphericalMap(const OverlapTopologyType& topology)
     {
-        build(topology);
+        Build(topology);
+    }
+
+    const std::vector<std::uint32_t>& Region(std::size_t regionIndex) const
+    {
+        return regionGlobalIndices_.at(regionIndex);
     }
 
 private:
-    void build(const OverlapTopologyType& topology)
+    template<class OverlapTopologyType>
+    void Build(const OverlapTopologyType& topology)
     {
-        /*
-         * Build:
-         *
-         *   packed region index
-         *       -> original sensor linear index
-         *       -> sensor x/y
-         *       -> camera ray
-         *       -> global/world ray
-         *       -> spherical/equirect pano x/y/index
-         *
-         * This table is constant for this ModuleIndex + FacetIndex.
-         */
+        const auto& nonOverlapTopology =
+            static_cast<const typename OverlapTopologyType::NonOverlapFacetTopology_t&>(
+                topology
+            );
+
+        AppendFromIndexLinear(0, *nonOverlapTopology.indexLinearMax_);
+
+        for (std::size_t r = 1; r < regionCount_; ++r) {
+            AppendFromIndexLinear(r, *topology.indexLinearMaxs_[r - 1]);
+        }
+    }
+
+    template<class IndexLinear>
+    void AppendFromIndexLinear(std::size_t regionIndex, const IndexLinear& indexLinear)
+    {
+        auto& dst = regionGlobalIndices_[regionIndex];
+        dst.clear();
+        dst.reserve(indexLinear.size());
+
+        for (const auto& sensorIndex : indexLinear) {
+            /*
+             * Temporary global index:
+             *   packed local masked pixel -> original full sensor linear index.
+             *
+             * Later replace this with:
+             *   sensor index -> ray -> global spherical/pano index.
+             */
+            dst.push_back(static_cast<std::uint32_t>(sensorIndex.value()));
+        }
     }
 };
 

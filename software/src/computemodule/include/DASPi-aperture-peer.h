@@ -69,6 +69,9 @@ class AperturePeer : public AperturePeerBase
     
     mutable RxStats rxStats_;
     
+    std::array<std::vector<std::uint32_t>, verticesPerFaceN_ + 1> sphereMap_;
+    bool hasSphereMap_{false};
+    
 public:
     AperturePeer(in_addr_t clntAddr,
                  int clntFramePort,
@@ -114,6 +117,8 @@ private:
     bool SendGainReply(const GainReply& reply);
     float ComputeRequestedGain(const GainMsg& msg);
     mutable std::mutex bufferMutex_;
+    bool StoreSphereMapFromPayload( const std::vector<uint16_t>& payload, const FrameHeader& frameHeader);
+    static std::uint32_t ReadU32FromU16Words( const std::vector<uint16_t>& payload, std::size_t wordOffset);
 };
 
 } // namespace DASPi

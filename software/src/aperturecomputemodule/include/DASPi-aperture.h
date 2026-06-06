@@ -32,6 +32,7 @@
 #include "DASPi-overlaptopology.h"
 #include "DASPi-postprocessitem.h"
 #include "DASPi-fps-counter.h"
+#include "DASPi-module-spherical-map.h"
 
 namespace DASPi{
 
@@ -188,6 +189,7 @@ namespace DASPi{
         std::string GetBoardSerial();
         std::string ExtractCameraBusAddr(const std::string& libcameraId);
         uint32_t ParseBusAndAddressCameraId(const std::string& libcameraId);
+        void SendSphereMap();
 
     private:
         std::thread controlThread_;
