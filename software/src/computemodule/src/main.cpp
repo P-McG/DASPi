@@ -3446,56 +3446,94 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
                    const std::vector<cv::Mat>& moduleFaceMasks,
                    const RigData<N>& rig)
 {
-    if (cameras.size() != configs.size() || cameras.size() != liveCameras.size()) {
-        throw std::runtime_error("RunStitchLoop: camera/config/state size mismatch");
+    static_assert(
+        N == 3,
+        "RunStitchLoop currently expects triangular icosahedron faces"
+    );
+
+    /*
+     * Stage 1:
+     *
+     *   Aperture:
+     *     masked Bayer pixels -> startup spherical/equirect map
+     *
+     *   Compute:
+     *     receive packed raw pixels
+     *     scatter into equirect buffers
+     *     convert scattered raw intensity to grayscale BGR
+     *     composite preprojected frames directly
+     *
+     * Set this to false to return to the legacy SphereStitcher path.
+     */
+    constexpr bool kUsePreprojectedSphereMap = true;
+
+    if (cameras.size() != configs.size() ||
+        cameras.size() != liveCameras.size()) {
+        throw std::runtime_error(
+            "RunStitchLoop: camera/config/state size mismatch"
+        );
     }
 
-    if (moduleFaceMasks.empty()) {
-        throw std::runtime_error("RunStitchLoop: moduleFaceMasks is empty");
+    if constexpr (!kUsePreprojectedSphereMap) {
+        if (moduleFaceMasks.empty()) {
+            throw std::runtime_error(
+                "RunStitchLoop: moduleFaceMasks is empty"
+            );
+        }
+    } else {
+        /*
+         * Stage 1 does not use moduleFaceMasks because the frames have already
+         * been scattered into the global/equirect destination by AperturePeer.
+         */
+        (void)moduleFaceMasks;
     }
 
-    //SphereStitchConfig stitchConfig;
-    //stitchConfig.outputWidth = 1456;
-    //stitchConfig.outputHeight = 1088;
-    //stitchConfig.blendPower = 4.0;
-    
-    SphereStitchConfig stitchConfig;
-	stitchConfig.outputWidth = 1456;
-	stitchConfig.outputHeight = 1088;
-	stitchConfig.blendPower = 4.0;
-	stitchConfig.mode = StitchMode::Blend;
-	
-	const int forwardFaceIndex = 1;
-	
-	if (forwardFaceIndex < 0 ||
-	    forwardFaceIndex >= static_cast<int>(rig.faces.size())) {
-	    throw std::runtime_error("forwardFaceIndex out of range");
-	}
-	
-	stitchConfig.projectionToWorld =
-	    RotationAligningAToB(
-	        Eigen::Vector3d(0.0, 0.0, 1.0),
-	        rig.faces[static_cast<std::size_t>(forwardFaceIndex)].lookDir
-	    );
-	
-	std::cout << "[projection forward] face="
-	          << forwardFaceIndex
-	          << " dir=("
-	          << rig.faces[static_cast<std::size_t>(forwardFaceIndex)]
-	                .lookDir.transpose()
-	          << ")\n";
+    [[maybe_unused]] SphereStitchConfig stitchConfig{};
+    [[maybe_unused]] std::unique_ptr<SphereStitcher> stitcher;
 
-    // Benchmark mode: projection only.
-    //stitchConfig.mode = StitchMode::ProjectionOnly;
+    if constexpr (!kUsePreprojectedSphereMap) {
+        stitchConfig.outputWidth = 1456;
+        stitchConfig.outputHeight = 1088;
+        stitchConfig.blendPower = 4.0;
+        stitchConfig.mode = StitchMode::Blend;
 
-    // Full spherical stitching mode:
-     //stitchConfig.mode = StitchMode::Blend;
+        const int forwardFaceIndex = 1;
+
+        if (forwardFaceIndex < 0 ||
+            forwardFaceIndex >= static_cast<int>(rig.faces.size())) {
+            throw std::runtime_error("forwardFaceIndex out of range");
+        }
+
+        stitchConfig.projectionToWorld =
+            RotationAligningAToB(
+                Eigen::Vector3d(0.0, 0.0, 1.0),
+                rig.faces[static_cast<std::size_t>(forwardFaceIndex)].lookDir
+            );
+
+        std::cout << "[projection forward] face="
+                  << forwardFaceIndex
+                  << " dir=("
+                  << rig.faces[static_cast<std::size_t>(forwardFaceIndex)]
+                        .lookDir.transpose()
+                  << ")\n";
+
+        stitcher =
+            std::make_unique<SphereStitcher>(
+                cameras,
+                stitchConfig,
+                rig
+            );
+    } else {
+        /*
+         * Avoid old SphereStitcher map precomputation in Stage 1.
+         */
+        (void)rig;
+    }
 
     constexpr bool kVerboseStitchTiming = true;
     constexpr bool kSaveDebugImagesEveryFrame = false;
-    constexpr bool kSaveOneShotDebugImages = true;
+    [[maybe_unused]] constexpr bool kSaveOneShotDebugImages = true;
     constexpr bool kSleepBetweenFrames = false;
-    constexpr bool kUsePreprojectedSphereMap = true;
 
     using Clock = std::chrono::steady_clock;
 
@@ -3504,6 +3542,7 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
     cv::namedWindow("Stitched Panorama", cv::WINDOW_NORMAL);
     cv::resizeWindow("Stitched Panorama", 1200, 800);
 
+    [[maybe_unused]]
     auto saveOneShotDebugImages = [&](const cv::Mat& sourceImage) {
         static bool savedSource = false;
 
@@ -3573,25 +3612,19 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
                   << " empty_pano=" << stats.emptyPanoCount
                   << " wait_ms=" << stats.waitMs / stats.frames
                   << " update_ms=" << stats.updateMs / stats.frames
-                  << " one_shot_debug_ms=" << stats.oneShotDebugMs / stats.frames
+                  << " one_shot_debug_ms="
+                  << stats.oneShotDebugMs / stats.frames
                   << " set_cameras_ms=" << stats.setCamerasMs / stats.frames
                   << " stitch_ms=" << stats.stitchMs / stats.frames
                   << " debug_save_ms=" << stats.debugSaveMs / stats.frames
                   << " overlay_ms=" << stats.overlayMs / stats.frames
                   << " display_ms=" << stats.displayMs / stats.frames
-                  << " total_active_ms=" << stats.totalActiveMs / stats.frames
+                  << " total_active_ms="
+                  << stats.totalActiveMs / stats.frames
                   << '\n';
 
         stats.reset(now);
     };
-
-    /*
-     * Construct once.
-     *
-     * This precomputes world rays and face mappings once, then each loop
-     * updates the copied CameraView images with setCameras().
-     */
-    SphereStitcher stitcher(cameras, stitchConfig, rig);
 
     for (;;) {
         const auto tLoopStart = Clock::now();
@@ -3603,53 +3636,73 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         }
 
         const auto tHaveFrames = Clock::now();
-        
+
         cv::Mat validMask;
         cv::Mat pano;
-        
+
         Clock::time_point tUpdateDone{};
         Clock::time_point tOneShotDebugDone{};
         Clock::time_point tSetCamerasDone{};
         Clock::time_point tStitchDone{};
-        
+
         if constexpr (kUsePreprojectedSphereMap) {
-            pano = CompositePreprojectedFrames(
-                liveCameras,
-                &validMask
-            );
-        
+            pano =
+                CompositePreprojectedFrames(
+                    liveCameras,
+                    &validMask
+                );
+
             tUpdateDone = Clock::now();
             tOneShotDebugDone = tUpdateDone;
             tSetCamerasDone = tUpdateDone;
             tStitchDone = Clock::now();
-        
+
             stats.updateMs += ms(tHaveFrames, tUpdateDone);
             stats.oneShotDebugMs += 0.0;
             stats.setCamerasMs += 0.0;
             stats.stitchMs += ms(tUpdateDone, tStitchDone);
         } else {
-            updateCameraImages(cameras, configs, liveCameras, rig);
-        
+            updateCameraImages(
+                cameras,
+                configs,
+                liveCameras,
+                rig
+            );
+
             tUpdateDone = Clock::now();
-        
+
             if constexpr (kSaveOneShotDebugImages) {
-                saveOneShotDebugImages(cameras[0].image);
+                if (!cameras.empty()) {
+                    saveOneShotDebugImages(cameras[0].image);
+                }
             }
-        
+
             tOneShotDebugDone = Clock::now();
-        
-            stitcher.setCameras(cameras);
-        
-            tSetCamerasDone = Clock::now();
-        
-            if (stitchConfig.mode == StitchMode::ProjectionOnly) {
-                pano = stitcher.stitchProjectionOnlyFast(&validMask);
-            } else {
-                pano = stitcher.stitch(&validMask);
+
+            if (!stitcher) {
+                throw std::runtime_error(
+                    "SphereStitcher was not initialized"
+                );
             }
-        
+
+            stitcher->setCameras(cameras);
+
+            tSetCamerasDone = Clock::now();
+
+            if (stitchConfig.mode == StitchMode::ProjectionOnly) {
+                pano =
+                    stitcher->stitchProjectionOnlyFast(
+                        &validMask
+                    );
+            } else {
+                pano =
+                    stitcher->stitch(
+                        &validMask
+                    );
+            }
+
             tStitchDone = Clock::now();
-        
+
             stats.updateMs += ms(tHaveFrames, tUpdateDone);
             stats.oneShotDebugMs += ms(tUpdateDone, tOneShotDebugDone);
             stats.setCamerasMs += ms(tOneShotDebugDone, tSetCamerasDone);
@@ -3680,6 +3733,7 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
 
         if constexpr (kSaveDebugImagesEveryFrame) {
             cv::imwrite("panorama.png", pano);
+
             if (!validMask.empty()) {
                 cv::imwrite("valid_mask.png", validMask);
             }
@@ -3687,13 +3741,24 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
 
         const auto tDebugSaveDone = Clock::now();
 
-        cv::Mat display = pano.clone();
-        DrawPanoramaOverlay(display, frameNumber++, validMask);
+        cv::Mat display =
+            pano.clone();
+
+        DrawPanoramaOverlay(
+            display,
+            frameNumber++,
+            validMask
+        );
 
         const auto tOverlayDone = Clock::now();
 
-        cv::imshow("Stitched Panorama", display);
-        const int key = cv::waitKey(1);
+        cv::imshow(
+            "Stitched Panorama",
+            display
+        );
+
+        const int key =
+            cv::waitKey(1);
 
         const auto tDisplayDone = Clock::now();
 
