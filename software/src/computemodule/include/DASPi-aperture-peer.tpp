@@ -146,11 +146,12 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 
     if (receiveOk &&
         frameHeader.gainMsg_.header.type == MessageType::SphereMap) {
+
         const bool stored =
             StoreSphereMapFromPayload(maskedBuffer, frameHeader);
-    
+
         finalizeEpoll();
-    
+
         return stored;
     }
 
@@ -222,7 +223,7 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
                           << " epoll_finalize_ms="
                           << s.epollFinalizeMs / s.frames
                           << " unpack_ms=0"
-                          << " unmask_ms=0"
+                          << " scatter_ms=0"
                           << " publish_ms=0"
                           << " buffer_file_ms=0"
                           << " total_ms=" << s.totalMs / s.frames
@@ -248,12 +249,14 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
      *   region 0      = non-overlap / owning facet region
      *   regions 1..N  = overlap regions
      *
-     * RX must mirror TX exactly:
+     * RX mirrors TX:
      *
-     *   tpgydp_[0]    -> nonOverlapTopology.FrameBufferUnmask(...)
-     *   tpgydp_[1..N] -> overlapTopology.FrameBufferUnmask(..., region - 1)
+     *   packed UDP payload -> tpgydp_[region]
+     *
+     * Then the startup SphereMap scatters:
+     *
+     *   tpgydp_[region][i] -> buffer_[region][sphereMap_[region][i]]
      */
-
     this->tpgydp_.ResetValidSizes();
 
     std::size_t offset = 0;
@@ -315,10 +318,8 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
     }
 
     /*
-     * Topology references are needed both for:
-     *
-     *   1. region-0 Bayer statistics for aggregate white balance
-     *   2. unmasking region 0 and overlap regions into full-size buffers
+     * Topology is still needed for region-0 Bayer statistics.
+     * It is no longer used for full-frame unmasking in the hot path.
      */
     using FacetTopologyType =
         typename tpgy_t::template FacetTopology_t<FacetIndex>;
@@ -356,30 +357,23 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
     auto& nonOverlapTopology =
         static_cast<NonOverlapFacetTopologyType&>(overlapTopology);
 
-    /*
-     * Measure brightness and white balance from packed region 0 only.
-     *
-     * region 0 = non-overlap / owning facet region.
-     *
-     * This avoids overlap/edge regions influencing WB.
-     */
-auto computeRegion0BayerStats =
-    [&](std::span<const uint16_t> region0Data)
-        -> detail::Region0BayerStats
+    auto computeRegion0BayerStats =
+        [&](std::span<const uint16_t> region0Data)
+            -> detail::Region0BayerStats
     {
         detail::Region0BayerStats stats{};
-    
+
         const auto* indexMap =
             nonOverlapTopology.indexLinearMax_.get();
-    
+
         if (indexMap == nullptr) {
             std::cerr << "[RunFrameLoop] region 0 index map is null\n";
             return stats;
         }
-    
+
         const std::size_t sampleCount =
             std::min(region0Data.size(), indexMap->size());
-    
+
         if (sampleCount != region0Data.size()) {
             std::cerr << "[RunFrameLoop] region 0 WB sample size mismatch:"
                       << " data=" << region0Data.size()
@@ -387,111 +381,86 @@ auto computeRegion0BayerStats =
                       << " using=" << sampleCount
                       << '\n';
         }
-    
-        /*
-         * The received region 0 may already have the previous WB correction
-         * applied by the Aperture side. Undo that correction before measuring
-         * the next WB estimate, otherwise WB can oscillate frame-to-frame.
-         */
+
         auto validAppliedGain = [](float gain) -> double {
             if (std::isfinite(gain) && gain > 0.001f && gain < 64.0f) {
                 return static_cast<double>(gain);
             }
-    
+
             return 1.0;
         };
-    
+
         const double currentRGain =
             validAppliedGain(frameHeader.gainMsg_.r_gain_apply);
-    
+
         const double currentBGain =
             validAppliedGain(frameHeader.gainMsg_.b_gain_apply);
-    
+
         auto addRed01 = [&](double value01) {
             if (!std::isfinite(value01)) {
                 return;
             }
-    
+
             stats.rSum01 += std::clamp(value01, 0.0, 1.0);
             ++stats.rCount;
         };
-    
+
         auto addGreen01 = [&](double value01) {
             if (!std::isfinite(value01)) {
                 return;
             }
-    
+
             stats.gSum01 += std::clamp(value01, 0.0, 1.0);
             ++stats.gCount;
         };
-    
+
         auto addBlue01 = [&](double value01) {
             if (!std::isfinite(value01)) {
                 return;
             }
-    
+
             stats.bSum01 += std::clamp(value01, 0.0, 1.0);
             ++stats.bCount;
         };
-    
+
         for (std::size_t i = 0; i < sampleCount; ++i) {
             const uint16_t v = region0Data[i];
-    
-            /*
-             * Ignore black and clipped samples.
-             *
-             * Black samples do not help colour ratios.
-             * Clipped samples break the channel-ratio estimate because the
-             * saturated channel no longer represents the real light level.
-             */
+
             if (v <= 16 || v >= 65000) {
                 continue;
             }
-    
+
             typename GlobalLinearTopologyType::Index globalIndex{
                 (*indexMap)[i].value()
             };
-    
+
             typename GlobalLinearTopologyType::Point globalPt{
                 GlobalLinearTopologyType::Transform(globalIndex)
             };
-    
+
             const bool evenRow = (globalPt.y_ & 1) == 0;
             const bool evenCol = (globalPt.x_ & 1) == 0;
-    
+
             const double received01 =
                 static_cast<double>(v) / 65535.0;
-    
-            /*
-             * BGGR / SBGGR16:
-             *
-             *   row 0: B G B G ...
-             *   row 1: G R G R ...
-             *
-             * Red and blue are divided by the gain that was already applied
-             * to this received frame. Green is the reference channel.
-             */
+
             if (evenRow) {
                 if (evenCol) {
-                    // B pixel
                     addBlue01(received01 / currentBGain);
                 } else {
-                    // G pixel
                     addGreen01(received01);
                 }
             } else {
                 if (evenCol) {
-                    // G pixel
                     addGreen01(received01);
                 } else {
-                    // R pixel
                     addRed01(received01 / currentRGain);
                 }
             }
         }
-    
+
         static std::atomic<uint64_t> statsPrintCount{0};
-    
+
         if ((statsPrintCount++ % 120) == 0) {
             std::cout << "[Region0 WB stats]"
                       << " peer=" << peerLabel_
@@ -503,7 +472,7 @@ auto computeRegion0BayerStats =
                       << " prev_b_apply=" << currentBGain
                       << '\n';
         }
-    
+
         return stats;
     };
 
@@ -521,9 +490,6 @@ auto computeRegion0BayerStats =
                 )
             );
 
-        /*
-         * Keep brightness feedback based on region 0 only.
-         */
         gainMsg.mean_brightness =
             region0Stats.meanBrightness01();
 
@@ -531,13 +497,6 @@ auto computeRegion0BayerStats =
             gainMsg.target_brightness = 0.35f;
         }
 
-        /*
-         * Aggregate white balance across the latest region 0 from all peers.
-         *
-         * The aggregator must be non-template / process-wide so
-         * AperturePeer<0>, AperturePeer<1>, etc. contribute to the same
-         * running aggregate.
-         */
         const detail::Region0WhiteBalanceGains wbGains =
             detail::Region0WhiteBalanceAggregatorInstance().Update(
                 this,
@@ -568,57 +527,104 @@ auto computeRegion0BayerStats =
 
     const auto tUnpackDone = Clock::now();
 
+    /*
+     * Replace FrameBufferUnmask() with SphereMap scatter.
+     *
+     * For the current placeholder map, the output index is still a
+     * full sensor-linear index. When ModuleSphericalMap becomes true
+     * spherical/panorama indexing, change scatterOutputSize to the
+     * global output size.
+     */
     std::array<std::vector<uint16_t>, regionCount> newBuffers;
 
-    auto copyUnmaskedToBuffer =
-        [&](std::size_t regionIndex, auto&& unmasked)
+    std::array<std::vector<std::uint32_t>, regionCount> localSphereMap;
     {
-        newBuffers[regionIndex].resize(unmasked.size());
+        std::scoped_lock lock(bufferMutex_);
 
-        if (!unmasked.empty()) {
-            std::memcpy(
-                newBuffers[regionIndex].data(),
-                unmasked.data(),
-                unmasked.size() * sizeof(uint16_t)
-            );
+        if (!hasSphereMap_) {
+            std::cerr << "[RunFrameLoop] no SphereMap received yet for "
+                      << peerLabel_
+                      << "; dropping frame_id="
+                      << frameHeader.gainMsg_.frame_id
+                      << '\n';
+
+            ++rxStats_.rxFail;
+            MaybePrintRxSummary();
+            return false;
         }
-    };
 
-    /*
-     * region 0 = non-overlap / owning facet
-     */
-    {
-        auto unmasked =
-            nonOverlapTopology.FrameBufferUnmask(
-                this->tpgydp_[0]
-            );
-
-        copyUnmaskedToBuffer(0, unmasked);
+        localSphereMap = sphereMap_;
     }
 
-    /*
-     * regions 1..N = overlap regions
-     */
-    for (std::size_t regionIndex = 1;
+    constexpr std::size_t scatterOutputSize =
+        static_cast<std::size_t>(sensorWidthValue_) *
+        static_cast<std::size_t>(sensorHeightValue_);
+
+    auto scatterMappedRegionToBuffer =
+        [&](std::size_t regionIndex) -> bool
+    {
+        const std::size_t validSize =
+            this->tpgydp_.RegionValidSize(regionIndex);
+
+        const auto& map =
+            localSphereMap[regionIndex];
+
+        if (map.size() != validSize) {
+            std::cerr << "[RunFrameLoop] SphereMap/data size mismatch:"
+                      << " region=" << regionIndex
+                      << " map.size()=" << map.size()
+                      << " validSize=" << validSize
+                      << " frame_id=" << frameHeader.gainMsg_.frame_id
+                      << '\n';
+
+            return false;
+        }
+
+        auto& dst =
+            newBuffers[regionIndex];
+
+        dst.assign(scatterOutputSize, uint16_t{0});
+
+        const uint16_t* src =
+            this->tpgydp_[regionIndex].data();
+
+        for (std::size_t i = 0; i < validSize; ++i) {
+            const std::uint32_t outIndex =
+                map[i];
+
+            if (outIndex >= dst.size()) {
+                std::cerr << "[RunFrameLoop] SphereMap output index OOB:"
+                          << " region=" << regionIndex
+                          << " i=" << i
+                          << " outIndex=" << outIndex
+                          << " dst.size()=" << dst.size()
+                          << " frame_id=" << frameHeader.gainMsg_.frame_id
+                          << '\n';
+
+                return false;
+            }
+
+            dst[static_cast<std::size_t>(outIndex)] = src[i];
+        }
+
+        return true;
+    };
+
+    for (std::size_t regionIndex = 0;
          regionIndex < regionCount;
          ++regionIndex) {
 
-        const std::size_t overlapIndex =
-            regionIndex - 1;
-
-        auto unmasked =
-            overlapTopology.FrameBufferUnmask(
-                this->tpgydp_[regionIndex],
-                overlapIndex
-            );
-
-        copyUnmaskedToBuffer(regionIndex, unmasked);
+        if (!scatterMappedRegionToBuffer(regionIndex)) {
+            ++rxStats_.rxFail;
+            MaybePrintRxSummary();
+            return false;
+        }
     }
 
     static std::once_flag printedRegionSizesOnce;
 
     std::call_once(printedRegionSizesOnce, [&]() {
-        std::cout << "[RX unmask region sizes] " << peerLabel_;
+        std::cout << "[RX map-scatter region sizes] " << peerLabel_;
 
         for (std::size_t regionIndex = 0;
              regionIndex < regionCount;
@@ -628,14 +634,17 @@ auto computeRegion0BayerStats =
                       << "_packed="
                       << this->tpgydp_.RegionValidSize(regionIndex)
                       << " r" << regionIndex
-                      << "_unmasked="
+                      << "_map="
+                      << localSphereMap[regionIndex].size()
+                      << " r" << regionIndex
+                      << "_scattered="
                       << newBuffers[regionIndex].size();
         }
 
         std::cout << '\n';
     });
 
-    const auto tUnmaskDone = Clock::now();
+    const auto tScatterDone = Clock::now();
 
     {
         std::scoped_lock lock(bufferMutex_);
@@ -665,7 +674,7 @@ auto computeRegion0BayerStats =
             double receiveMs = 0.0;
             double epollFinalizeMs = 0.0;
             double unpackMs = 0.0;
-            double unmaskMs = 0.0;
+            double scatterMs = 0.0;
             double publishMs = 0.0;
             double bufferFileMs = 0.0;
             double totalMs = 0.0;
@@ -685,8 +694,8 @@ auto computeRegion0BayerStats =
         s.receiveMs += ms(tEpollInitDone, tReceiveDone);
         s.epollFinalizeMs += ms(tReceiveDone, tEpollFinalizeDone);
         s.unpackMs += ms(tEpollFinalizeDone, tUnpackDone);
-        s.unmaskMs += ms(tUnpackDone, tUnmaskDone);
-        s.publishMs += ms(tUnmaskDone, tPublishDone);
+        s.scatterMs += ms(tUnpackDone, tScatterDone);
+        s.publishMs += ms(tScatterDone, tPublishDone);
         s.bufferFileMs += ms(tPublishDone, tBufferFileDone);
         s.totalMs += ms(tStart, tBufferFileDone);
 
@@ -702,7 +711,7 @@ auto computeRegion0BayerStats =
                       << " epoll_finalize_ms="
                       << s.epollFinalizeMs / s.frames
                       << " unpack_ms=" << s.unpackMs / s.frames
-                      << " unmask_ms=" << s.unmaskMs / s.frames
+                      << " scatter_ms=" << s.scatterMs / s.frames
                       << " publish_ms=" << s.publishMs / s.frames
                       << " buffer_file_ms="
                       << s.bufferFileMs / s.frames
@@ -715,7 +724,7 @@ auto computeRegion0BayerStats =
             s.receiveMs = 0.0;
             s.epollFinalizeMs = 0.0;
             s.unpackMs = 0.0;
-            s.unmaskMs = 0.0;
+            s.scatterMs = 0.0;
             s.publishMs = 0.0;
             s.bufferFileMs = 0.0;
             s.totalMs = 0.0;
