@@ -61,7 +61,11 @@ Aperture<FacetIndex, ModuleIndex>::Aperture(
     AquireCamera();
     Stream();
     
-    SendSphereMap();
+    //todo Better later: resend until Compute replies with a small SphereMapAck.
+    for (int i = 0; i < 5; ++i) {
+        SendSphereMap();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
 
     fpsTimer_ = std::chrono::high_resolution_clock::now();
 }

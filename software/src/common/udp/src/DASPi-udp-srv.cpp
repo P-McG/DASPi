@@ -593,7 +593,7 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
     //return framePacket;
 //}
 
-static void UDPSrv::AppendU32AsU16Words(std::vector<uint16_t>& out, uint32_t v)
+void UDPSrv::AppendU32AsU16Words(std::vector<uint16_t>& out, uint32_t v)
 {
     out.push_back(static_cast<uint16_t>(v & 0xFFFFu));
     out.push_back(static_cast<uint16_t>((v >> 16u) & 0xFFFFu));

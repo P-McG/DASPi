@@ -4,6 +4,8 @@
 #include <array>
 #include <cstdint>
 #include <vector>
+#include <cstddef>
+#include <stdexcept>
 
 #include "DASPi-config.h"
 #include "DASPi-icosahedronspherespace.h"
@@ -46,30 +48,43 @@ private:
             static_cast<const typename OverlapTopologyType::NonOverlapFacetTopology_t&>(
                 topology
             );
-
-        AppendFromIndexLinear(0, *nonOverlapTopology.indexLinearMax_);
-
+    
+        AppendFromIndexLinear(
+            0,
+            *nonOverlapTopology.indexLinearMax_,
+            nonOverlapTopology.size()
+        );
+    
         for (std::size_t r = 1; r < regionCount_; ++r) {
-            AppendFromIndexLinear(r, *topology.indexLinearMaxs_[r - 1]);
+            const std::size_t overlapIndex = r - 1;
+    
+            AppendFromIndexLinear(
+                r,
+                *topology.indexLinearMaxs_[overlapIndex],
+                topology.size(overlapIndex)
+            );
         }
     }
-
+    
     template<class IndexLinear>
-    void AppendFromIndexLinear(std::size_t regionIndex, const IndexLinear& indexLinear)
+    void AppendFromIndexLinear(
+        std::size_t regionIndex,
+        const IndexLinear& indexLinear,
+        std::size_t validCount
+    )
     {
         auto& dst = regionGlobalIndices_[regionIndex];
         dst.clear();
-        dst.reserve(indexLinear.size());
-
-        for (const auto& sensorIndex : indexLinear) {
-            /*
-             * Temporary global index:
-             *   packed local masked pixel -> original full sensor linear index.
-             *
-             * Later replace this with:
-             *   sensor index -> ray -> global spherical/pano index.
-             */
-            dst.push_back(static_cast<std::uint32_t>(sensorIndex.value()));
+        dst.reserve(validCount);
+    
+        if (validCount > indexLinear.size()) {
+            throw std::runtime_error("ModuleSphericalMap: validCount exceeds indexLinear size");
+        }
+    
+        for (std::size_t i = 0; i < validCount; ++i) {
+            dst.push_back(
+                static_cast<std::uint32_t>(indexLinear[i].value())
+            );
         }
     }
 };
