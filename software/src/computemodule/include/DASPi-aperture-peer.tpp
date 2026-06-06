@@ -618,26 +618,10 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
         }
     }
 
-    static std::once_flag printedRegionSizesOnce;
-
-    std::call_once(printedRegionSizesOnce, [&]() {
-        std::cout << "[RX map-scatter region sizes] " << peerLabel_;
-
-        for (std::size_t regionIndex = 0;
-             regionIndex < regionCount;
-             ++regionIndex) {
-
-            std::cout << " r" << regionIndex
-                      << "_packed="
-                      << this->tpgydp_.RegionValidSize(regionIndex)
-                      << " r" << regionIndex
-                      << "_map="
-                      << localSphereMap->regions[regionIndex].size()
-                      << " r" << regionIndex
-                      << "_scattered="
-                      << newBuffers[regionIndex].size();
-					  
-			std::cout << "[RX map-scatter region sizes] "
+	static std::once_flag printedRegionSizesOnce;
+	
+	std::call_once(printedRegionSizesOnce, [&]() {
+		std::cout << "[RX map-scatter region sizes] "
 				  << peerLabel_
 				  << " output="
 				  << localSphereMap->outputWidth
@@ -645,10 +629,24 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 				  << localSphereMap->outputHeight
 				  << " size="
 				  << localSphereMap->outputSize;
-        }
-
-        std::cout << '\n';
-    });
+	
+		for (std::size_t regionIndex = 0;
+			 regionIndex < regionCount;
+			 ++regionIndex) {
+	
+			std::cout << " r" << regionIndex
+					  << "_packed="
+					  << this->tpgydp_.RegionValidSize(regionIndex)
+					  << " r" << regionIndex
+					  << "_map="
+					  << localSphereMap->regions[regionIndex].size()
+					  << " r" << regionIndex
+					  << "_scattered="
+					  << newBuffers[regionIndex].size();
+		}
+	
+		std::cout << '\n';
+	});
 
     const auto tScatterDone = Clock::now();
 
@@ -1653,72 +1651,98 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
 {
     constexpr std::size_t regionCount = verticesPerFaceN_ + 1;
     static_assert(NUM_REGIONS == regionCount);
-	
-	constexpr std::uint32_t kSphereMapWireMagic = 0x31504D53u; // "SMP1"
-	constexpr std::uint32_t kSphereMapWireVersion = 1;
-	constexpr std::size_t kSphereMapWireHeaderWords = 10;
-	
-	if (payload.size() < kSphereMapWireHeaderWords) {
-		std::cerr << "[SphereMap RX] payload too small for header:"
-				  << " payload.size()=" << payload.size()
-				  << '\n';
-		return false;
-	}
-	
-	const std::uint32_t magic =
-		ReadU32FromU16Words(payload, 0);
-	
-	const std::uint32_t version =
-		ReadU32FromU16Words(payload, 2);
-	
-	if (magic != kSphereMapWireMagic || version != kSphereMapWireVersion) {
-		std::cerr << "[SphereMap RX] invalid header:"
-				  << " magic=0x" << std::hex << magic
-				  << " version=" << std::dec << version
-				  << '\n';
-		return false;
-	}
-	
-	auto newMap = std::make_shared<SphereMapSnapshot>();
-	
-	newMap->outputWidth =
-		ReadU32FromU16Words(payload, 4);
-	
-	newMap->outputHeight =
-		ReadU32FromU16Words(payload, 6);
-	
-	newMap->outputSize =
-		ReadU32FromU16Words(payload, 8);
-	
-	if (newMap->outputWidth == 0 ||
-		newMap->outputHeight == 0 ||
-		newMap->outputSize == 0) {
-		std::cerr << "[SphereMap RX] invalid output dimensions:"
-				  << " width=" << newMap->outputWidth
-				  << " height=" << newMap->outputHeight
-				  << " size=" << newMap->outputSize
-				  << '\n';
-		return false;
-	}
-	
-	std::size_t wordOffset = kSphereMapWireHeaderWords;
 
-    for (std::size_t region = 0; region < regionCount; ++region) {
-        std::size_t words = frameHeader.regionSizes_[region];
+    constexpr std::uint32_t kSphereMapWireMagic = 0x31504D53u; // "SMP1"
+    constexpr std::uint32_t kSphereMapWireVersion = 1;
+    constexpr std::size_t kSphereMapWireHeaderWords = 10; // 5 uint32_t values
 
-		if (region == 0) {
-			if (words < kSphereMapWireHeaderWords) {
-				std::cerr << "[SphereMap RX] region 0 smaller than map header:"
-						  << " words=" << words
-						  << '\n';
-				return false;
-			}
-		
-			words -= kSphereMapWireHeaderWords;
-		}
+    if (payload.size() < kSphereMapWireHeaderWords) {
+        std::cerr << "[SphereMap RX] payload too small for header:"
+                  << " payload.size()=" << payload.size()
+                  << '\n';
+        return false;
+    }
+
+    const std::uint32_t magic =
+        ReadU32FromU16Words(payload, 0);
+
+    const std::uint32_t version =
+        ReadU32FromU16Words(payload, 2);
+
+    if (magic != kSphereMapWireMagic ||
+        version != kSphereMapWireVersion) {
+
+        std::cerr << "[SphereMap RX] invalid header:"
+                  << " magic=0x" << std::hex << magic
+                  << " version=" << std::dec << version
+                  << '\n';
+        return false;
+    }
+
+    auto newMap =
+        std::make_shared<SphereMapSnapshot>();
+
+    newMap->outputWidth =
+        ReadU32FromU16Words(payload, 4);
+
+    newMap->outputHeight =
+        ReadU32FromU16Words(payload, 6);
+
+    newMap->outputSize =
+        ReadU32FromU16Words(payload, 8);
+
+    if (newMap->outputWidth == 0 ||
+        newMap->outputHeight == 0 ||
+        newMap->outputSize == 0) {
+
+        std::cerr << "[SphereMap RX] invalid output dimensions:"
+                  << " width=" << newMap->outputWidth
+                  << " height=" << newMap->outputHeight
+                  << " size=" << newMap->outputSize
+                  << '\n';
+        return false;
+    }
+
+    /*
+     * For now outputSize should match width * height.
+     * Later, if outputSize becomes a sparse/atlas size, relax this check.
+     */
+    const std::uint64_t expectedOutputSize =
+        static_cast<std::uint64_t>(newMap->outputWidth) *
+        static_cast<std::uint64_t>(newMap->outputHeight);
+
+    if (expectedOutputSize != newMap->outputSize) {
+        std::cerr << "[SphereMap RX] output size mismatch:"
+                  << " width=" << newMap->outputWidth
+                  << " height=" << newMap->outputHeight
+                  << " width*height=" << expectedOutputSize
+                  << " outputSize=" << newMap->outputSize
+                  << '\n';
+        return false;
+    }
+
+    std::size_t wordOffset = kSphereMapWireHeaderWords;
+
+    for (std::size_t region = 0;
+         region < regionCount;
+         ++region) {
+
+        std::size_t words =
+            frameHeader.regionSizes_[region];
+
+        if (region == 0) {
+            if (words < kSphereMapWireHeaderWords) {
+                std::cerr << "[SphereMap RX] region 0 smaller than map header:"
+                          << " words=" << words
+                          << '\n';
+                return false;
+            }
+
+            words -= kSphereMapWireHeaderWords;
+        }
 
         if ((words % 2) != 0) {
-            std::cerr << "[SphereMap RX] odd word count"
+            std::cerr << "[SphereMap RX] odd word count:"
                       << " region=" << region
                       << " words=" << words
                       << '\n';
@@ -1726,7 +1750,7 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
         }
 
         if (wordOffset + words > payload.size()) {
-            std::cerr << "[SphereMap RX] payload overflow"
+            std::cerr << "[SphereMap RX] payload overflow:"
                       << " region=" << region
                       << " wordOffset=" << wordOffset
                       << " words=" << words
@@ -1735,44 +1759,61 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
             return false;
         }
 
-        auto& dst = newMap->regions[region];
+        auto& dst =
+            newMap->regions[region];
+
+        dst.clear();
         dst.reserve(words / 2);
 
         for (std::size_t i = 0; i < words; i += 2) {
-            dst.push_back(ReadU32FromU16Words(payload, wordOffset + i));
+            const std::uint32_t outIndex =
+                ReadU32FromU16Words(payload, wordOffset + i);
+
+            if (outIndex >= newMap->outputSize) {
+                std::cerr << "[SphereMap RX] output index OOB:"
+                          << " region=" << region
+                          << " localIndex=" << (i / 2)
+                          << " outIndex=" << outIndex
+                          << " outputSize=" << newMap->outputSize
+                          << '\n';
+                return false;
+            }
+
+            dst.push_back(outIndex);
         }
 
         wordOffset += words;
     }
 
     if (wordOffset != payload.size()) {
-        std::cerr << "[SphereMap RX] size mismatch"
+        std::cerr << "[SphereMap RX] size mismatch:"
                   << " consumed=" << wordOffset
                   << " payload.size()=" << payload.size()
                   << '\n';
         return false;
     }
 
-	{
-		std::scoped_lock lock(sphereMapMutex_);
-		sphereMap_ = newMap;
-	}
+    {
+        std::scoped_lock lock(sphereMapMutex_);
+        sphereMap_ = newMap;
+    }
 
-    std::cout << "[SphereMap RX] " << peerLabel_;
+    std::cout << "[SphereMap RX] "
+              << peerLabel_
+              << " output="
+              << newMap->outputWidth
+              << "x"
+              << newMap->outputHeight
+              << " size="
+              << newMap->outputSize;
 
     for (std::size_t r = 0; r < regionCount; ++r) {
-        std::cout << " r" << r << "_indices=" << newMap->regions[r].size();
+        std::cout << " r" << r
+                  << "_indices="
+                  << newMap->regions[r].size();
     }
 
     std::cout << '\n';
-	
-	std::cout << "[SphereMap RX] " << peerLabel_
-          << " output="
-          << newMap->outputWidth
-          << "x"
-          << newMap->outputHeight
-          << " size="
-          << newMap->outputSize;
 
     return true;
 }
