@@ -52,25 +52,49 @@ inline Eigen::Matrix3d RotationAligningAToB(
 template<class SphereSpace, std::size_t N>
 inline MeshTopology<N> MakeMeshTopologyFromSphereSpace()
 {
-    using Tables = DASPi::detail::IcosahedronTables;
+    static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpace>);
 
-    static_assert(N == Tables::verticesPerFaceN_);
+    static_assert(
+        N == SphereSpace::verticesPerFaceN_,
+        "N must match SphereSpace::verticesPerFaceN_"
+    );
+
+    using Facet0SpaceType =
+        typename SphereSpace::template FacetSpace_t<0>;
+
+    using Tables =
+        DASPi::detail::IcosahedronTables;
+
+    static_assert(
+        SphereSpace::totalFacetsN_ == Tables::facetsN_,
+        "SphereSpace total face count must match IcosahedronTables"
+    );
+
+    static_assert(
+        Facet0SpaceType::verticesN_ == Tables::verticesN_,
+        "Facet0SpaceType vertex count must match IcosahedronTables"
+    );
+
+    static_assert(
+        Facet0SpaceType::edgesN_ == Tables::edgesN_,
+        "Facet0SpaceType edge count must match IcosahedronTables"
+    );
 
     MeshTopology<N> topo;
 
+    const Eigen::Matrix3d Rspace =
+        ToEigenMatrix3d(Facet0SpaceType::ImageTransformMatrix);
+
     topo.vertices.reserve(Tables::verticesN_);
 
-    /*
-     * Same base vertex table used by the current ComputeModule path.
-     * Keep this unrotated here for now; the module basis applies the
-     * same global-space alignment separately.
-     */
     for (const auto& vertex : Tables::vertices_) {
-        topo.vertices.emplace_back(
+        const Eigen::Vector3d v(
             vertex.x_,
             vertex.y_,
             vertex.z_
         );
+
+        topo.vertices.push_back(Rspace * v);
     }
 
     topo.faces.reserve(Tables::facetsN_);
@@ -86,6 +110,28 @@ inline MeshTopology<N> MakeMeshTopologyFromSphereSpace()
     }
 
     BuildTopologyAdjacency(topo);
+
+    if (topo.edges.size() != Facet0SpaceType::edgesN_) {
+        throw std::runtime_error(
+            "MakeMeshTopologyFromSphereSpace expected " +
+            std::to_string(Facet0SpaceType::edgesN_) +
+            " edges, got " +
+            std::to_string(topo.edges.size())
+        );
+    }
+
+    for (std::size_t faceIndex = 0;
+         faceIndex < topo.faceNeighborIndices.size();
+         ++faceIndex) {
+
+        for (int neighbor : topo.faceNeighborIndices[faceIndex]) {
+            if (neighbor < 0) {
+                throw std::runtime_error(
+                    "MakeMeshTopologyFromSphereSpace has boundary edge"
+                );
+            }
+        }
+    }
 
     return topo;
 }
@@ -205,8 +251,8 @@ inline Eigen::Matrix3d MakeCameraRcwFromForwardAndUpHint(
 
 inline Eigen::Matrix3d CameraRollDeg(double deg)
 {
-    const double rad =
-        deg * M_PI / 180.0;
+	const double rad =
+	    deg * std::numbers::pi / 180.0;
 
     return Eigen::AngleAxisd(
         rad,
