@@ -3551,6 +3551,57 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
             savedSource = true;
         }
     };
+    
+    [[maybe_unused]]
+    auto savePreprojectedDebugOnce =
+        [&](const cv::Mat& pano,
+            const cv::Mat& validMask)
+    {
+        static bool savedPreprojected = false;
+
+        if (savedPreprojected || pano.empty()) {
+            return;
+        }
+
+        const bool panoOk =
+            cv::imwrite(
+                "/tmp/debug_preprojected_pano.png",
+                pano
+            );
+
+        bool maskOk = true;
+
+        if (!validMask.empty()) {
+            maskOk =
+                cv::imwrite(
+                    "/tmp/debug_preprojected_valid_mask.png",
+                    validMask
+                );
+        }
+
+        std::cout << "[Stage1 debug]"
+                  << " saved_preprojected_pano="
+                  << panoOk
+                  << " saved_valid_mask="
+                  << maskOk
+                  << " pano="
+                  << pano.cols
+                  << "x"
+                  << pano.rows;
+
+        if (!validMask.empty()) {
+            std::cout << " validMask="
+                      << validMask.cols
+                      << "x"
+                      << validMask.rows
+                      << " nonzero="
+                      << cv::countNonZero(validMask);
+        }
+
+        std::cout << '\n';
+
+        savedPreprojected = true;
+    };
 
     auto ms = [](const auto a, const auto b) -> double {
         return std::chrono::duration<double, std::milli>(b - a).count();
@@ -3653,14 +3704,22 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
                 );
 
             tUpdateDone = Clock::now();
-            tOneShotDebugDone = tUpdateDone;
-            tSetCamerasDone = tUpdateDone;
-            tStitchDone = Clock::now();
+
+            if constexpr (kSaveOneShotDebugImages) {
+                savePreprojectedDebugOnce(
+                    pano,
+                    validMask
+                );
+            }
+
+            tOneShotDebugDone = Clock::now();
+            tSetCamerasDone = tOneShotDebugDone;
+            tStitchDone = tSetCamerasDone;
 
             stats.updateMs += ms(tHaveFrames, tUpdateDone);
-            stats.oneShotDebugMs += 0.0;
+            stats.oneShotDebugMs += ms(tUpdateDone, tOneShotDebugDone);
             stats.setCamerasMs += 0.0;
-            stats.stitchMs += ms(tUpdateDone, tStitchDone);
+            stats.stitchMs += 0.0;
         } else {
             updateCameraImages(
                 cameras,
@@ -3722,7 +3781,7 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
 
             maybePrintTiming();
 
-            std::cerr << "[RunStitchLoop] stitch returned empty pano\n";
+            std::cerr << "[RunStitchLoop] composite/stitch returned empty pano\n";
 
             if constexpr (kSleepBetweenFrames) {
                 std::this_thread::sleep_for(kStitchDelay);
