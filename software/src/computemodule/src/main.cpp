@@ -1497,13 +1497,23 @@ void SaveBayerBGGRDebugOnce(const std::vector<uint16_t>& raw,
         return;
     }
 
-    cv::Mat bgr =
-        DASPi::decodeBayer16ToBgr8(
+    constexpr bool kFramesArePreprojected = true;
+    
+    cv::Mat bgr;
+    
+    if constexpr (kFramesArePreprojected) {
+        bgr = raw16ProjectedToGrayBgr8(
+            raw,
+            kFrameWidth,
+            kFrameHeight
+        );
+    } else {
+        bgr = decodeBayer16ToBgr8(
             raw.data(),
             kFrameWidth,
-            kFrameHeight,
-            cv::COLOR_BayerBG2BGR
+            kFrameHeight
         );
+    }
 
     const std::string path =
         "/tmp/bayer_bggr_m" + std::to_string(moduleIndex) +
@@ -3321,6 +3331,52 @@ void DrawPanoramaOverlay(cv::Mat& img,
              color, 1);
 }
 
+cv::Mat CompositePreprojectedFrames(
+    const std::vector<LiveCameraState>& liveCameras,
+    cv::Mat* validMask)
+{
+    cv::Mat pano;
+    cv::Mat mask;
+
+    for (const auto& live : liveCameras) {
+        cv::Mat frame;
+
+        if (!tryGetLatestFrame(live.frame, frame)) {
+            continue;
+        }
+
+        if (frame.empty()) {
+            continue;
+        }
+
+        if (pano.empty()) {
+            pano = cv::Mat::zeros(frame.size(), frame.type());
+            mask = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC1);
+        }
+
+        if (frame.size() != pano.size() ||
+            frame.type() != pano.type()) {
+            std::cerr << "[CompositePreprojectedFrames] frame shape mismatch\n";
+            continue;
+        }
+
+        cv::Mat gray;
+        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+
+        cv::Mat srcMask =
+            gray > 0;
+
+        frame.copyTo(pano, srcMask);
+        mask.setTo(255, srcMask);
+    }
+
+    if (validMask != nullptr) {
+        *validMask = mask;
+    }
+
+    return pano;
+}
+
 template<std::size_t N>
 void RunStitchLoop(std::vector<CameraView>& cameras,
                    const std::vector<CameraConfig>& configs,
@@ -3377,6 +3433,7 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
     constexpr bool kSaveDebugImagesEveryFrame = false;
     constexpr bool kSaveOneShotDebugImages = true;
     constexpr bool kSleepBetweenFrames = false;
+    constexpr bool kUsePreprojectedSphereMap = true;
 
     using Clock = std::chrono::steady_clock;
 
@@ -3484,38 +3541,56 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         }
 
         const auto tHaveFrames = Clock::now();
-
-        updateCameraImages(cameras, configs, liveCameras, rig);
-
-        const auto tUpdateDone = Clock::now();
-
-        if constexpr (kSaveOneShotDebugImages) {
-            saveOneShotDebugImages(cameras[0].image);
+        
+        cv::Mat validMask;
+        cv::Mat pano;
+        
+        if constexpr (kUsePreprojectedSphereMap) {
+            pano = CompositePreprojectedFrames(
+                liveCameras,
+                &validMask
+            );
+        
+            const auto tUpdateDone = Clock::now();
+            const auto tOneShotDebugDone = tUpdateDone;
+            const auto tSetCamerasDone = tUpdateDone;
+            const auto tStitchDone = Clock::now();
+        
+            stats.updateMs += ms(tHaveFrames, tUpdateDone);
+            stats.oneShotDebugMs += 0.0;
+            stats.setCamerasMs += 0.0;
+            stats.stitchMs += ms(tUpdateDone, tStitchDone);
+        } else {
+            updateCameraImages(cameras, configs, liveCameras, rig);
+        
+            const auto tUpdateDone = Clock::now();
+        
+            if constexpr (kSaveOneShotDebugImages) {
+                saveOneShotDebugImages(cameras[0].image);
+            }
+        
+            const auto tOneShotDebugDone = Clock::now();
+        
+            stitcher.setCameras(cameras);
+        
+            const auto tSetCamerasDone = Clock::now();
+        
+            if (stitchConfig.mode == StitchMode::ProjectionOnly) {
+                pano = stitcher.stitchProjectionOnlyFast(&validMask);
+            } else {
+                pano = stitcher.stitch(&validMask);
+            }
+        
+            const auto tStitchDone = Clock::now();
+        
+            stats.updateMs += ms(tHaveFrames, tUpdateDone);
+            stats.oneShotDebugMs += ms(tUpdateDone, tOneShotDebugDone);
+            stats.setCamerasMs += ms(tOneShotDebugDone, tSetCamerasDone);
+            stats.stitchMs += ms(tSetCamerasDone, tStitchDone);
         }
-
-        const auto tOneShotDebugDone = Clock::now();
-
-        stitcher.setCameras(cameras);
-
-        const auto tSetCamerasDone = Clock::now();
-
-		cv::Mat validMask;
-		cv::Mat pano;
-		
-		if (stitchConfig.mode == StitchMode::ProjectionOnly) {
-		    pano = stitcher.stitchProjectionOnlyFast(&validMask);
-		} else {
-		    pano = stitcher.stitch(&validMask);
-		}
-		
-		const auto tStitchDone = Clock::now();
 
         ++stats.frames;
         stats.waitMs += ms(tLoopStart, tHaveFrames);
-        stats.updateMs += ms(tHaveFrames, tUpdateDone);
-        stats.oneShotDebugMs += ms(tUpdateDone, tOneShotDebugDone);
-        stats.setCamerasMs += ms(tOneShotDebugDone, tSetCamerasDone);
-        stats.stitchMs += ms(tSetCamerasDone, tStitchDone);
 
         if (pano.empty()) {
             ++stats.emptyPanoCount;
@@ -3695,6 +3770,35 @@ cv::Mat BuildFaceMaskForCamera(const ICameraModel& model,
     }
 
     return mask;
+}
+
+cv::Mat raw16ProjectedToGrayBgr8(
+    const std::vector<uint16_t>& raw,
+    int width,
+    int height)
+{
+    if (raw.size() != static_cast<std::size_t>(width * height)) {
+        std::cerr << "[raw16ProjectedToGrayBgr8] size mismatch:"
+                  << " raw.size()=" << raw.size()
+                  << " expected=" << (width * height)
+                  << '\n';
+        return {};
+    }
+
+    cv::Mat gray16(
+        height,
+        width,
+        CV_16UC1,
+        const_cast<uint16_t*>(raw.data())
+    );
+
+    cv::Mat gray8;
+    gray16.convertTo(gray8, CV_8UC1, 1.0 / 256.0);
+
+    cv::Mat bgr;
+    cv::cvtColor(gray8, bgr, cv::COLOR_GRAY2BGR);
+
+    return bgr;
 }
 
 
