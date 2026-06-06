@@ -11,6 +11,7 @@ enum class MessageType : uint16_t {
     Frame     = 1,
     GainMsg   = 2,
     GainReply = 3,
+    SphereMap = 4,
 };
 static_assert(sizeof(MessageType) == 2);
 

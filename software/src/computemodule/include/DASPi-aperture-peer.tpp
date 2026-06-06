@@ -144,6 +144,13 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
             frameHeader
         );
 
+    if (receiveOk &&
+        frameHeader.gainMsg_.header.type == MessageType::SphereMap) {
+        StoreSphereMapFromPayload(maskedBuffer, frameHeader);
+        finalizeEpoll();
+        return true;
+    }
+
     const auto tReceiveDone = Clock::now();
 
     const auto counters =

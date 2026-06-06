@@ -36,11 +36,13 @@
 namespace DASPi{
 
                
-    template<unsigned int FacetIndex>
+    template<unsigned int FacetIndex, std::size_t ModuleIndex>
     class Aperture {
         using tpgy_t   = DASPi::tpgy_t;
         using tpgydp_t = DASPi::tpgydp_t<FacetIndex>;
-    
+
+        using SphereSpaceType = typename tpgy_t::Space_t;
+        using ModuleSphericalMapType = ModuleSphericalMap<SphereSpaceType, ModuleIndex, FacetIndex>;  
         using FacetTopologyType = typename tpgy_t::template FacetTopology_t<FacetIndex>;
         using OverlapTopologyType = typename tpgy_t::template OverlapTopology_t<FacetIndex>;
         using NonOverlapFacetTopologyType = typename OverlapTopologyType::NonOverlapFacetTopology_t;
@@ -55,6 +57,11 @@ namespace DASPi{
         tpgy_t tpgy_;
         tpgydp_t tpgydp_;
         
+        static constexpr unsigned int facetIndex_ = FacetIndex;
+        static constexpr std::size_t moduleIndex_ = ModuleIndex;
+                
+        ModuleSphericalMapType sphericalMap_;  
+
         const int processingThreads_{4};
         const int chunkThreads_{4};
         const int numBuffers_{4};

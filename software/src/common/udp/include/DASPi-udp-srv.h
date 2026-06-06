@@ -72,7 +72,9 @@ namespace DASPi{
         template<class T> ssize_t SendRawDatagramToClient(const T* buffer, size_t byteCount);
         void SendFramePacketToClient(const FramePacket& framePacket);
         //template <typename T > ssize_t SendUDPPacketToClient(const T *buffer, const size_t bufferLength=maxUdpPayloadBytes_ );
+        static void AppendU32AsU16Words(std::vector<uint16_t>& out, uint32_t v);
         template<class T> bool Receive(T& msg);
+        void SendSphereMap();
     };
 }//end namespace DASPi
 

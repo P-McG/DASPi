@@ -41,11 +41,8 @@ Aperture<FacetIndex>::Aperture(
     const size_t port
 )
     : tpgy_(),
-      tpgydp_(
-          static_cast<const OverlapTopologyType&>(
-              static_cast<const FacetTopologyType&>(tpgy_)
-          )
-      ),
+      tpgydp_( static_cast<const OverlapTopologyType&>( static_cast<const FacetTopologyType&>(tpgy_))),
+      sphericalMap_( static_cast<const OverlapTopologyType&>( static_cast<const FacetTopologyType&>(tpgy_))),
       frameSrv_{clientIp, port},
       controlClnt_{INADDR_ANY,
                    static_cast<int>(port + 1),

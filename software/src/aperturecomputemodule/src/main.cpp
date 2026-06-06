@@ -33,20 +33,22 @@
 
 using namespace DASPi;
 
-template<std::size_t FaceIndex>
+template<std::size_t FaceIndex, std::size_t ModuleIndex>
 int RunApertureForFace(const std::string& clientIp, int port)
 {
-    std::cout << "Global FaceIndex: " << FaceIndex << std::endl;
+    std::cout << "ModuleIndex: " << ModuleIndex
+              << " -> Global FaceIndex: " << FaceIndex
+              << std::endl;
 
-    DASPi::Aperture<static_cast<unsigned int>(FaceIndex)> aperture(
+    DASPi::Aperture<
+        static_cast<unsigned int>(FaceIndex),
+        ModuleIndex
+    > aperture(
         clientIp,
         static_cast<std::size_t>(port)
     );
 
-    std::cout << ">>> BEFORE ContinuousCapture <<<" << std::endl;
     aperture.ContinuousCapture(0);
-    std::cout << ">>> AFTER ContinuousCapture <<<" << std::endl;
-
     return 0;
 }
 
@@ -63,7 +65,7 @@ int RunApertureForModule(const std::string& clientIp, int port)
               << " -> Global FaceIndex: " << FaceIndex
               << std::endl;
 
-    return RunApertureForFace<FaceIndex>(clientIp, port);
+    return RunApertureForFace<FaceIndex, ModuleIndex>(clientIp, port);
 }
 
 template<class SphereSpaceType, std::size_t... ModuleIndices>

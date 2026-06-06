@@ -593,6 +593,12 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
     //return framePacket;
 //}
 
+static void UDPSrv::AppendU32AsU16Words(std::vector<uint16_t>& out, uint32_t v)
+{
+    out.push_back(static_cast<uint16_t>(v & 0xFFFFu));
+    out.push_back(static_cast<uint16_t>((v >> 16u) & 0xFFFFu));
+}
+
 FramePacket UDPSrv::CreateFramePacket(
     const GainMsg& gainMsg,
     const std::array<uint32_t, NUM_REGIONS>& regionSizes,
@@ -616,5 +622,51 @@ FramePacket UDPSrv::CreateFramePacket(
         SimpleChecksum(pkt.payload_as_bytes());
 
     return pkt;
+}
+
+void UDPSrv::SendSphereMap()
+{
+    std::array<uint32_t, NUM_REGIONS> regionWordSizes{};
+    std::vector<uint16_t> payload;
+
+    auto appendRegionMap =
+        [&](std::size_t regionIndex, const auto& indexLinear)
+    {
+        const std::size_t before = payload.size();
+
+        for (const auto& sensorIndex : indexLinear) {
+            const uint32_t globalIndex =
+                SensorIndexToGlobalSphereIndex(sensorIndex.value());
+
+            AppendU32AsU16Words(payload, globalIndex);
+        }
+
+        regionWordSizes[regionIndex] =
+            static_cast<uint32_t>(payload.size() - before);
+    };
+
+    appendRegionMap(0, *NonOverlapTopologyRef().indexLinearMax_);
+
+    for (std::size_t r = 1; r < NUM_REGIONS; ++r) {
+        appendRegionMap(
+            r,
+            *OverlapTopologyRef().indexLinearMaxs_[r - 1]
+        );
+    }
+
+    GainMsg msg{};
+    msg.header.type = MessageType::SphereMap;
+    msg.header.version = 1;
+    msg.camera_id = cameraId_;
+    msg.frame_id = 0;
+
+    FramePacket pkt =
+        frameSrv_.CreateFramePacket(
+            msg,
+            regionWordSizes,
+            std::move(payload)
+        );
+
+    frameSrv_.TransmitFrame(pkt);
 }
 
