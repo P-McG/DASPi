@@ -21,6 +21,7 @@
 #include "DASPi-udp-srv.h"
 #include "DASPi-aperture.h"
 #include "DASPi-postprocessitem.h"
+#include "DASPi-sphere-map-wire.h"
 #include "scopedtimer.h"
 
 using namespace std::chrono;
@@ -1962,9 +1963,6 @@ void Aperture<FacetIndex, ModuleIndex>::SendSphereMap()
      * The header is counted as part of region 0 so the existing
      * FrameHeader::regionSizes_ layout can be reused.
      */
-    constexpr std::uint32_t kSphereMapWireMagic = 0x31504D53u; // "SMP1"
-    constexpr std::uint32_t kSphereMapWireVersion = 1;
-    constexpr std::size_t kSphereMapWireHeaderWords = 10; // 5 uint32_t values
 
     static_assert(NUM_REGIONS > 0);
 

@@ -21,6 +21,7 @@
 #include "DASPi-region0bayerstats.h"
 #include "DASPi-region0whitebalancegains.h"
 #include "DASPi-region0whitebalanceaggregator.h"
+#include "DASPi-sphere-map-wire.h"
 
 namespace DASPi{
 	
@@ -1651,10 +1652,6 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
 {
     constexpr std::size_t regionCount = verticesPerFaceN_ + 1;
     static_assert(NUM_REGIONS == regionCount);
-
-    constexpr std::uint32_t kSphereMapWireMagic = 0x31504D53u; // "SMP1"
-    constexpr std::uint32_t kSphereMapWireVersion = 1;
-    constexpr std::size_t kSphereMapWireHeaderWords = 10; // 5 uint32_t values
 
     if (payload.size() < kSphereMapWireHeaderWords) {
         std::cerr << "[SphereMap RX] payload too small for header:"
