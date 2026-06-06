@@ -69,8 +69,9 @@ class AperturePeer : public AperturePeerBase
     
     mutable RxStats rxStats_;
     
-    std::array<std::vector<std::uint32_t>, verticesPerFaceN_ + 1> sphereMap_;
-    bool hasSphereMap_{false};
+    using SphereMapType = std::array<std::vector<std::uint32_t>, verticesPerFaceN_ + 1>;
+    mutable std::mutex sphereMapMutex_;
+    std::shared_ptr<const SphereMapType> sphereMap_;
     
 public:
     AperturePeer(in_addr_t clntAddr,

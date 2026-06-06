@@ -537,24 +537,23 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
      */
     std::array<std::vector<uint16_t>, regionCount> newBuffers;
 
-    std::array<std::vector<std::uint32_t>, regionCount> localSphereMap;
-    {
-        std::scoped_lock lock(bufferMutex_);
-
-        if (!hasSphereMap_) {
-            std::cerr << "[RunFrameLoop] no SphereMap received yet for "
-                      << peerLabel_
-                      << "; dropping frame_id="
-                      << frameHeader.gainMsg_.frame_id
-                      << '\n';
-
-            ++rxStats_.rxFail;
-            MaybePrintRxSummary();
-            return false;
-        }
-
-        localSphereMap = sphereMap_;
-    }
+	std::shared_ptr<const SphereMapType> localSphereMap;
+	{
+		std::scoped_lock lock(sphereMapMutex_);
+		localSphereMap = sphereMap_;
+	}
+	
+	if (!localSphereMap) {
+		std::cerr << "[RunFrameLoop] no SphereMap received yet for "
+				  << peerLabel_
+				  << "; dropping frame_id="
+				  << frameHeader.gainMsg_.frame_id
+				  << '\n';
+	
+		++rxStats_.rxFail;
+		MaybePrintRxSummary();
+		return false;
+	}
 
     constexpr std::size_t scatterOutputSize =
         static_cast<std::size_t>(sensorWidthValue_) *
@@ -566,9 +565,9 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
         const std::size_t validSize =
             this->tpgydp_.RegionValidSize(regionIndex);
 
-        const auto& map =
-            localSphereMap[regionIndex];
-
+		const auto& map =
+			(*localSphereMap)[regionIndex];
+			
         if (map.size() != validSize) {
             std::cerr << "[RunFrameLoop] SphereMap/data size mismatch:"
                       << " region=" << regionIndex
@@ -635,7 +634,7 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
                       << this->tpgydp_.RegionValidSize(regionIndex)
                       << " r" << regionIndex
                       << "_map="
-                      << localSphereMap[regionIndex].size()
+                      << (*localSphereMap)[regionIndex].size()
                       << " r" << regionIndex
                       << "_scattered="
                       << newBuffers[regionIndex].size();
@@ -1648,7 +1647,7 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
     constexpr std::size_t regionCount = verticesPerFaceN_ + 1;
     static_assert(NUM_REGIONS == regionCount);
 
-    std::array<std::vector<std::uint32_t>, regionCount> newMap{};
+    auto newMap = std::make_shared<SphereMapType>();
 
     std::size_t wordOffset = 0;
 
@@ -1673,7 +1672,7 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
             return false;
         }
 
-        auto& dst = newMap[region];
+        auto& dst = (*newMap)[region];
         dst.reserve(words / 2);
 
         for (std::size_t i = 0; i < words; i += 2) {
@@ -1691,16 +1690,15 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
         return false;
     }
 
-    {
-        std::scoped_lock lock(bufferMutex_);
-        sphereMap_ = std::move(newMap);
-        hasSphereMap_ = true;
-    }
+	{
+		std::scoped_lock lock(sphereMapMutex_);
+		sphereMap_ = newMap;
+	}
 
     std::cout << "[SphereMap RX] " << peerLabel_;
 
     for (std::size_t r = 0; r < regionCount; ++r) {
-        std::cout << " r" << r << "_indices=" << sphereMap_[r].size();
+        std::cout << " r" << r << "_indices=" << (*newMap)[r].size();
     }
 
     std::cout << '\n';
