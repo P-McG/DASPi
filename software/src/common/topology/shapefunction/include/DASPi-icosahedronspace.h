@@ -62,16 +62,23 @@ struct IcosahedronTables {
      * which is the height in this case.
      */
     static constexpr double overlapAdjustor_{0.75};
-
-    static constexpr double pixelsPerNormalToNormalAngle_{
-        1.335/*fudge factor*/ * overlapAdjustor_ * static_cast<double>(sensorHeightValue_) * std::numbers::sqrt3 / 3.0
-    };
-
+    
     // In radians.
     // 41.81031489577859647602 degrees.
     // normalToNormalAngle = acos(sqrt(5.0) / 3.0)
     static constexpr double normalToNormalAngle_{0.72972765622696635559};
+    
+    static constexpr double geometricPixelsPerNormalToNormalAngle_{
+        static_cast<double>(sensorHeightValue_) *
+        std::numbers::sqrt3 / 3.0
+    };
+    
+    static constexpr double lensFovScale_{1.0/(0.75) * 1.095 * normalToNormalAngle_};
 
+    static constexpr double pixelsPerNormalToNormalAngle_{
+        geometricPixelsPerNormalToNormalAngle_ / lensFovScale_
+    };
+    
     static constexpr double pixelsPerRadian_{
         pixelsPerNormalToNormalAngle_ / normalToNormalAngle_
     };
