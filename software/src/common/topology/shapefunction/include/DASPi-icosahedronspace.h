@@ -66,15 +66,17 @@ struct IcosahedronTables {
     // In radians.
     // 41.81031489577859647602 degrees.
     // normalToNormalAngle = acos(sqrt(5.0) / 3.0)
-    static constexpr double normalToNormalAngle_{0.72972765622696635559};
+    static constexpr double normalToNormalAngle_{
+        0.72972765622696635559
+    };
     
     static constexpr double geometricPixelsPerNormalToNormalAngle_{
         static_cast<double>(sensorHeightValue_) *
         std::numbers::sqrt3 / 3.0
     };
     
-    static constexpr double lensFovScale_{1.0/(0.75) * 1.095 * normalToNormalAngle_};
-
+    static constexpr double lensFovScale_{1.095}; // unitless only
+    
     static constexpr double pixelsPerNormalToNormalAngle_{
         geometricPixelsPerNormalToNormalAngle_ / lensFovScale_
     };

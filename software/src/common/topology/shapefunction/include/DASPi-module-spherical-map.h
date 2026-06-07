@@ -145,73 +145,127 @@ private:
         }
     }
 
+    //Test Version
     static Eigen::Vector3d SensorIndexToCameraRay(std::uint32_t sensorIndex)
     {
         const std::uint32_t x =
             sensorIndex % static_cast<std::uint32_t>(sensorWidthValue_);
-
+    
         const std::uint32_t y =
             sensorIndex / static_cast<std::uint32_t>(sensorWidthValue_);
-
+    
         if (y >= static_cast<std::uint32_t>(sensorHeightValue_)) {
             throw std::out_of_range(
                 "ModuleSphericalMap: sensor index outside sensor frame"
             );
         }
-
+    
         const double cx =
             static_cast<double>(sensorWidthValue_) * 0.5;
-
+    
         const double cy =
             static_cast<double>(sensorHeightValue_) * 0.5;
-
+    
         /*
-         * Positive camera Y follows the existing camera model convention:
-         *
-         *   uv.y > cy -> ray.y > 0
-         *
-         * If the output appears vertically flipped, this is the single place
-         * to change by negating dy.
+         * Flat triangle center-to-center spacing across a shared edge.
          */
-        const double dx =
-            (static_cast<double>(x) + 0.5 - cx) / pixelsPerRadian_;
-
-        const double dy =
-            (static_cast<double>(y) + 0.5 - cy) / pixelsPerRadian_;
-
-        const double radius =
-            std::sqrt(dx * dx + dy * dy);
-
-        if (radius < 1.0e-12) {
-            return Eigen::Vector3d(0.0, 0.0, 1.0);
-        }
-
+        constexpr double facetCenterToCenterPx =
+            static_cast<double>(sensorHeightValue_) *
+            std::numbers::sqrt3 / 3.0;
+    
         /*
-         * Equidistant angular model:
+         * For gnomonic/pinhole:
          *
-         *   radius in normalized pixel space is theta in radians.
+         *     tan(theta) = pixel_offset / focal_px
          *
-         * This is intentionally simple for the first global spherical-map
-         * patch and uses the topology's pixels-per-radian scale.
+         * so:
+         *
+         *     focal_px = pixel_offset / tan(theta)
          */
-        const double theta =
-            radius;
-
-        const double sinTheta =
-            std::sin(theta);
-
-        const double cosTheta =
-            std::cos(theta);
-
-        const double scale =
-            sinTheta / radius;
-
+        constexpr double cameraFocalPx =
+            facetCenterToCenterPx /
+            std::tan(DASPi::detail::IcosahedronTables::normalToNormalAngle_);
+    
+        const double nx =
+            (static_cast<double>(x) + 0.5 - cx) / cameraFocalPx;
+    
+        const double ny =
+            (static_cast<double>(y) + 0.5 - cy) / cameraFocalPx;
+    
         return Eigen::Vector3d(
-            dx * scale,
-            dy * scale,
-            cosTheta
+            nx,
+            ny,
+            1.0
         ).normalized();
     }
+
+    //static Eigen::Vector3d SensorIndexToCameraRay(std::uint32_t sensorIndex)
+    //{
+        //const std::uint32_t x =
+            //sensorIndex % static_cast<std::uint32_t>(sensorWidthValue_);
+
+        //const std::uint32_t y =
+            //sensorIndex / static_cast<std::uint32_t>(sensorWidthValue_);
+
+        //if (y >= static_cast<std::uint32_t>(sensorHeightValue_)) {
+            //throw std::out_of_range(
+                //"ModuleSphericalMap: sensor index outside sensor frame"
+            //);
+        //}
+
+        //const double cx =
+            //static_cast<double>(sensorWidthValue_) * 0.5;
+
+        //const double cy =
+            //static_cast<double>(sensorHeightValue_) * 0.5;
+
+        ///*
+         //* Positive camera Y follows the existing camera model convention:
+         //*
+         //*   uv.y > cy -> ray.y > 0
+         //*
+         //* If the output appears vertically flipped, this is the single place
+         //* to change by negating dy.
+         //*/
+        //const double dx =
+            //(static_cast<double>(x) + 0.5 - cx) / pixelsPerRadian_;
+
+        //const double dy =
+            //(static_cast<double>(y) + 0.5 - cy) / pixelsPerRadian_;
+
+        //const double radius =
+            //std::sqrt(dx * dx + dy * dy);
+
+        //if (radius < 1.0e-12) {
+            //return Eigen::Vector3d(0.0, 0.0, 1.0);
+        //}
+
+        ///*
+         //* Equidistant angular model:
+         //*
+         //*   radius in normalized pixel space is theta in radians.
+         //*
+         //* This is intentionally simple for the first global spherical-map
+         //* patch and uses the topology's pixels-per-radian scale.
+         //*/
+        //const double theta =
+            //radius;
+
+        //const double sinTheta =
+            //std::sin(theta);
+
+        //const double cosTheta =
+            //std::cos(theta);
+
+        //const double scale =
+            //sinTheta / radius;
+
+        //return Eigen::Vector3d(
+            //dx * scale,
+            //dy * scale,
+            //cosTheta
+        //).normalized();
+    //}
 
     static std::uint32_t WorldRayToEquirectIndex(
         const Eigen::Vector3d& rayWorld)
