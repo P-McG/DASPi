@@ -73,6 +73,9 @@ public:
      */
     static constexpr double pixelsPerRadian_ =
         DASPi::detail::IcosahedronTables::pixelsPerRadian_;
+        
+    static constexpr bool debugSphericalEdgeError_{true};
+    static constexpr int debugEdgeSampleCount_{8};
 
     using RegionMap =
         std::vector<std::uint32_t>;
@@ -84,10 +87,7 @@ public:
 
     template<class OverlapTopologyType>
     explicit ModuleSphericalMap(const OverlapTopologyType& topology)
-    {
-        static constexpr bool debugSphericalEdgeError_{true};
-        static constexpr int debugEdgeSampleCount_{8};
-        
+    {      
         Build(topology);
     }
 
@@ -166,8 +166,113 @@ private:
     {
         return rad * 180.0 / std::numbers::pi;
     }
+
+    //static Eigen::Vector3d SensorPointToCameraRay_Gnomonic(double x, double y)
+    //{
+        //const double cx =
+            //static_cast<double>(sensorWidthValue_) * 0.5;
     
-    static Eigen::Vector3d SensorPointToCameraRay(double x, double y)
+        //const double cy =
+            //static_cast<double>(sensorHeightValue_) * 0.5;
+    
+        ///*
+         //* Actual current flat triangle radius from the logged points:
+         //*
+         //* center = (728, 544)
+         //* vertex = (1199, 544)
+         //* radius = 471 px
+         //*
+         //* This is 0.75 * sensorHeightValue_ * sqrt(3) / 3.
+         //*/
+        //constexpr double flatTriangleRadiusPx =
+            //0.75 *
+            //static_cast<double>(sensorHeightValue_) *
+            //std::numbers::sqrt3 / 3.0;
+    
+        ///*
+         //* Icosahedron face-center to vertex angle:
+         //*
+         //* For a regular icosahedron spherical face this is about:
+         //* 37.3773681406 deg.
+         //*/
+        //constexpr double faceCenterToVertexAngleRad =
+            //0.6523581397843682;
+    
+        ///*
+         //* Gnomonic/pinhole:
+         //*
+         //*     tan(theta) = radius_px / focal_px
+         //*/
+        //constexpr double cameraFocalPx =
+            //flatTriangleRadiusPx /
+            //std::tan(faceCenterToVertexAngleRad);
+    
+        //const double nx =
+            //(x - cx) / cameraFocalPx;
+    
+        //const double ny =
+            //(y - cy) / cameraFocalPx;
+    
+        //return Eigen::Vector3d(
+            //nx,
+            //ny,
+            //1.0
+        //).normalized();
+    //}
+
+    //static Eigen::Vector3d SensorPointToCameraRay(double x, double y)
+    //{
+        //const double cx =
+            //static_cast<double>(sensorWidthValue_) * 0.5;
+    
+        //const double cy =
+            //static_cast<double>(sensorHeightValue_) * 0.5;
+    
+        ///*
+         //* Positive camera Y follows the existing camera model convention:
+         //*
+         //*   uv.y > cy -> ray.y > 0
+         //*/
+        //const double dx =
+            //(x - cx) / pixelsPerRadian_;
+    
+        //const double dy =
+            //(y - cy) / pixelsPerRadian_;
+    
+        //const double radius =
+            //std::sqrt(dx * dx + dy * dy);
+    
+        //if (radius < 1.0e-12) {
+            //return Eigen::Vector3d(0.0, 0.0, 1.0);
+        //}
+    
+        ///*
+         //* Current equidistant angular model.
+         //*
+         //* This is the thing we are testing.
+         //*/
+        //const double theta =
+            //radius;
+    
+        //const double sinTheta =
+            //std::sin(theta);
+    
+        //const double cosTheta =
+            //std::cos(theta);
+    
+        //const double scale =
+            //sinTheta / radius;
+    
+        //return Eigen::Vector3d(
+            //dx * scale,
+            //dy * scale,
+            //cosTheta
+        //).normalized();
+    //}
+    
+ static constexpr bool useGnomonicProjection_{true};
+
+    static Eigen::Vector3d SensorPointToCameraRay_Equidistant(double x, double y)
     {
         const double cx =
             static_cast<double>(sensorWidthValue_) * 0.5;
@@ -175,11 +280,6 @@ private:
         const double cy =
             static_cast<double>(sensorHeightValue_) * 0.5;
     
-        /*
-         * Positive camera Y follows the existing camera model convention:
-         *
-         *   uv.y > cy -> ray.y > 0
-         */
         const double dx =
             (x - cx) / pixelsPerRadian_;
     
@@ -193,11 +293,6 @@ private:
             return Eigen::Vector3d(0.0, 0.0, 1.0);
         }
     
-        /*
-         * Current equidistant angular model.
-         *
-         * This is the thing we are testing.
-         */
         const double theta =
             radius;
     
@@ -217,24 +312,46 @@ private:
         ).normalized();
     }
     
-    static Eigen::Vector3d SensorIndexToCameraRay(std::uint32_t sensorIndex)
+    static Eigen::Vector3d SensorPointToCameraRay_Gnomonic(double x, double y)
     {
-        const std::uint32_t x =
-            sensorIndex % static_cast<std::uint32_t>(sensorWidthValue_);
+        const double cx =
+            static_cast<double>(sensorWidthValue_) * 0.5;
     
-        const std::uint32_t y =
-            sensorIndex / static_cast<std::uint32_t>(sensorWidthValue_);
+        const double cy =
+            static_cast<double>(sensorHeightValue_) * 0.5;
     
-        if (y >= static_cast<std::uint32_t>(sensorHeightValue_)) {
-            throw std::out_of_range(
-                "ModuleSphericalMap: sensor index outside sensor frame"
-            );
+        constexpr double flatTriangleRadiusPx =
+            0.75 *
+            static_cast<double>(sensorHeightValue_) *
+            std::numbers::sqrt3 / 3.0;
+    
+        constexpr double faceCenterToVertexAngleRad =
+            0.6523581397843682;
+    
+        constexpr double cameraFocalPx =
+            flatTriangleRadiusPx /
+            std::tan(faceCenterToVertexAngleRad);
+    
+        const double nx =
+            (x - cx) / cameraFocalPx;
+    
+        const double ny =
+            (y - cy) / cameraFocalPx;
+    
+        return Eigen::Vector3d(
+            nx,
+            ny,
+            1.0
+        ).normalized();
+    }
+    
+    static Eigen::Vector3d SensorPointToCameraRay(double x, double y)
+    {
+        if constexpr (useGnomonicProjection_) {
+            return SensorPointToCameraRay_Gnomonic(x, y);
+        } else {
+            return SensorPointToCameraRay_Equidistant(x, y);
         }
-    
-        return SensorPointToCameraRay(
-            static_cast<double>(x) + 0.5,
-            static_cast<double>(y) + 0.5
-        );
     }
 
     ////Test Version
@@ -405,6 +522,22 @@ private:
         return y * outputWidth_ + x;
     }
     
+    static double PlaneAngleDeg(
+        const Eigen::Vector3d& a,
+        const Eigen::Vector3d& b)
+    {
+        const double dot =
+            std::abs(
+                std::clamp(
+                    a.normalized().dot(b.normalized()),
+                    -1.0,
+                    1.0
+                )
+            );
+    
+        return RadToDeg(std::acos(dot));
+    }
+    
     template<class NonOverlapTopologyType>
     static void DebugPrintFaceEdgeProjectionError(
         const NonOverlapTopologyType& flatTopology,
@@ -448,20 +581,39 @@ private:
         const RigFace<N>& anchorFace =
             rig.faces[anchorFaceIndex];
     
-        /*
-         * Make expected spherical face edges live in the same world frame as Rcw.
-         *
-         * MakeModuleCameraRcw() returns:
-         *
-         *     Rrig * Rface * Ralign * Rimg
-         *
-         * so the reference face vertices need Rrig too.
-         */
         const Eigen::Matrix3d Rrig =
             RotationAligningAToB(
                 anchorFace.lookDir,
                 Eigen::Vector3d(0.0, 0.0, 1.0)
             );
+    
+        std::array<Eigen::Vector3d, N> sphericalEdgePlanes{};
+    
+        for (std::size_t edge = 0; edge < N; ++edge) {
+            const std::size_t next =
+                (edge + 1) % N;
+    
+            const Eigen::Vector3d aWorld =
+                (Rrig * rig.vertices[face.indices[edge]]).normalized();
+    
+            const Eigen::Vector3d bWorld =
+                (Rrig * rig.vertices[face.indices[next]]).normalized();
+    
+            Eigen::Vector3d plane =
+                aWorld.cross(bWorld);
+    
+            const double norm =
+                plane.norm();
+    
+            if (norm < 1.0e-12) {
+                throw std::runtime_error(
+                    "DebugPrintFaceEdgeProjectionError: degenerate spherical edge plane"
+                );
+            }
+    
+            sphericalEdgePlanes[edge] =
+                plane / norm;
+        }
     
         std::cout << "\n[SphericalEdgeDebug]"
                   << " module=" << ModuleIndex
@@ -470,97 +622,159 @@ private:
                   << pixelsPerRadian_
                   << '\n';
     
-        for (std::size_t localEdge = 0; localEdge < N; ++localEdge) {
-            const std::size_t nextEdge =
-                (localEdge + 1) % N;
+        for (std::size_t flatEdge = 0; flatEdge < N; ++flatEdge) {
+            const std::size_t nextFlatEdge =
+                (flatEdge + 1) % N;
     
             const auto& p0 =
-                flatTopology.shapeDefiningPoints_[localEdge];
+                flatTopology.shapeDefiningPoints_[flatEdge];
     
             const auto& p1 =
-                flatTopology.shapeDefiningPoints_[nextEdge];
+                flatTopology.shapeDefiningPoints_[nextFlatEdge];
     
-            const Eigen::Vector3d aWorld =
-                (Rrig * rig.vertices[face.indices[localEdge]]).normalized();
+            const double x0 =
+                static_cast<double>(p0.x());
     
-            const Eigen::Vector3d bWorld =
-                (Rrig * rig.vertices[face.indices[nextEdge]]).normalized();
+            const double y0 =
+                static_cast<double>(p0.y());
     
-            Eigen::Vector3d edgePlaneNormal =
-                aWorld.cross(bWorld);
+            const double x1 =
+                static_cast<double>(p1.x());
     
-            const double edgePlaneNorm =
-                edgePlaneNormal.norm();
+            const double y1 =
+                static_cast<double>(p1.y());
     
-            if (edgePlaneNorm < 1.0e-12) {
+            //const Eigen::Vector3d ray0 =
+                //(Rcw * SensorPointToCameraRay(x0, y0)).normalized();
+    
+            //const Eigen::Vector3d ray1 =
+                //(Rcw * SensorPointToCameraRay(x1, y1)).normalized();
+                
+            const Eigen::Vector3d ray0 =
+                (Rcw * SensorPointToCameraRay_Gnomonic(x0, y0)).normalized();
+            
+            const Eigen::Vector3d ray1 =
+                (Rcw * SensorPointToCameraRay_Gnomonic(x1, y1)).normalized();
+    
+            Eigen::Vector3d measuredPlane =
+                ray0.cross(ray1);
+    
+            const double measuredPlaneNorm =
+                measuredPlane.norm();
+    
+            if (measuredPlaneNorm < 1.0e-12) {
                 throw std::runtime_error(
-                    "DebugPrintFaceEdgeProjectionError: degenerate edge plane"
+                    "DebugPrintFaceEdgeProjectionError: degenerate measured edge plane"
                 );
             }
     
-            edgePlaneNormal /= edgePlaneNorm;
+            measuredPlane /= measuredPlaneNorm;
     
-            double maxAbsErrorDeg = 0.0;
+            std::size_t bestSphericalEdge = 0;
+            double bestPlaneAngleDeg =
+                std::numeric_limits<double>::infinity();
     
-            std::cout << "  edge=" << localEdge
+            for (std::size_t sphericalEdge = 0;
+                 sphericalEdge < N;
+                 ++sphericalEdge) {
+    
+                const double angleDeg =
+                    PlaneAngleDeg(
+                        measuredPlane,
+                        sphericalEdgePlanes[sphericalEdge]
+                    );
+    
+                if (angleDeg < bestPlaneAngleDeg) {
+                    bestPlaneAngleDeg = angleDeg;
+                    bestSphericalEdge = sphericalEdge;
+                }
+            }
+    
+            std::cout << "  flatEdge=" << flatEdge
                       << " flat=("
                       << p0.x() << "," << p0.y()
                       << ") -> ("
                       << p1.x() << "," << p1.y()
-                      << ")\n";
+                      << ")"
+                      << " bestSphericalEdge=" << bestSphericalEdge
+                      << " planeAngleDeg="
+                      << std::setprecision(6)
+                      << bestPlaneAngleDeg
+                      << '\n';
+    
+            double maxMeasuredBowDeg = 0.0;
+            double maxBestEdgeErrorDeg = 0.0;
     
             for (int sample = 0;
-                 sample <= debugEdgeSampleCount_;
+                 sample <= ModuleSphericalMap::debugEdgeSampleCount_;
                  ++sample) {
     
                 const double t =
                     static_cast<double>(sample) /
-                    static_cast<double>(debugEdgeSampleCount_);
+                    static_cast<double>(
+                        ModuleSphericalMap::debugEdgeSampleCount_
+                    );
     
                 const double sx =
-                    (1.0 - t) * static_cast<double>(p0.x()) +
-                    t * static_cast<double>(p1.x());
+                    (1.0 - t) * x0 + t * x1;
     
                 const double sy =
-                    (1.0 - t) * static_cast<double>(p0.y()) +
-                    t * static_cast<double>(p1.y());
+                    (1.0 - t) * y0 + t * y1;
     
-                const Eigen::Vector3d rayCamera =
-                    SensorPointToCameraRay(sx, sy);
-    
+                //const Eigen::Vector3d rayWorld =
+                    //(Rcw * SensorPointToCameraRay(sx, sy)).normalized();
                 const Eigen::Vector3d rayWorld =
-                    (Rcw * rayCamera).normalized();
+                    (Rcw * SensorPointToCameraRay_Gnomonic(sx, sy)).normalized();
     
-                const double signedErrorRad =
-                    std::asin(
-                        ClampUnit(
-                            rayWorld.dot(edgePlaneNormal)
+                const double measuredBowDeg =
+                    RadToDeg(
+                        std::asin(
+                            ClampUnit(
+                                rayWorld.dot(measuredPlane)
+                            )
                         )
                     );
     
-                const double signedErrorDeg =
-                    RadToDeg(signedErrorRad);
+                const double bestEdgeErrorDeg =
+                    RadToDeg(
+                        std::asin(
+                            ClampUnit(
+                                rayWorld.dot(
+                                    sphericalEdgePlanes[bestSphericalEdge]
+                                )
+                            )
+                        )
+                    );
     
-                maxAbsErrorDeg =
+                maxMeasuredBowDeg =
                     std::max(
-                        maxAbsErrorDeg,
-                        std::abs(signedErrorDeg)
+                        maxMeasuredBowDeg,
+                        std::abs(measuredBowDeg)
+                    );
+    
+                maxBestEdgeErrorDeg =
+                    std::max(
+                        maxBestEdgeErrorDeg,
+                        std::abs(bestEdgeErrorDeg)
                     );
     
                 std::cout << "    t=" << std::fixed << std::setprecision(3)
                           << t
                           << " sensor=("
-                          << std::setprecision(3)
                           << sx << "," << sy
-                          << ") edgeErrorDeg="
+                          << ") measuredBowDeg="
                           << std::setprecision(6)
-                          << signedErrorDeg
+                          << measuredBowDeg
+                          << " bestEdgeErrorDeg="
+                          << bestEdgeErrorDeg
                           << '\n';
             }
     
-            std::cout << "    maxAbsErrorDeg="
+            std::cout << "    maxMeasuredBowDeg="
                       << std::setprecision(6)
-                      << maxAbsErrorDeg
+                      << maxMeasuredBowDeg
+                      << " maxBestEdgeErrorDeg="
+                      << maxBestEdgeErrorDeg
                       << '\n';
         }
     
