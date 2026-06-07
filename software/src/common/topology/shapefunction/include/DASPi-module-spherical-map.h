@@ -71,10 +71,10 @@ public:
      *
      * It is the current bridge from sensor pixel offsets to angular offsets.
      */
-    static constexpr double pixelsPerRadian_ =
-        DASPi::detail::IcosahedronTables::pixelsPerRadian_;
+    static constexpr double cameraFocalPx_ =
+        DASPi::detail::IcosahedronTables::cameraFocalPx_;
         
-    static constexpr bool debugSphericalEdgeError_{true};
+    static constexpr bool debugSphericalEdgeError_{false};
     static constexpr int debugEdgeSampleCount_{8};
 
     using RegionMap =
@@ -234,10 +234,10 @@ private:
          //*   uv.y > cy -> ray.y > 0
          //*/
         //const double dx =
-            //(x - cx) / pixelsPerRadian_;
+            //(x - cx) / cameraFocalPx_;
     
         //const double dy =
-            //(y - cy) / pixelsPerRadian_;
+            //(y - cy) / cameraFocalPx_;
     
         //const double radius =
             //std::sqrt(dx * dx + dy * dy);
@@ -281,10 +281,10 @@ private:
             static_cast<double>(sensorHeightValue_) * 0.5;
     
         const double dx =
-            (x - cx) / pixelsPerRadian_;
+            (x - cx) / cameraFocalPx_;
     
         const double dy =
-            (y - cy) / pixelsPerRadian_;
+            (y - cy) / cameraFocalPx_;
     
         const double radius =
             std::sqrt(dx * dx + dy * dy);
@@ -347,66 +347,53 @@ private:
     
     static Eigen::Vector3d SensorPointToCameraRay(double x, double y)
     {
-        if constexpr (useGnomonicProjection_) {
-            return SensorPointToCameraRay_Gnomonic(x, y);
-        } else {
-            return SensorPointToCameraRay_Equidistant(x, y);
-        }
+        const double cx =
+            static_cast<double>(sensorWidthValue_) * 0.5;
+    
+        const double cy =
+            static_cast<double>(sensorHeightValue_) * 0.5;
+    
+        const double nx =
+            (x - cx) / cameraFocalPx_;
+    
+        const double ny =
+            (y - cy) / cameraFocalPx_;
+    
+        return Eigen::Vector3d(
+            nx,
+            ny,
+            1.0
+        ).normalized();
     }
-
-    ////Test Version
-    //static Eigen::Vector3d SensorIndexToCameraRay(std::uint32_t sensorIndex)
+    
+    //static Eigen::Vector3d SensorPointToCameraRay(double x, double y)
     //{
-        //const std::uint32_t x =
-            //sensorIndex % static_cast<std::uint32_t>(sensorWidthValue_);
-    
-        //const std::uint32_t y =
-            //sensorIndex / static_cast<std::uint32_t>(sensorWidthValue_);
-    
-        //if (y >= static_cast<std::uint32_t>(sensorHeightValue_)) {
-            //throw std::out_of_range(
-                //"ModuleSphericalMap: sensor index outside sensor frame"
-            //);
+        //if constexpr (useGnomonicProjection_) {
+            //return SensorPointToCameraRay_Gnomonic(x, y);
+        //} else {
+            //return SensorPointToCameraRay_Equidistant(x, y);
         //}
-    
-        //const double cx =
-            //static_cast<double>(sensorWidthValue_) * 0.5;
-    
-        //const double cy =
-            //static_cast<double>(sensorHeightValue_) * 0.5;
-    
-        ///*
-         //* Flat triangle center-to-center spacing across a shared edge.
-         //*/
-        //constexpr double facetCenterToCenterPx =
-            //static_cast<double>(sensorHeightValue_) *
-            //std::numbers::sqrt3 / 3.0;
-    
-        ///*
-         //* For gnomonic/pinhole:
-         //*
-         //*     tan(theta) = pixel_offset / focal_px
-         //*
-         //* so:
-         //*
-         //*     focal_px = pixel_offset / tan(theta)
-         //*/
-        //constexpr double cameraFocalPx =
-            //facetCenterToCenterPx /
-            //std::tan(DASPi::detail::IcosahedronTables::normalToNormalAngle_);
-    
-        //const double nx =
-            //(static_cast<double>(x) + 0.5 - cx) / cameraFocalPx;
-    
-        //const double ny =
-            //(static_cast<double>(y) + 0.5 - cy) / cameraFocalPx;
-    
-        //return Eigen::Vector3d(
-            //nx,
-            //ny,
-            //1.0
-        //).normalized();
     //}
+
+    static Eigen::Vector3d SensorIndexToCameraRay(std::uint32_t sensorIndex)
+    {
+        const std::uint32_t x =
+            sensorIndex % static_cast<std::uint32_t>(sensorWidthValue_);
+    
+        const std::uint32_t y =
+            sensorIndex / static_cast<std::uint32_t>(sensorWidthValue_);
+    
+        if (y >= static_cast<std::uint32_t>(sensorHeightValue_)) {
+            throw std::out_of_range(
+                "ModuleSphericalMap: sensor index outside sensor frame"
+            );
+        }
+    
+        return SensorPointToCameraRay(
+            static_cast<double>(x) + 0.5,
+            static_cast<double>(y) + 0.5
+        );
+    }
 
     //static Eigen::Vector3d SensorIndexToCameraRay(std::uint32_t sensorIndex)
     //{
@@ -437,10 +424,10 @@ private:
          //* to change by negating dy.
          //*/
         //const double dx =
-            //(static_cast<double>(x) + 0.5 - cx) / pixelsPerRadian_;
+            //(static_cast<double>(x) + 0.5 - cx) / cameraFocalPx_;
 
         //const double dy =
-            //(static_cast<double>(y) + 0.5 - cy) / pixelsPerRadian_;
+            //(static_cast<double>(y) + 0.5 - cy) / cameraFocalPx_;
 
         //const double radius =
             //std::sqrt(dx * dx + dy * dy);
@@ -619,7 +606,7 @@ private:
                   << " module=" << ModuleIndex
                   << " facet=" << FacetIndex
                   << " pixelsPerRadian=" << std::setprecision(12)
-                  << pixelsPerRadian_
+                  << cameraFocalPx_
                   << '\n';
     
         for (std::size_t flatEdge = 0; flatEdge < N; ++flatEdge) {

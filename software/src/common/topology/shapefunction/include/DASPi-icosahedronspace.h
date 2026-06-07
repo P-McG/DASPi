@@ -81,7 +81,7 @@ struct IcosahedronTables {
         geometricPixelsPerNormalToNormalAngle_ / lensFovScale_
     };
     
-    static constexpr double pixelsPerRadian_{
+    static constexpr double cameraFocalPx_{
         pixelsPerNormalToNormalAngle_ / normalToNormalAngle_
     };
 
