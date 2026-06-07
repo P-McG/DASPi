@@ -260,6 +260,38 @@ inline Eigen::Matrix3d CameraRollDeg(double deg)
     ).toRotationMatrix();
 }
 
+inline Eigen::Matrix3d CameraLocalPitchDeg(double deg)
+{
+    const double rad =
+        deg * std::numbers::pi / 180.0;
+
+    /*
+     * Local camera +X axis.
+     *
+     * This tilts the camera forward/backward in its own frame.
+     */
+    return Eigen::AngleAxisd(
+        rad,
+        Eigen::Vector3d::UnitX()
+    ).toRotationMatrix();
+}
+
+inline Eigen::Matrix3d CameraLocalYawDeg(double deg)
+{
+    const double rad =
+        deg * std::numbers::pi / 180.0;
+
+    /*
+     * Local camera +Y axis.
+     *
+     * This pans the camera left/right in its own frame.
+     */
+    return Eigen::AngleAxisd(
+        rad,
+        Eigen::Vector3d::UnitY()
+    ).toRotationMatrix();
+}
+
 template<std::size_t ModuleIndex>
 inline constexpr double CameraLocalRollDegForModule()
 {
@@ -270,6 +302,85 @@ inline constexpr double CameraLocalRollDegForModule()
     } else {
         return 0.0;
     }
+}
+
+template<std::size_t ModuleIndex>
+inline constexpr double CameraLocalRollCorrectionDegForModule()
+{
+    if constexpr (ModuleIndex == 0) {
+        return 0.0;      // keep module 0 as the reference
+    } else if constexpr (ModuleIndex == 1) {
+        return 0.0;      // tune this: try +/- 0.25, +/- 0.5, +/- 1.0
+    } else {
+        return 0.0;
+    }
+}
+
+template<std::size_t ModuleIndex>
+inline constexpr double CameraLocalYawCorrectionDegForModule()
+{
+    if constexpr (ModuleIndex == 0) {
+        return 0.0;
+    } else if constexpr (ModuleIndex == 1) {
+        return 0.0;
+    } else {
+        return 0.0;
+    }
+}
+
+template<std::size_t ModuleIndex>
+inline constexpr double CameraLocalPitchCorrectionDegForModule()
+{
+    if constexpr (ModuleIndex == 0) {
+        return 0.0;
+    } else if constexpr (ModuleIndex == 1) {
+        return 0.0;
+    } else {
+        return 0.0;
+    }
+}
+
+template<std::size_t ModuleIndex>
+inline constexpr double CameraLocalRollCorrectionDegForModule()
+{
+    if constexpr (ModuleIndex == 0) {
+        return 0.0;
+    } else if constexpr (ModuleIndex == 1) {
+        return 0.0;
+    } else {
+        return 0.0;
+    }
+}
+
+template<std::size_t ModuleIndex>
+inline Eigen::Matrix3d CameraLocalExtrinsicCorrection()
+{
+    const Eigen::Matrix3d Ryaw =
+        CameraLocalYawDeg(
+            CameraLocalYawCorrectionDegForModule<ModuleIndex>()
+        );
+
+    const Eigen::Matrix3d Rpitch =
+        CameraLocalPitchDeg(
+            CameraLocalPitchCorrectionDegForModule<ModuleIndex>()
+        );
+
+    const Eigen::Matrix3d Rroll =
+        CameraRollDeg(
+            CameraLocalRollCorrectionDegForModule<ModuleIndex>()
+        );
+
+    /*
+     * Local-frame correction.
+     *
+     * This matrix is post-multiplied onto Rcw, so the correction happens
+     * in the camera's own local axes:
+     *
+     *   +X = camera right
+     *   +Y = camera up
+     *   +Z = camera forward
+     */
+    return Ryaw * Rpitch * Rroll;
 }
 
 inline Eigen::Matrix3d CameraModelToRigAlignment()
@@ -476,8 +587,16 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
         CameraRollDeg(
             CameraLocalRollDegForModule<ModuleIndex>()
         );
-
-    return Rrig * Rface * Ralign * Rimg;
+        
+	const Eigen::Matrix3d Rcal =
+	    CameraLocalExtrinsicCorrection<ModuleIndex>();
+	
+	const Eigen::Matrix3d RrollCorrection =
+	    CameraRollDeg(
+	        CameraLocalRollCorrectionDegForModule<ModuleIndex>()
+	    );
+	
+	return Rrig * Rface * Ralign * Rimg * RrollCorrection;
 }
 
 } // namespace DASPi
