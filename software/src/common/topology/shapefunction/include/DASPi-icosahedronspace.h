@@ -64,7 +64,7 @@ struct IcosahedronTables {
     static constexpr double overlapAdjustor_{0.75};
 
     static constexpr double pixelsPerNormalToNormalAngle_{
-        overlapAdjustor_ * static_cast<double>(sensorHeightValue_)
+        1.335/*fudge factor*/ * overlapAdjustor_ * static_cast<double>(sensorHeightValue_) * std::numbers::sqrt3 / 3.0
     };
 
     // In radians.

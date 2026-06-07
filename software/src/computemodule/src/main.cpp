@@ -1575,11 +1575,12 @@ void SaveBayerBGGRDebugOnce(const std::vector<uint16_t>& raw,
             kFrameHeight
         );
     } else {
-        bgr = decodeBayer16ToBgr8(
-            raw.data(),
-            kFrameWidth,
-            kFrameHeight
-        );
+        cv::Mat bgr =
+            raw16ProjectedToGrayBgr8(
+                raw,
+                kFrameWidth,
+                kFrameHeight
+            );
     }
 
     const std::string path =

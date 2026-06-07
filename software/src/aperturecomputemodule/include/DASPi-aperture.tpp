@@ -976,9 +976,10 @@ void Aperture<FacetIndex, ModuleIndex>::RunEventLoop(int timeout){
 }
 
 template<unsigned int FacetIndex, std::size_t ModuleIndex>
-void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(const uint64_t frameNumber,
-                                            const libcamera::FrameBuffer* buffer,
-                                            const GainMsg& gainMsg)
+void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
+    const uint64_t frameNumber,
+    const libcamera::FrameBuffer* buffer,
+    const GainMsg& gainMsg)
 {
     constexpr bool kWriteBayerDebugImages = false;
     constexpr bool kVerboseTxTiming = true;
@@ -988,6 +989,34 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(const uint64_t frameNum
     if constexpr (kApertureTxLogUdpFrame) {
         std::cout << "[FrameBufferToUDP] frame=" << frameNumber
                   << " buffer=" << buffer << '\n';
+    }
+
+    /*
+     * SphereMap is sent over UDP, so it can be missed if Compute starts
+     * after Aperture or if the startup packets are dropped.
+     *
+     * Until a SphereMapAck exists, resend periodically:
+     *
+     *   - fast resend during early startup
+     *   - slow resend forever as a safety net
+     *
+     * SendSphereMap() uses the frame UDP path and is handled separately
+     * by the Compute receiver before normal frame processing.
+     */
+    constexpr std::uint64_t kSphereMapFastResendUntilFrame = 300; // ~10s @ 30fps
+    constexpr std::uint64_t kSphereMapFastResendPeriod = 30;      // ~1s @ 30fps
+    constexpr std::uint64_t kSphereMapSlowResendPeriod = 300;     // ~10s @ 30fps
+
+    const bool sendFastSphereMap =
+        frameNumber <= kSphereMapFastResendUntilFrame &&
+        (frameNumber % kSphereMapFastResendPeriod) == 0;
+
+    const bool sendSlowSphereMap =
+        frameNumber > kSphereMapFastResendUntilFrame &&
+        (frameNumber % kSphereMapSlowResendPeriod) == 0;
+
+    if (sendFastSphereMap || sendSlowSphereMap) {
+        SendSphereMap();
     }
 
     const auto planes = buffer->planes();
@@ -1179,14 +1208,14 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(const uint64_t frameNum
     );
 
     GainMsg appliedGainMsg = gainMsg;
-    
+
     appliedGainMsg.brightness_gain_apply = 1.0f;
     appliedGainMsg.r_gain_apply = appliedGainMsg.r_gain;
     appliedGainMsg.b_gain_apply = appliedGainMsg.b_gain;
-    
+
     {
         std::lock_guard<std::mutex> lock(gainMutex_);
-    
+
         if (gainValid_) {
             appliedGainMsg.brightness_gain_apply = latestBrightnessGainApply_;
             appliedGainMsg.r_gain_apply = latestRGainApply_;
