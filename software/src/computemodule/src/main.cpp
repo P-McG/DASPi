@@ -1651,7 +1651,7 @@ void SaveBayerRegionDebugOnce(const std::vector<uint16_t>& raw,
     saved.insert(key);
 
     if (raw.empty()) {
-        std::cerr << "[Bayer region debug] empty raw"
+        std::cerr << "[Projected region debug] empty raw"
                   << " peer=" << peerIndex
                   << " module=" << moduleIndex
                   << " region=" << localCameraIndex
@@ -1659,22 +1659,74 @@ void SaveBayerRegionDebugOnce(const std::vector<uint16_t>& raw,
         return;
     }
 
-    cv::Mat bgr = raw16ProjectedToGrayBgr8(raw, kFrameWidth, kFrameHeight);
+    const std::size_t expectedGrayElems =
+        static_cast<std::size_t>(kExpectedPixels);
+
+    const std::size_t expectedBgrElems =
+        expectedGrayElems * 3u;
+
+    cv::Mat bgr;
+
+    std::string mode;
+
+    if (raw.size() == expectedBgrElems) {
+        bgr =
+            raw16ProjectedBgrToBgr8(
+                raw,
+                kFrameWidth,
+                kFrameHeight
+            );
+
+        mode = "bgr";
+    } else if (raw.size() == expectedGrayElems) {
+        bgr =
+            raw16ProjectedToGrayBgr8(
+                raw,
+                kFrameWidth,
+                kFrameHeight
+            );
+
+        mode = "gray";
+    } else {
+        std::cerr << "[Projected region debug] unexpected raw size:"
+                  << " peer=" << peerIndex
+                  << " module=" << moduleIndex
+                  << " region=" << localCameraIndex
+                  << " raw.size()=" << raw.size()
+                  << " expectedGray=" << expectedGrayElems
+                  << " expectedBgr=" << expectedBgrElems
+                  << '\n';
+        return;
+    }
+
+    if (bgr.empty()) {
+        std::cerr << "[Projected region debug] converted image is empty:"
+                  << " peer=" << peerIndex
+                  << " module=" << moduleIndex
+                  << " region=" << localCameraIndex
+                  << " mode=" << mode
+                  << " raw.size()=" << raw.size()
+                  << '\n';
+        return;
+    }
 
     const std::string path =
-        "/tmp/preprojected_gray_p" + std::to_string(peerIndex) +
+        "/tmp/preprojected_" + mode +
+        "_p" + std::to_string(peerIndex) +
         "_m" + std::to_string(moduleIndex) +
         "_region" + std::to_string(localCameraIndex) +
         ".png";
 
-    const bool ok = cv::imwrite(path, bgr);
+    const bool ok =
+        cv::imwrite(path, bgr);
 
-    std::cout << "[Bayer region debug] "
+    std::cout << "[Projected region debug] "
               << (ok ? "saved " : "FAILED ")
               << path
               << " peer=" << peerIndex
               << " module=" << moduleIndex
               << " region=" << localCameraIndex
+              << " mode=" << mode
               << " raw.size()=" << raw.size()
               << " bgr.empty()=" << bgr.empty()
               << '\n';
@@ -3218,7 +3270,7 @@ void StartPeerThreads(
         frameThreads.emplace_back(
             [peer, peerIndex, moduleIndex, &liveCameras]() {
                 std::vector<uint16_t> raw;
-                raw.reserve(kExpectedPixels);
+                raw.reserve(static_cast<std::size_t>(kExpectedPixels) * 3u);
 
                 std::uint64_t noFrameLoopCount = 0;
                 std::uint64_t runFrameLoopFailCount = 0;
@@ -3289,32 +3341,24 @@ void StartPeerThreads(
                             continue;
 						}
 						
-						SaveBayerRegionDebugOnce(
-						    raw,
-						    peerIndex,
-						    moduleIndex,
-						    localCameraIndex
-						);
-						
-						const std::size_t globalIndex =
-						    GlobalCameraIndex(moduleIndex, localCameraIndex);
-
-                        if (globalIndex >= liveCameras.size()) {
-                            std::cerr << "[frame thread] globalIndex out of range "
-                                      << "(peer " << peerIndex
-                                      << ", module " << moduleIndex << "): "
-                                      << globalIndex
-                                      << " liveCameras.size()="
-                                      << liveCameras.size()
-                                      << '\n';
-
-                            gotStreamThisLoop[localCameraIndex] = false;
-                            continue;
-                        }
+                        SaveBayerRegionDebugOnce(
+                            raw,
+                            peerIndex,
+                            moduleIndex,
+                            localCameraIndex
+                        );
                         
-						if (localCameraIndex == 0) {
-						    SaveBayerBGGRDebugOnce(raw, moduleIndex, localCameraIndex);
-						}
+                        /*
+                         * Stage 2 buffers are already projected BGR16, not Bayer.
+                         * Only run the old Bayer debug helper for Stage 1 gray/raw buffers.
+                         */
+                        if (isGrayProjected && localCameraIndex == 0) {
+                            SaveBayerBGGRDebugOnce(
+                                raw,
+                                moduleIndex,
+                                localCameraIndex
+                            );
+                        }
 
 						cv::Mat bgr;
 
