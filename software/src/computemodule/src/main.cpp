@@ -593,6 +593,34 @@ void updateLatestFrame(LiveFrameBuffer& dst, const cv::Mat& frameBgr8)
     dst.hasFrame = true;
 }
 
+bool HasUsefulProjectedSignal(const std::vector<std::uint16_t>& raw)
+{
+    if (raw.empty()) {
+        return false;
+    }
+
+    std::size_t nonZero = 0;
+    std::uint64_t sum = 0;
+    std::uint16_t maxValue = 0;
+
+    for (const std::uint16_t v : raw) {
+        if (v != 0) {
+            ++nonZero;
+            sum += v;
+            maxValue = std::max(maxValue, v);
+        }
+    }
+
+    /*
+     * This is intentionally very loose.
+     * A real projected region should have more than a few non-zero pixels.
+     */
+    constexpr std::size_t kMinNonZeroPixels = 64;
+    constexpr std::uint16_t kMinMaxValue = 32;
+
+    return nonZero >= kMinNonZeroPixels && maxValue >= kMinMaxValue;
+}
+
 bool tryGetLatestFrame(LiveFrameBuffer& src, cv::Mat& dst)
 {
     std::scoped_lock lock(src.mutex);
@@ -3339,6 +3367,24 @@ void StartPeerThreads(
                         
                             gotStreamThisLoop[localCameraIndex] = false;
                             continue;
+                        }
+                        
+                        if (!HasUsefulProjectedSignal(raw)) {
+                            static std::atomic<std::uint64_t> blackDropCount{0};
+                        
+                            const auto n = ++blackDropCount;
+                        
+                            if ((n % kSignatureLogEvery) == 0) {
+                                std::cerr << "[frame thread] dropping all-black projected frame"
+                                          << " peer=" << peerIndex
+                                          << " module=" << moduleIndex
+                                          << " localCameraIndex=" << localCameraIndex
+                                          << " raw.size()=" << raw.size()
+                                          << '\n';
+                            }
+                        
+                            gotStreamThisLoop[localCameraIndex] = false;
+                            continue; // Keep previous good liveCameras[globalIndex].frame
                         }
                         
                         const std::size_t globalIndex =
