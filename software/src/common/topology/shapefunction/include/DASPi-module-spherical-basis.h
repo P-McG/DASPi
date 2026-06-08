@@ -310,7 +310,7 @@ inline constexpr double CameraLocalRollCorrectionDegForModule()
     if constexpr (ModuleIndex == 0) {
         return 0.0;      // keep module 0 as the reference
     } else if constexpr (ModuleIndex == 1) {
-        return 0.0;      // tune this: try +/- 0.25, +/- 0.5, +/- 1.0
+        return 0.0/*-12.0*/;      // tune this: try +/- 0.25, +/- 0.5, +/- 1.0
     } else {
         return 0.0;
     }
@@ -340,17 +340,17 @@ inline constexpr double CameraLocalPitchCorrectionDegForModule()
     }
 }
 
-template<std::size_t ModuleIndex>
-inline constexpr double CameraLocalRollCorrectionDegForModule()
-{
-    if constexpr (ModuleIndex == 0) {
-        return 0.0;
-    } else if constexpr (ModuleIndex == 1) {
-        return 0.0;
-    } else {
-        return 0.0;
-    }
-}
+//template<std::size_t ModuleIndex>
+//inline constexpr double CameraLocalRollCorrectionDegForModule()
+//{
+    //if constexpr (ModuleIndex == 0) {
+        //return 0.0;
+    //} else if constexpr (ModuleIndex == 1) {
+        //return 0.0;
+    //} else {
+        //return 0.0;
+    //}
+//}
 
 template<std::size_t ModuleIndex>
 inline Eigen::Matrix3d CameraLocalExtrinsicCorrection()
@@ -583,20 +583,15 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
             );
     }
 
-    const Eigen::Matrix3d Rimg =
-        CameraRollDeg(
-            CameraLocalRollDegForModule<ModuleIndex>()
-        );
-        
+	const Eigen::Matrix3d Rimg =
+	    CameraRollDeg(
+	        CameraLocalRollDegForModule<ModuleIndex>()
+	    );
+	
 	const Eigen::Matrix3d Rcal =
 	    CameraLocalExtrinsicCorrection<ModuleIndex>();
 	
-	const Eigen::Matrix3d RrollCorrection =
-	    CameraRollDeg(
-	        CameraLocalRollCorrectionDegForModule<ModuleIndex>()
-	    );
-	
-	return Rrig * Rface * Ralign * Rimg * RrollCorrection;
+	return Rrig * Rface * Ralign * Rimg * Rcal;
 }
 
 } // namespace DASPi

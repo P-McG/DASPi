@@ -75,7 +75,7 @@ struct IcosahedronTables {
         std::numbers::sqrt3 / 3.0
     };
     
-    static constexpr double lensFovScale_{1.095}; // unitless only
+    static constexpr double lensFovScale_{1.2/*1.095*/}; // unitless only
     
     static constexpr double pixelsPerNormalToNormalAngle_{
         geometricPixelsPerNormalToNormalAngle_ / lensFovScale_
