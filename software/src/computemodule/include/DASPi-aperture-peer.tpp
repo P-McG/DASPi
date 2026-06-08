@@ -529,34 +529,45 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
     const auto tUnpackDone = Clock::now();
 
     /*
-     * Replace FrameBufferUnmask() with SphereMap scatter.
+     * Stage 2 SphereMap scatter.
      *
-     * For the current placeholder map, the output index is still a
-     * full sensor-linear index. When ModuleSphericalMap becomes true
-     * spherical/panorama indexing, change scatterOutputSize to the
-     * global output size.
+     * The SphereMap entry is now packed as:
+     *
+     *   bits  0..29 = equirect output pixel index
+     *   bits 30..31 = Bayer channel
+     *
+     * Output buffer layout is BGR16 interleaved:
+     *
+     *   [B0, G0, R0, B1, G1, R1, ...]
+     *
+     * This keeps UDP frame payloads unchanged. Only the startup map now
+     * tells Compute which color channel each raw Bayer sample belongs to.
      */
     std::array<std::vector<uint16_t>, regionCount> newBuffers;
 
-	std::shared_ptr<const SphereMapSnapshot> localSphereMap;
-	{
-		std::scoped_lock lock(sphereMapMutex_);
-		localSphereMap = sphereMap_;
-	}
-	
-	if (!localSphereMap) {
-		std::cerr << "[RunFrameLoop] no SphereMap received yet for "
-				  << peerLabel_
-				  << "; dropping frame_id="
-				  << frameHeader.gainMsg_.frame_id
-				  << '\n';
-	
-		++rxStats_.rxFail;
-		MaybePrintRxSummary();
-		return false;
-	}
+    std::shared_ptr<const SphereMapSnapshot> localSphereMap;
+    {
+        std::scoped_lock lock(sphereMapMutex_);
+        localSphereMap = sphereMap_;
+    }
 
-	const std::size_t scatterOutputSize = static_cast<std::size_t>(localSphereMap->outputSize);
+    if (!localSphereMap) {
+        std::cerr << "[RunFrameLoop] no SphereMap received yet for "
+                  << peerLabel_
+                  << "; dropping frame_id="
+                  << frameHeader.gainMsg_.frame_id
+                  << '\n';
+
+        ++rxStats_.rxFail;
+        MaybePrintRxSummary();
+        return false;
+    }
+
+    const std::size_t scatterOutputPixels =
+        static_cast<std::size_t>(localSphereMap->outputSize);
+
+    const std::size_t scatterOutputElems =
+        scatterOutputPixels * 3u;
 
     auto scatterMappedRegionToBuffer =
         [&](std::size_t regionIndex) -> bool
@@ -564,9 +575,9 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
         const std::size_t validSize =
             this->tpgydp_.RegionValidSize(regionIndex);
 
-		const auto& map =
-			localSphereMap->regions[regionIndex];
-			
+        const auto& map =
+            localSphereMap->regions[regionIndex];
+
         if (map.size() != validSize) {
             std::cerr << "[RunFrameLoop] SphereMap/data size mismatch:"
                       << " region=" << regionIndex
@@ -581,28 +592,76 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
         auto& dst =
             newBuffers[regionIndex];
 
-        dst.assign(scatterOutputSize, uint16_t{0});
+        dst.assign(scatterOutputElems, uint16_t{0});
 
         const uint16_t* src =
             this->tpgydp_[regionIndex].data();
 
         for (std::size_t i = 0; i < validSize; ++i) {
-            const std::uint32_t outIndex =
+            const std::uint32_t packedEntry =
                 map[i];
 
-            if (outIndex >= dst.size()) {
+            const std::uint32_t outIndex =
+                UnpackSphereMapOutputIndex(packedEntry);
+
+            const SphereMapBayerChannel channel =
+                UnpackSphereMapBayerChannel(packedEntry);
+
+            if (outIndex >= scatterOutputPixels) {
                 std::cerr << "[RunFrameLoop] SphereMap output index OOB:"
                           << " region=" << regionIndex
                           << " i=" << i
                           << " outIndex=" << outIndex
-                          << " dst.size()=" << dst.size()
+                          << " outputPixels=" << scatterOutputPixels
                           << " frame_id=" << frameHeader.gainMsg_.frame_id
                           << '\n';
 
                 return false;
             }
 
-            dst[static_cast<std::size_t>(outIndex)] = src[i];
+            const std::size_t base =
+                static_cast<std::size_t>(outIndex) * 3u;
+
+            std::size_t channelOffset = 0;
+
+            switch (channel) {
+            case SphereMapBayerChannel::Blue:
+                channelOffset = 0; // B
+                break;
+
+            case SphereMapBayerChannel::Green:
+                channelOffset = 1; // G
+                break;
+
+            case SphereMapBayerChannel::Red:
+                channelOffset = 2; // R
+                break;
+
+            default:
+                std::cerr << "[RunFrameLoop] invalid Bayer channel:"
+                          << " region=" << regionIndex
+                          << " i=" << i
+                          << " packedEntry=0x"
+                          << std::hex << packedEntry << std::dec
+                          << '\n';
+
+                return false;
+            }
+
+            /*
+             * First Stage 2 compositing rule:
+             *
+             * If multiple samples land in the same equirect/channel slot,
+             * keep the brightest sample.
+             *
+             * Later this can become averaging, weighted blending, or
+             * confidence-based accumulation.
+             */
+            uint16_t& dstSample =
+                dst[base + channelOffset];
+
+            dstSample =
+                std::max(dstSample, src[i]);
         }
 
         return true;
@@ -619,35 +678,37 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
         }
     }
 
-	static std::once_flag printedRegionSizesOnce;
-	
-	std::call_once(printedRegionSizesOnce, [&]() {
-		std::cout << "[RX map-scatter region sizes] "
-				  << peerLabel_
-				  << " output="
-				  << localSphereMap->outputWidth
-				  << "x"
-				  << localSphereMap->outputHeight
-				  << " size="
-				  << localSphereMap->outputSize;
-	
-		for (std::size_t regionIndex = 0;
-			 regionIndex < regionCount;
-			 ++regionIndex) {
-	
-			std::cout << " r" << regionIndex
-					  << "_packed="
-					  << this->tpgydp_.RegionValidSize(regionIndex)
-					  << " r" << regionIndex
-					  << "_map="
-					  << localSphereMap->regions[regionIndex].size()
-					  << " r" << regionIndex
-					  << "_scattered="
-					  << newBuffers[regionIndex].size();
-		}
-	
-		std::cout << '\n';
-	});
+    static std::once_flag printedRegionSizesOnce;
+
+    std::call_once(printedRegionSizesOnce, [&]() {
+        std::cout << "[RX map-scatter region sizes] "
+                  << peerLabel_
+                  << " output="
+                  << localSphereMap->outputWidth
+                  << "x"
+                  << localSphereMap->outputHeight
+                  << " pixels="
+                  << localSphereMap->outputSize
+                  << " bgr16_elems="
+                  << scatterOutputElems;
+
+        for (std::size_t regionIndex = 0;
+             regionIndex < regionCount;
+             ++regionIndex) {
+
+            std::cout << " r" << regionIndex
+                      << "_packed="
+                      << this->tpgydp_.RegionValidSize(regionIndex)
+                      << " r" << regionIndex
+                      << "_map="
+                      << localSphereMap->regions[regionIndex].size()
+                      << " r" << regionIndex
+                      << "_bgr16_elems="
+                      << newBuffers[regionIndex].size();
+        }
+
+        std::cout << '\n';
+    });
 
     const auto tScatterDone = Clock::now();
 
@@ -1763,20 +1824,36 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
         dst.reserve(words / 2);
 
         for (std::size_t i = 0; i < words; i += 2) {
-            const std::uint32_t outIndex =
-                ReadU32FromU16Words(payload, wordOffset + i);
-
-            if (outIndex >= newMap->outputSize) {
-                std::cerr << "[SphereMap RX] output index OOB:"
-                          << " region=" << region
-                          << " localIndex=" << (i / 2)
-                          << " outIndex=" << outIndex
-                          << " outputSize=" << newMap->outputSize
-                          << '\n';
-                return false;
-            }
-
-            dst.push_back(outIndex);
+            const std::uint32_t packedEntry =
+				ReadU32FromU16Words(payload, wordOffset + i);
+			
+			const std::uint32_t outIndex =
+				UnpackSphereMapOutputIndex(packedEntry);
+			
+			const SphereMapBayerChannel channel =
+				UnpackSphereMapBayerChannel(packedEntry);
+			
+			if (outIndex >= newMap->outputSize) {
+				std::cerr << "[SphereMap RX] output index OOB:"
+						  << " region=" << region
+						  << " localIndex=" << (i / 2)
+						  << " outIndex=" << outIndex
+						  << " outputSize=" << newMap->outputSize
+						  << '\n';
+				return false;
+			}
+			
+			if (channel == SphereMapBayerChannel::Unknown) {
+				std::cerr << "[SphereMap RX] invalid Bayer channel:"
+						  << " region=" << region
+						  << " localIndex=" << (i / 2)
+						  << " packedEntry=0x"
+						  << std::hex << packedEntry << std::dec
+						  << '\n';
+				return false;
+			}
+			
+			dst.push_back(packedEntry);
         }
 
         wordOffset += words;

@@ -19,6 +19,7 @@
 #include "DASPi-globallinearspace.h"
 #include "DASPi-icosahedronspherespace.h"
 #include "DASPi-module-spherical-basis.h"
+#include "DASPi-sphere-map-wire.h"
 
 namespace DASPi {
 
@@ -780,6 +781,46 @@ private:
 
         return WorldRayToEquirectIndex(rayWorld);
     }
+    
+    static SphereMapBayerChannel SensorIndexToBayerChannel(
+        std::uint32_t sensorIndex)
+    {
+        const std::uint32_t x =
+            sensorIndex % static_cast<std::uint32_t>(sensorWidthValue_);
+    
+        const std::uint32_t y =
+            sensorIndex / static_cast<std::uint32_t>(sensorWidthValue_);
+    
+        if (y >= static_cast<std::uint32_t>(sensorHeightValue_)) {
+            throw std::out_of_range(
+                "ModuleSphericalMap: sensor index outside sensor frame"
+            );
+        }
+    
+        /*
+         * Current mosaic convention used by Region0 WB:
+         *
+         *   even row, even col = Blue
+         *   even row, odd  col = Green
+         *   odd  row, even col = Green
+         *   odd  row, odd  col = Red
+         */
+        const bool evenRow =
+            (y & 1u) == 0u;
+    
+        const bool evenCol =
+            (x & 1u) == 0u;
+    
+        if (evenRow) {
+            return evenCol
+                ? SphereMapBayerChannel::Blue
+                : SphereMapBayerChannel::Green;
+        }
+    
+        return evenCol
+            ? SphereMapBayerChannel::Green
+            : SphereMapBayerChannel::Red;
+    }
 
     template<class IndexLinear>
     void AppendFromIndexLinear(
@@ -822,7 +863,16 @@ private:
                 );
             }
 
-            dst.push_back(outputIndex);
+            const SphereMapBayerChannel channel =
+                SensorIndexToBayerChannel(sensorIndex);
+            
+            const std::uint32_t packedEntry =
+                PackSphereMapEntry(
+                    outputIndex,
+                    channel
+                );
+            
+            dst.push_back(packedEntry);
         }
     }
 };

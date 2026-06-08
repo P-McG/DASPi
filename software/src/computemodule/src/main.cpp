@@ -1504,6 +1504,37 @@ cv::Mat raw16ProjectedToGrayBgr8(
     return bgr;
 }
 
+cv::Mat raw16ProjectedBgrToBgr8(
+    const std::vector<uint16_t>& raw,
+    int width,
+    int height)
+{
+    const std::size_t expected =
+        static_cast<std::size_t>(width) *
+        static_cast<std::size_t>(height) *
+        3u;
+
+    if (raw.size() != expected) {
+        std::cerr << "[raw16ProjectedBgrToBgr8] size mismatch:"
+                  << " raw.size()=" << raw.size()
+                  << " expected=" << expected
+                  << '\n';
+        return {};
+    }
+
+    cv::Mat bgr16(
+        height,
+        width,
+        CV_16UC3,
+        const_cast<uint16_t*>(raw.data())
+    );
+
+    cv::Mat bgr8;
+    bgr16.convertTo(bgr8, CV_8UC3, 1.0 / 256.0);
+
+    return bgr8;
+}
+
 //cv::Mat raw16ProjectedToGrayBgr8(
     //const std::vector<uint16_t>& raw,
     //int width,
@@ -3232,17 +3263,30 @@ void StartPeerThreads(
                         gotAnyFrameThisLoop = true;
                         gotStreamThisLoop[localCameraIndex] = true;
 
-                       if (static_cast<int>(raw.size()) != kExpectedPixels) {
-						    std::cerr << "[frame thread] unexpected Bayer size for peer "
-						              << peerIndex
-						              << " (module " << moduleIndex << ")"
-						              << " localCameraIndex=" << localCameraIndex
-						              << " size=" << raw.size()
-						              << " expected=" << kExpectedPixels
-						              << '\n';
-						
-						    gotStreamThisLoop[localCameraIndex] = false;
-						    continue;
+                        const std::size_t expectedGrayElems =
+                            static_cast<std::size_t>(kExpectedPixels);
+                        
+                        const std::size_t expectedBgrElems =
+                            expectedGrayElems * 3u;
+                        
+                        const bool isGrayProjected =
+                            raw.size() == expectedGrayElems;
+                        
+                        const bool isBgrProjected =
+                            raw.size() == expectedBgrElems;
+                        
+                        if (!isGrayProjected && !isBgrProjected) {
+                            std::cerr << "[frame thread] unexpected projected frame size for peer "
+                                      << peerIndex
+                                      << " (module " << moduleIndex << ")"
+                                      << " localCameraIndex=" << localCameraIndex
+                                      << " size=" << raw.size()
+                                      << " expectedGray=" << expectedGrayElems
+                                      << " expectedBgr=" << expectedBgrElems
+                                      << '\n';
+                        
+                            gotStreamThisLoop[localCameraIndex] = false;
+                            continue;
 						}
 						
 						SaveBayerRegionDebugOnce(
@@ -3272,10 +3316,26 @@ void StartPeerThreads(
 						    SaveBayerBGGRDebugOnce(raw, moduleIndex, localCameraIndex);
 						}
 
-						cv::Mat bgr = decodeBayer16ToBgr8(raw.data(), kFrameWidth, kFrameHeight);
+						cv::Mat bgr;
+
+                        if (isBgrProjected) {
+                            bgr =
+                                raw16ProjectedBgrToBgr8(
+                                    raw,
+                                    kFrameWidth,
+                                    kFrameHeight
+                                );
+                        } else {
+                            bgr =
+                                raw16ProjectedToGrayBgr8(
+                                    raw,
+                                    kFrameWidth,
+                                    kFrameHeight
+                                );
+                        }
 
                         if (bgr.empty()) {
-                            std::cerr << "[frame thread] raw16ProjectedToGrayBgr8 returned empty "
+                            std::cerr << "[frame thread] projected frame conversion returned empty "
                                       << "for peer " << peerIndex
                                       << " (module " << moduleIndex << ")"
                                       << " localCameraIndex=" << localCameraIndex
