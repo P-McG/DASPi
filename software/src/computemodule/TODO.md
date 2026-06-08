@@ -10,11 +10,11 @@
 - [ ] Run frame and control in separate threads.
 - [ ] Protect any shared gain state with a mutex.
 
-Stage 1:
+Stage 1:[Done]
   Startup map + raw Bayer scatter
   Display as grayscale/debug only
 
-Stage 2:
+Stage 2:[Done]
   Extend startup map with Bayer channel metadata
   Composite into RGB/equirect output on Compute
 

@@ -3339,8 +3339,27 @@ void StartPeerThreads(
                         
                             gotStreamThisLoop[localCameraIndex] = false;
                             continue;
-						}
-						
+                        }
+                        
+                        const std::size_t globalIndex =
+                            GlobalCameraIndex(
+                                moduleIndex,
+                                localCameraIndex
+                            );
+                        
+                        if (globalIndex >= liveCameras.size()) {
+                            std::cerr << "[frame thread] globalIndex out of range "
+                                      << "(peer " << peerIndex
+                                      << ", module " << moduleIndex << "): "
+                                      << globalIndex
+                                      << " liveCameras.size()="
+                                      << liveCameras.size()
+                                      << '\n';
+                        
+                            gotStreamThisLoop[localCameraIndex] = false;
+                            continue;
+                        }
+                        
                         SaveBayerRegionDebugOnce(
                             raw,
                             peerIndex,
