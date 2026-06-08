@@ -1199,12 +1199,22 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 	template<unsigned int FacetIndex>
 	float AperturePeer<FacetIndex>::ComputeRequestedGain(const GainMsg& msg)
 	{
-		if (msg.mean_brightness <= 1.0e-6f) {
+		if (!std::isfinite(msg.mean_brightness) ||
+			msg.mean_brightness <= 1.0e-4f ||
+			!std::isfinite(msg.target_brightness) ||
+			msg.target_brightness <= 0.0f) {
 			return 1.0f;
 		}
 	
-		float gain = msg.target_brightness / msg.mean_brightness;
-		return std::clamp(gain, 1.0f, 16.0f);
+		const float rawGain =
+			msg.target_brightness / msg.mean_brightness;
+	
+		/*
+		 * Debug-safe brightness range.
+		 * Wide enough to correct exposure visually,
+		 * narrow enough to avoid visible frame-to-frame pumping.
+		 */
+		return std::clamp(rawGain, 0.90f, 1.10f);
 	}
 	
 	template<unsigned int FacetIndex>
@@ -1351,8 +1361,18 @@ bool AperturePeer<FacetIndex>::SendGainReply(const GainReply& reply)
 		reply.camera_id = msg.camera_id;
 		reply.frame_id = msg.frame_id;
 		
-		reply.requested_gain = ComputeRequestedGain(msg);
-		reply.brightness_gain_apply = reply.requested_gain;
+		const float requested = ComputeRequestedGain(msg);
+		
+		static float smoothedBrightnessGain = 1.0f;
+		constexpr float alpha = 0.03f;
+		
+		smoothedBrightnessGain =
+			(1.0f - alpha) * smoothedBrightnessGain +
+			alpha * requested;
+		
+		reply.requested_gain = requested;
+		reply.brightness_gain_apply =
+			std::clamp(smoothedBrightnessGain, 0.90f, 1.10f);
 		
 		// Preserve white-balance gains from the Aperture/camera metadata.
 		reply.r_gain_apply = rApply;
