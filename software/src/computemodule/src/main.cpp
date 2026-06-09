@@ -910,67 +910,6 @@ cv::Mat RenderCameraFootprintDebug(const CameraView& cam,
     return out;
 }
 
-[[maybe_unused]]
-cv::Mat RenderCameraMaskDebug(const CameraView& cam,
-                              int width,
-                              int height)
-{
-    cv::Mat out(height, width, CV_8UC1, cv::Scalar(0));
-
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            const Eigen::Vector3d ray_world =
-                spherical::EquirectPixelToRay(x, y, width, height);
-
-            ProjectionResult proj;
-            if (!CameraProjectsToValidUv(cam, ray_world, proj)) {
-                continue;
-            }
-
-            const bool inNonOverlap =
-                SphereStitcher::IsInsideMask(cam.maskNonOverlap, proj.uv);
-
-            const bool inOverlap =
-                SphereStitcher::IsInsideMask(cam.maskOverlap, proj.uv);
-
-            if (inNonOverlap || inOverlap) {
-                out.at<std::uint8_t>(y, x) = 255;
-            }
-        }
-    }
-
-    return out;
-}
-
-[[maybe_unused]]
-bool Barycentric2D(const cv::Point2d& p,
-                   const cv::Point2d& a,
-                   const cv::Point2d& b,
-                   const cv::Point2d& c,
-                   Eigen::Vector3d& bary)
-{
-    const cv::Point2d v0 = b - a;
-    const cv::Point2d v1 = c - a;
-    const cv::Point2d v2 = p - a;
-
-    const double d00 = v0.dot(v0);
-    const double d01 = v0.dot(v1);
-    const double d11 = v1.dot(v1);
-    const double d20 = v2.dot(v0);
-    const double d21 = v2.dot(v1);
-
-    const double denom = d00 * d11 - d01 * d01;
-    if (std::abs(denom) <= 1e-12) {
-        return false;
-    }
-
-    const double v = (d11 * d20 - d01 * d21) / denom;
-    const double w = (d00 * d21 - d01 * d20) / denom;
-    const double u = 1.0 - v - w;
-
-    bary = Eigen::Vector3d(u, v, w);
-    return true;
-}
 
 bool BarycentricOnFace3D(const Eigen::Vector3d& rayWorld,
                          const Eigen::Vector3d& a,
@@ -1111,91 +1050,6 @@ FlatTriangleMap ExtractFlatTriangleMapFromMask(const cv::Mat& nonOverlapFlatMask
 }
 
 [[maybe_unused]]
-cv::Mat WarpFlatMaskToCameraMaskForward(const cv::Mat& flatMask,
-                                        const CameraView& cam,
-                                        const RigFace<3>& face,
-                                        const std::vector<Eigen::Vector3d>& vertices,
-                                        int cameraWidth,
-                                        int cameraHeight)
-{
-    if (flatMask.empty()) {
-        return {};
-    }
-
-    if (flatMask.type() != CV_8UC1) {
-        throw std::runtime_error("WarpFlatMaskToCameraMaskForward: flatMask must be CV_8UC1");
-    }
-
-    cv::Mat cameraMask(cameraHeight, cameraWidth, CV_8UC1, cv::Scalar(0));
-
-    const Eigen::Vector3d a =
-        vertices[static_cast<std::size_t>(face.indices[0])].normalized();
-    const Eigen::Vector3d b =
-        vertices[static_cast<std::size_t>(face.indices[1])].normalized();
-    const Eigen::Vector3d c =
-        vertices[static_cast<std::size_t>(face.indices[2])].normalized();
-
-    for (int y = 0; y < flatMask.rows; ++y) {
-        const auto* row = flatMask.ptr<std::uint8_t>(y);
-
-        for (int x = 0; x < flatMask.cols; ++x) {
-            if (row[x] == 0) {
-                continue;
-            }
-
-            const double u =
-                static_cast<double>(x) /
-                static_cast<double>(std::max(1, flatMask.cols - 1));
-
-            const double v =
-                static_cast<double>(y) /
-                static_cast<double>(std::max(1, flatMask.rows - 1));
-
-            const Eigen::Vector3d worldPoint =
-                (1.0 - u - v) * a + u * b + v * c;
-
-            const double n = worldPoint.norm();
-            if (n <= 1e-12) {
-                continue;
-            }
-
-            const Eigen::Vector3d rayWorld = worldPoint / n;
-            const Eigen::Vector3d rayCam = cam.Rcw.transpose() * rayWorld;
-
-            if (rayCam.z() <= 0.0) {
-                continue;
-            }
-
-            const ProjectionResult proj = cam.model->project(rayCam);
-            if (!proj.valid) {
-                continue;
-            }
-
-            const int cx = static_cast<int>(std::round(proj.uv.x));
-            const int cy = static_cast<int>(std::round(proj.uv.y));
-
-            if (cx < 0 || cy < 0 ||
-                cx >= cameraMask.cols || cy >= cameraMask.rows) {
-                continue;
-            }
-
-            cameraMask.at<std::uint8_t>(cy, cx) = 255;
-        }
-    }
-
-    cv::Mat dilated;
-    constexpr int kDilatePx = 2;
-    const int k = 2 * kDilatePx + 1;
-
-    const cv::Mat kernel =
-        cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(k, k));
-
-    cv::dilate(cameraMask, dilated, kernel);
-
-    return dilated;
-}
-
-[[maybe_unused]]
 cv::Mat WarpFlatMaskToCameraMaskInverse(const cv::Mat& flatMask,
                                         const CameraView& cam,
                                         const RigFace<3>& face,
@@ -1311,39 +1165,6 @@ cv::Mat WarpFlatMaskToCameraMaskInverse(const cv::Mat& flatMask,
               << '\n';
 
     return dilated;
-}
-
-
-[[maybe_unused]]
-cv::Mat OverlayMaskOnImage(const cv::Mat& image, const cv::Mat& mask)
-{
-    if (image.empty()) {
-        return {};
-    }
-
-    if (mask.empty()) {
-        return image.clone();
-    }
-
-    if (mask.rows != image.rows || mask.cols != image.cols || mask.type() != CV_8UC1) {
-        throw std::runtime_error("OverlayMaskOnImage: mask must be CV_8UC1 and same size as image");
-    }
-
-    cv::Mat out = image.clone();
-
-    for (int y = 0; y < out.rows; ++y) {
-        for (int x = 0; x < out.cols; ++x) {
-            if (mask.at<std::uint8_t>(y, x) != 0) {
-                cv::Vec3b& px = out.at<cv::Vec3b>(y, x);
-                px = cv::Vec3b(
-                    static_cast<std::uint8_t>(0.5 * px[0] + 0.5 * 0),
-                    static_cast<std::uint8_t>(0.5 * px[1] + 0.5 * 255),
-                    static_cast<std::uint8_t>(0.5 * px[2] + 0.5 * 255));
-            }
-        }
-    }
-
-    return out;
 }
 
 //cv::Mat RenderCameraIntersectionDebug(const CameraView& cam,
@@ -1873,105 +1694,6 @@ Eigen::Matrix3d RotationAligningAToB(const Eigen::Vector3d& a,
     return Eigen::AngleAxisd(angle, axis).toRotationMatrix();
 }
 
-//int PickNeighborByAlignedDirection(const std::vector<RigFace>& faces,
-                                   //const std::vector<std::vector<int>>& graph,
-                                   //int anchorFace,
-                                   //const Eigen::Matrix3d& Rrig)
-//{
-    //const auto& neighbors = graph[static_cast<size_t>(anchorFace)];
-
-    //int bestFace = -1;
-    //double bestY = -std::numeric_limits<double>::infinity();
-
-    //for (int f : neighbors) {
-        //const Eigen::Vector3d aligned = Rrig * faces[static_cast<size_t>(f)].lookDir;
-
-        //std::cout << "[aligned neighbor] face=" << f
-                  //<< " aligned=(" << aligned.transpose() << ")\n";
-
-        //if (aligned.y() > bestY) {
-            //bestY = aligned.y();
-            //bestFace = f;
-        //}
-    //}
-
-    //if (bestFace < 0) {
-        //throw std::runtime_error("Failed to pick aligned neighbor face");
-    //}
-
-    //return bestFace;
-//}
-
-template<std::size_t N>
-std::vector<int> BuildModuleFaceIndices(const std::vector<RigFace<N>>& faces,
-                                        int moduleCount)
-{
-    if (moduleCount <= 0) {
-        throw std::runtime_error("moduleCount must be > 0");
-    }
-    if (moduleCount > 2) {
-        throw std::runtime_error("Current explicit mapping only handles 2 modules");
-    }
-
-    const auto graph = BuildFaceNeighborGraph(faces);
-
-    // Keep face 6 as your anchor for now.
-    const int anchorFace = 0;
-
-    // Align anchor to pano center.
-    //const Eigen::Matrix3d Rrig =
-        //RotationAligningAToB(faces[static_cast<size_t>(anchorFace)].lookDir,
-                             //Eigen::Vector3d(0.0, 0.0, 1.0));
-
-    std::vector<int> out;
-    out.push_back(anchorFace);
-
-    if (moduleCount >= 2) {
-        const int secondFace = 1;//anchorFace+6;
-            //PickNeighborByAlignedDirection(faces, graph, anchorFace, Rrig);
-        out.push_back(secondFace);
-    }
-
-    std::cout << "[face mapping] module0=" << out[0];
-    if (out.size() > 1) {
-        std::cout << " module1=" << out[1];
-    }
-    std::cout << '\n';
-
-    return out;
-}
-
-//Eigen::Matrix3d MakeCameraRcwFromLookDirection(const Eigen::Vector3d& lookDir)
-//{
-    //const Eigen::Vector3d forward = lookDir.normalized();
-
-    //Eigen::Vector3d worldUp(0.0, 1.0, 0.0);
-    //if (std::abs(forward.dot(worldUp)) > 0.95) {
-        //worldUp = Eigen::Vector3d(1.0, 0.0, 0.0);
-    //}
-
-    //const Eigen::Vector3d right = worldUp.cross(forward).normalized();
-    //const Eigen::Vector3d up = forward.cross(right).normalized();
-
-    //Eigen::Matrix3d Rcw;
-    //Rcw.col(0) = right;
-    //Rcw.col(1) = up;
-    //Rcw.col(2) = forward;
-
-    //return Rcw;
-//}
-
-//ImageRotation ImageRotationForModule(int moduleIndex)
-//{
-    //if (moduleIndex == 0) {
-        //return ImageRotation::Rotate90CCW;
-    //}
-    //if (moduleIndex == 1) {
-        //return ImageRotation::Rotate90CW;
-    //}
-    //return ImageRotation::None;
-//}
-
 template<std::size_t N>
 void PrintRigAssignment(const std::vector<RigFace<N>>& faces,
                         const std::vector<int>& moduleFaceIndices)
@@ -2180,12 +1902,6 @@ bool IsLocalEdgeReversedRelativeToTopology(const MeshTopology<N>& topo,
     throw std::runtime_error("Local edge vertices do not match topology edge");
 }
 
-[[maybe_unused]]
-double SeamTForCamera(const CameraConfig& cfg, double t)
-{
-    return cfg.seamDirectionReversed ? (1.0 - t) : t;
-}
-
 template<class IcosahedronSphereSpace, std::size_t FacetIndex>
 struct CameraSpaceChain
 {
@@ -2303,46 +2019,6 @@ MeshTopology<N> MakeMeshTopologyFromSphereSpace()
     }
 
     return topo;
-}
-
-template<class SphereSpace>
-std::vector<int> DefaultModuleOwningFacesFromSphereSpace(
-    int nApertureComputeModules)
-{
-    static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpace>);
-
-    if (nApertureComputeModules <= 0) {
-        throw std::runtime_error("nApertureComputeModules must be > 0");
-    }
-
-    if (static_cast<std::size_t>(nApertureComputeModules) >
-        SphereSpace::moduleFacesN_) {
-        throw std::runtime_error(
-            "Requested more modules than SphereSpace owns"
-        );
-    }
-
-    std::vector<int> owningFaces;
-    owningFaces.reserve(static_cast<std::size_t>(nApertureComputeModules));
-
-    for (int module = 0; module < nApertureComputeModules; ++module) {
-        const std::size_t faceIndex =
-            SphereSpace::moduleFaceIndices_[
-                static_cast<std::size_t>(module)
-            ];
-
-        if (faceIndex >= SphereSpace::totalFacetsN_) {
-            throw std::runtime_error(
-                "SphereSpace module face is outside total facet range"
-            );
-        }
-
-        owningFaces.push_back(
-            static_cast<int>(faceIndex)
-        );
-    }
-
-    return owningFaces;
 }
 
 template<std::size_t N, class SphereSpaceType = DASPi::IcosahedronSphereSpace>
@@ -2771,187 +2447,6 @@ CameraSetup<N> makeCameraConfigs()
     setup.rig = rig;
     setup.moduleFaceIndices = std::move(moduleFaceIndices);
     return setup;
-}
-
-//std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
-//{
-    //if (nApertureComputeModules <= 0) {
-        //throw std::runtime_error("nApertureComputeModules must be > 0");
-    //}
-
-    //constexpr RigGeometry kRigGeometry = RigGeometry::Icosahedron;
-
-    //const auto faces = MakeRigFaceSet(kRigGeometry);
-    //const auto moduleFaceIndices = BuildModuleFaceIndices(faces, nApertureComputeModules);
-
-    //PrintRigAssignment(faces, moduleFaceIndices);
-
-    //std::vector<Eigen::Matrix3d> moduleRotations;
-    //moduleRotations.reserve(static_cast<size_t>(nApertureComputeModules));
-
-    //for (int module = 0; module < nApertureComputeModules; ++module) {
-        //const int faceIndex = moduleFaceIndices[static_cast<size_t>(module)];
-        //moduleRotations.push_back(
-            //MakeCameraRcwFromLookDirection(faces[static_cast<size_t>(faceIndex)].lookDir));
-    //}
-
-    //std::vector<CameraConfig> configs;
-    //configs.reserve(TotalCameraCount(nApertureComputeModules));
-
-    //for (int module = 0; module < nApertureComputeModules; ++module) {
-        //for (size_t localCam = 0; localCam < kCamerasPerModule; ++localCam) {
-            //CameraConfig cfg{
-                //"module_" + std::to_string(module) + "_cam_" + std::to_string(localCam),
-                //"",
-                //ImageRotationForModule(module),
-                //moduleRotations[static_cast<size_t>(module)],
-            //};
-
-            //configs.push_back(cfg);
-        //}
-    //}
-
-    //return configs;
-//}
-
-
-
-
-
-//Eigen::Matrix3d CameraRollDeg(double deg)
-//{
-    //const double rad = deg * M_PI / 180.0;
-    //return Eigen::AngleAxisd(rad, Eigen::Vector3d::UnitZ()).toRotationMatrix();
-//}
-
-//std::vector<CameraConfig> makeCameraConfigs(int nApertureComputeModules)
-//{
-    //if (nApertureComputeModules <= 0) {
-        //throw std::runtime_error("nApertureComputeModules must be > 0");
-    //}
-
-    //constexpr RigGeometry kRigGeometry = RigGeometry::Icosahedron;
-
-    //const RigData rig = MakeRigData(kRigGeometry);
-    //const auto& faces = rig.faces;
-    //const auto& vertices = rig.vertices;
-
-    //static bool printedFaces = false;
-    //if (!printedFaces) {
-        //DebugPrintRigFaces(faces);
-        //DebugPrintRigAdjacency(faces);
-        //printedFaces = true;
-    //}
-
-    //const std::vector<int> moduleFaceIndices =
-        //BuildModuleFaceIndices(faces, nApertureComputeModules);
-
-    //if (moduleFaceIndices.empty()) {
-        //throw std::runtime_error("No module face indices were generated");
-    //}
-
-    //for (int faceIndex : moduleFaceIndices) {
-        //if (faceIndex < 0 || faceIndex >= static_cast<int>(faces.size())) {
-            //throw std::runtime_error("module face index out of range");
-        //}
-    //}
-
-    //PrintRigAssignment(faces, moduleFaceIndices);
-
-    //// Align the anchor module face to pano center (+Z).
-    //const RigFace& anchorFace =
-        //faces[static_cast<size_t>(moduleFaceIndices[0])];
-
-    //const Eigen::Matrix3d Rrig =
-        //RotationAligningAToB(anchorFace.lookDir, Eigen::Vector3d(0.0, 0.0, 1.0));
-
-    //const Eigen::Matrix3d Ralign = CameraModelToRigAlignment();
-
-    //std::vector<CameraConfig> configs;
-    //configs.reserve(TotalCameraCount(nApertureComputeModules));
-
-    //for (int module = 0; module < nApertureComputeModules; ++module) {
-        //const int faceIndex = moduleFaceIndices[static_cast<size_t>(module)];
-        //const RigFace& face = faces[static_cast<size_t>(faceIndex)];
-
-        //// Full face-based orientation, including roll from triangle edge.
-        //const Eigen::Matrix3d Rface =
-            //MakeCameraRcwFromFace(face, vertices);
-
-        //// Keep debug path simple: no image-space rotation.
-        //const ImageRotation imageRotation = ImageRotation::None;
-        //const Eigen::Matrix3d Rimg = Eigen::Matrix3d::Identity();
-
-        //const Eigen::Matrix3d Rfinal = Rrig * Rface * Ralign * Rimg;
-
-        //const Eigen::Vector3d camRightWorld   = Rfinal.col(0);
-        //const Eigen::Vector3d camUpWorld      = Rfinal.col(1);
-        //const Eigen::Vector3d camForwardWorld = Rfinal.col(2);
-
-        //std::cout << "[camera config] module=" << module
-                  //<< " faceIndex=" << faceIndex
-                  //<< " lookDir=(" << face.lookDir.transpose() << ")"
-                  //<< " camRightWorld=(" << camRightWorld.transpose() << ")"
-                  //<< " camUpWorld=(" << camUpWorld.transpose() << ")"
-                  //<< " camForwardWorld=(" << camForwardWorld.transpose() << ")"
-                  //<< '\n';
-
-        //for (size_t localCam = 0; localCam < kCamerasPerModule; ++localCam) {
-            //configs.push_back(CameraConfig{
-                //"module_" + std::to_string(module) + "_cam_" + std::to_string(localCam),
-                //"",
-                //imageRotation,
-                //Rfinal,
-            //});
-        //}
-    //}
-
-    //return configs;
-//}
-
-
-
-//void updateCameraImages(std::vector<CameraView>& cameras,
-                        //const std::vector<CameraConfig>& configs,
-                        //std::vector<LiveCameraState>& liveCameras)
-//{
-    //if (cameras.size() != configs.size() || cameras.size() != liveCameras.size()) {
-        //throw std::runtime_error("Camera/config/state size mismatch");
-    //}
-
-    //for (size_t i = 0; i < cameras.size(); ++i) {
-        //cv::Mat latest;
-        //if (!tryGetLatestFrame(liveCameras[i].frame, latest)) {
-            //continue;
-        //}
-
-        //if (!liveCameras[i].hasMask) {
-            //throw std::runtime_error("Missing valid mask for logical camera " +
-                                     //std::to_string(i));
-        //}
-
-        //const ImageRotation rotation = configs[i].imageRotation;
-        //cameras[i].image = applyImageRotation(latest, rotation);
-
-        //const cv::Mat rotatedValidMask =
-            //applyImageRotation(liveCameras[i].validMask, rotation);
-
-        //if (liveCameras[i].role == LogicalStreamRole::NonOverlap) {
-            //cameras[i].maskNonOverlap = rotatedValidMask;
-            //cameras[i].maskOverlap =
-                //cv::Mat::zeros(rotatedValidMask.rows, rotatedValidMask.cols, CV_8UC1);
-        //} else {
-            //cameras[i].maskNonOverlap =
-                //cv::Mat::zeros(rotatedValidMask.rows, rotatedValidMask.cols, CV_8UC1);
-            //cameras[i].maskOverlap = rotatedValidMask;
-        //}
-    //}
-//}
-
-[[maybe_unused]]
-int CountNonZeroSafe(const cv::Mat& mask)
-{
-    return mask.empty() ? 0 : cv::countNonZero(mask);
 }
 
 [[maybe_unused]]
@@ -3567,8 +3062,13 @@ cv::Mat CompositePreprojectedFrames(
     std::vector<LiveCameraState>& liveCameras,
     cv::Mat* validMask)
 {
-    cv::Mat pano;
-    cv::Mat mask;
+    cv::Mat accum;
+    cv::Mat weightSum;
+    cv::Size panoSize;
+    int panoType = -1;
+
+    constexpr float kFeatherRadiusPx = 48.0f;
+    constexpr float kMinWeight = 1.0e-6f;
 
     for (auto& live : liveCameras) {
         cv::Mat frame;
@@ -3581,25 +3081,142 @@ cv::Mat CompositePreprojectedFrames(
             continue;
         }
 
-        if (pano.empty()) {
-            pano = cv::Mat::zeros(frame.size(), frame.type());
-            mask = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC1);
+        if (frame.type() != CV_8UC3) {
+            std::cerr << "[CompositePreprojectedFrames] expected CV_8UC3 frame\n";
+            continue;
         }
 
-        if (frame.size() != pano.size() ||
-            frame.type() != pano.type()) {
+        if (accum.empty()) {
+            panoSize = frame.size();
+            panoType = frame.type();
+
+            accum = cv::Mat::zeros(panoSize, CV_32FC3);
+            weightSum = cv::Mat::zeros(panoSize, CV_32FC1);
+        }
+
+        if (frame.size() != panoSize || frame.type() != panoType) {
             std::cerr << "[CompositePreprojectedFrames] frame shape mismatch\n";
             continue;
         }
 
+        /*
+         * The preprojected buffers use black pixels as "no contribution".
+         * Convert that into a binary source mask.
+         */
         cv::Mat gray;
         cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
-        cv::Mat srcMask =
-            gray > 0;
+        cv::Mat srcMask = gray > 0;
+        if (cv::countNonZero(srcMask) == 0) {
+            continue;
+        }
 
-        frame.copyTo(pano, srcMask);
-        mask.setTo(255, srcMask);
+        /*
+         * Feather weight:
+         *   0 at the mask edge
+         *   ramps toward 1 over kFeatherRadiusPx
+         *   stays 1 in the interior
+         *
+         * This makes overlap regions blend instead of overwriting each other.
+         */
+        cv::Mat distance;
+        cv::distanceTransform(
+            srcMask,
+            distance,
+            cv::DIST_L2,
+            3
+        );
+
+        cv::Mat weights;
+        distance.convertTo(
+            weights,
+            CV_32FC1,
+            1.0f / kFeatherRadiusPx
+        );
+
+        cv::threshold(
+            weights,
+            weights,
+            1.0,
+            1.0,
+            cv::THRESH_TRUNC
+        );
+
+        weights.setTo(0.0f, srcMask == 0);
+
+        cv::Mat frame32;
+        frame.convertTo(frame32, CV_32FC3);
+
+        for (int y = 0; y < frame.rows; ++y) {
+            const cv::Vec3f* srcRow = frame32.ptr<cv::Vec3f>(y);
+            const float* weightRow = weights.ptr<float>(y);
+
+            cv::Vec3f* accumRow = accum.ptr<cv::Vec3f>(y);
+            float* weightSumRow = weightSum.ptr<float>(y);
+
+            for (int x = 0; x < frame.cols; ++x) {
+                const float w = weightRow[x];
+
+                if (w <= kMinWeight) {
+                    continue;
+                }
+
+                accumRow[x] += srcRow[x] * w;
+                weightSumRow[x] += w;
+            }
+        }
+    }
+
+    if (accum.empty()) {
+        if (validMask != nullptr) {
+            validMask->release();
+        }
+
+        return {};
+    }
+
+    cv::Mat pano(
+        panoSize,
+        CV_8UC3,
+        cv::Scalar(0, 0, 0)
+    );
+
+    cv::Mat mask(
+        panoSize,
+        CV_8UC1,
+        cv::Scalar(0)
+    );
+
+    for (int y = 0; y < pano.rows; ++y) {
+        const cv::Vec3f* accumRow = accum.ptr<cv::Vec3f>(y);
+        const float* weightSumRow = weightSum.ptr<float>(y);
+
+        cv::Vec3b* panoRow = pano.ptr<cv::Vec3b>(y);
+        std::uint8_t* maskRow = mask.ptr<std::uint8_t>(y);
+
+        for (int x = 0; x < pano.cols; ++x) {
+            const float w = weightSumRow[x];
+
+            if (w <= kMinWeight) {
+                continue;
+            }
+
+            const cv::Vec3f value = accumRow[x] / w;
+
+            panoRow[x] = cv::Vec3b(
+                static_cast<std::uint8_t>(
+                    std::clamp(value[0], 0.0f, 255.0f)
+                ),
+                static_cast<std::uint8_t>(
+                    std::clamp(value[1], 0.0f, 255.0f)
+                ),
+                static_cast<std::uint8_t>(
+                    std::clamp(value[2], 0.0f, 255.0f)
+                )
+            );
+
+            maskRow[x] = 255;
+        }
     }
 
     if (validMask != nullptr) {
@@ -3608,6 +3225,53 @@ cv::Mat CompositePreprojectedFrames(
 
     return pano;
 }
+
+
+//cv::Mat CompositePreprojectedFrames(
+    //std::vector<LiveCameraState>& liveCameras,
+    //cv::Mat* validMask)
+//{
+    //cv::Mat pano;
+    //cv::Mat mask;
+
+    //for (auto& live : liveCameras) {
+        //cv::Mat frame;
+
+        //if (!tryGetLatestFrame(live.frame, frame)) {
+            //continue;
+        //}
+
+        //if (frame.empty()) {
+            //continue;
+        //}
+
+        //if (pano.empty()) {
+            //pano = cv::Mat::zeros(frame.size(), frame.type());
+            //mask = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC1);
+        //}
+
+        //if (frame.size() != pano.size() ||
+            //frame.type() != pano.type()) {
+            //std::cerr << "[CompositePreprojectedFrames] frame shape mismatch\n";
+            //continue;
+        //}
+
+        //cv::Mat gray;
+        //cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+
+        //cv::Mat srcMask =
+            //gray > 0;
+
+        //frame.copyTo(pano, srcMask);
+        //mask.setTo(255, srcMask);
+    //}
+
+    //if (validMask != nullptr) {
+        //*validMask = mask;
+    //}
+
+    //return pano;
+//}
 
 template<std::size_t N>
 void RunStitchLoop(std::vector<CameraView>& cameras,
