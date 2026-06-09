@@ -1131,7 +1131,7 @@ template<unsigned int FacetIndex, std::size_t ModuleIndex>
 void Aperture<FacetIndex, ModuleIndex>::ApplyBlendWeightsQ12(
     tpgydp_t& output)
 {
-    constexpr bool kEnableAperturePreBlendWeights = true;
+    constexpr bool kEnableAperturePreBlendWeights = false;
 
     if constexpr (!kEnableAperturePreBlendWeights) {
         return;
