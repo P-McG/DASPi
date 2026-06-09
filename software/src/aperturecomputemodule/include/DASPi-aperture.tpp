@@ -17,6 +17,8 @@
 #include <libcamera/controls.h>
 #include <libcamera/control_ids.h>  // Required for controls::FrameDurationLimits
 
+#include <opencv2/imgproc.hpp>
+
 #include "DASPi-framepacket.h"
 #include "DASPi-udp-srv.h"
 #include "DASPi-aperture.h"
@@ -976,6 +978,208 @@ void Aperture<FacetIndex, ModuleIndex>::RunEventLoop(int timeout){
 }
 
 template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::BuildBlendWeightMapsQ12()
+{
+    constexpr float kFeatherRadiusPx = 48.0f;
+
+    const std::uint32_t outputWidth =
+        sphericalMap_.OutputWidth();
+
+    const std::uint32_t outputHeight =
+        sphericalMap_.OutputHeight();
+
+    const std::uint32_t outputSize =
+        sphericalMap_.OutputSize();
+
+    if (outputWidth == 0 || outputHeight == 0 || outputSize == 0) {
+        std::cerr << "[BuildBlendWeightMapsQ12] invalid spherical map output size\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    const auto toQ12 =
+        [](float w) -> std::uint16_t
+    {
+        if (!std::isfinite(w)) {
+            w = 0.0f;
+        }
+
+        w = std::clamp(w, 0.0f, 1.0f);
+
+        return static_cast<std::uint16_t>(
+            std::lround(w * static_cast<float>(kBlendWeightOneQ12_))
+        );
+    };
+
+    for (std::size_t region = 0; region < regionCount_; ++region) {
+        const auto& map =
+            sphericalMap_.Region(region);
+
+        cv::Mat srcMask =
+            cv::Mat::zeros(
+                static_cast<int>(outputHeight),
+                static_cast<int>(outputWidth),
+                CV_8UC1
+            );
+
+        for (const std::uint32_t packedEntry : map) {
+            const std::uint32_t outIndex =
+                UnpackSphereMapOutputIndex(packedEntry);
+
+            if (outIndex >= outputSize) {
+                std::cerr << "[BuildBlendWeightMapsQ12] output index OOB:"
+                          << " region=" << region
+                          << " outIndex=" << outIndex
+                          << " outputSize=" << outputSize
+                          << '\n';
+
+                std::exit(EXIT_FAILURE);
+            }
+
+            const std::uint32_t y =
+                outIndex / outputWidth;
+
+            const std::uint32_t x =
+                outIndex % outputWidth;
+
+            srcMask.at<std::uint8_t>(
+                static_cast<int>(y),
+                static_cast<int>(x)
+            ) = 255;
+        }
+
+        cv::Mat weight32f =
+            cv::Mat::zeros(
+                srcMask.rows,
+                srcMask.cols,
+                CV_32FC1
+            );
+
+        if (region == 0) {
+            /*
+             * Region 0 is the owning/non-overlap region.
+             * It contributes at full weight wherever valid.
+             */
+            weight32f.setTo(1.0f, srcMask);
+        } else {
+            /*
+             * Regions 1..n are overlap regions.
+             * Feather inward from their projected edge.
+             */
+            cv::Mat distance;
+
+            cv::distanceTransform(
+                srcMask,
+                distance,
+                cv::DIST_L2,
+                3
+            );
+
+            distance.convertTo(
+                weight32f,
+                CV_32FC1,
+                1.0f / kFeatherRadiusPx
+            );
+
+            cv::threshold(
+                weight32f,
+                weight32f,
+                1.0,
+                1.0,
+                cv::THRESH_TRUNC
+            );
+
+            weight32f.setTo(0.0f, srcMask == 0);
+        }
+
+        auto& weights =
+            blendWeightsQ12_[region];
+
+        weights.resize(map.size());
+
+        for (std::size_t i = 0; i < map.size(); ++i) {
+            const std::uint32_t outIndex =
+                UnpackSphereMapOutputIndex(map[i]);
+
+            const std::uint32_t y =
+                outIndex / outputWidth;
+
+            const std::uint32_t x =
+                outIndex % outputWidth;
+
+            const float w =
+                weight32f.at<float>(
+                    static_cast<int>(y),
+                    static_cast<int>(x)
+                );
+
+            weights[i] = toQ12(w);
+        }
+
+        std::cout << "[BlendWeightMapQ12]"
+                  << " moduleIndex=" << moduleIndex_
+                  << " facetIndex=" << facetIndex_
+                  << " region=" << region
+                  << " samples=" << weights.size()
+                  << " role=" << ((region == 0) ? "non-overlap" : "overlap")
+                  << '\n';
+    }
+
+    blendWeightsReady_ = true;
+}
+
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::ApplyBlendWeightsQ12(
+    tpgydp_t& output)
+{
+    constexpr bool kEnableAperturePreBlendWeights = true;
+
+    if constexpr (!kEnableAperturePreBlendWeights) {
+        return;
+    }
+
+    if (!blendWeightsReady_) {
+        BuildBlendWeightMapsQ12();
+    }
+
+    for (std::size_t region = 0; region < regionCount_; ++region) {
+        const std::size_t valid =
+            output.RegionValidSize(region);
+
+        const auto& weights =
+            blendWeightsQ12_[region];
+
+        if (weights.size() != valid) {
+            std::cerr << "[ApplyBlendWeightsQ12] weight/data size mismatch:"
+                      << " region=" << region
+                      << " weights=" << weights.size()
+                      << " valid=" << valid
+                      << '\n';
+
+            std::exit(EXIT_FAILURE);
+        }
+
+        auto& dst =
+            output[region];
+
+        for (std::size_t i = 0; i < valid; ++i) {
+            const std::uint32_t v =
+                dst[i];
+
+            const std::uint32_t w =
+                weights[i];
+
+            const std::uint32_t weighted =
+                (v * w + (kBlendWeightOneQ12_ / 2u)) >> 12u;
+
+            dst[i] =
+                static_cast<std::uint16_t>(
+                    std::min<std::uint32_t>(weighted, 65535u)
+                );
+        }
+    }
+}
+
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
 void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
     const uint64_t frameNumber,
     const libcamera::FrameBuffer* buffer,
@@ -1229,6 +1433,8 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
                               appliedGainMsg,
                               tpgydp,
                               chunkThreads_);
+
+    ApplyBlendWeightsQ12(tpgydp);
 
     const auto tTransformDone = std::chrono::steady_clock::now();
 

@@ -3062,15 +3062,108 @@ cv::Mat CompositePreprojectedFrames(
     std::vector<LiveCameraState>& liveCameras,
     cv::Mat* validMask)
 {
+    struct PreprojectedBlendCache {
+        cv::Size frameSize{};
+        int frameType{-1};
+        bool ready{false};
+        cv::Mat weight32f;
+        cv::Mat weightBgr32f;
+    };
+
+    constexpr float kFeatherRadiusPx = 48.0f;
+    constexpr float kMinWeight = 1.0e-6f;
+
+    static std::vector<PreprojectedBlendCache> blendCaches;
+
+    if (blendCaches.size() != liveCameras.size()) {
+        blendCaches.clear();
+        blendCaches.resize(liveCameras.size());
+    }
+
+    auto buildBlendCache =
+        [&](PreprojectedBlendCache& cache,
+            const cv::Mat& frame,
+            std::size_t localStreamIndex) -> bool
+    {
+        if (cache.ready &&
+            cache.frameSize == frame.size() &&
+            cache.frameType == frame.type()) {
+            return true;
+        }
+
+        cache = PreprojectedBlendCache{};
+        cache.frameSize = frame.size();
+        cache.frameType = frame.type();
+
+        cv::Mat gray;
+        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+
+        const cv::Mat srcMask = gray > 0;
+
+        if (cv::countNonZero(srcMask) == 0) {
+            return false;
+        }
+
+        cache.weight32f =
+            cv::Mat::zeros(frame.rows, frame.cols, CV_32FC1);
+
+        if (localStreamIndex == 0) {
+            /*
+             * Region 0 is the owning/non-overlap region.
+             * It should contribute at full strength wherever valid.
+             */
+            cache.weight32f.setTo(1.0f, srcMask);
+        } else {
+            /*
+             * Regions 1..n are overlap regions.
+             * Feather them so overlap seams blend instead of overwriting.
+             */
+            cv::Mat distance;
+
+            cv::distanceTransform(
+                srcMask,
+                distance,
+                cv::DIST_L2,
+                3
+            );
+
+            distance.convertTo(
+                cache.weight32f,
+                CV_32FC1,
+                1.0f / kFeatherRadiusPx
+            );
+
+            cv::threshold(
+                cache.weight32f,
+                cache.weight32f,
+                1.0,
+                1.0,
+                cv::THRESH_TRUNC
+            );
+
+            cache.weight32f.setTo(0.0f, srcMask == 0);
+        }
+
+        std::vector<cv::Mat> weightChannels{
+            cache.weight32f,
+            cache.weight32f,
+            cache.weight32f
+        };
+
+        cv::merge(weightChannels, cache.weightBgr32f);
+
+        cache.ready = true;
+        return true;
+    };
+
     cv::Mat accum;
     cv::Mat weightSum;
     cv::Size panoSize;
     int panoType = -1;
 
-    constexpr float kFeatherRadiusPx = 48.0f;
-    constexpr float kMinWeight = 1.0e-6f;
+    for (std::size_t i = 0; i < liveCameras.size(); ++i) {
+        auto& live = liveCameras[i];
 
-    for (auto& live : liveCameras) {
         cv::Mat frame;
 
         if (!tryGetLatestFrame(live.frame, frame)) {
@@ -3090,81 +3183,48 @@ cv::Mat CompositePreprojectedFrames(
             panoSize = frame.size();
             panoType = frame.type();
 
-            accum = cv::Mat::zeros(panoSize, CV_32FC3);
-            weightSum = cv::Mat::zeros(panoSize, CV_32FC1);
+            accum =
+                cv::Mat::zeros(
+                    panoSize,
+                    CV_32FC3
+                );
+
+            weightSum =
+                cv::Mat::zeros(
+                    panoSize,
+                    CV_32FC1
+                );
         }
 
-        if (frame.size() != panoSize || frame.type() != panoType) {
+        if (frame.size() != panoSize ||
+            frame.type() != panoType) {
             std::cerr << "[CompositePreprojectedFrames] frame shape mismatch\n";
             continue;
         }
 
-        /*
-         * The preprojected buffers use black pixels as "no contribution".
-         * Convert that into a binary source mask.
-         */
-        cv::Mat gray;
-        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+        const std::size_t localStreamIndex =
+            i % kPeerStreams;
 
-        cv::Mat srcMask = gray > 0;
-        if (cv::countNonZero(srcMask) == 0) {
+        PreprojectedBlendCache& cache =
+            blendCaches[i];
+
+        if (!buildBlendCache(cache, frame, localStreamIndex)) {
             continue;
         }
 
+        cv::Mat frame32f;
+        frame.convertTo(frame32f, CV_32FC3);
+
         /*
-         * Feather weight:
-         *   0 at the mask edge
-         *   ramps toward 1 over kFeatherRadiusPx
-         *   stays 1 in the interior
+         * Stage 3b:
+         * ApertureComputeModule already multiplied pixel values by
+         * the same region-aware blend weight before UDP send.
          *
-         * This makes overlap regions blend instead of overwriting each other.
+         * Compute only accumulates weighted samples and accumulates
+         * the matching weight map for the final normalization divide.
          */
-        cv::Mat distance;
-        cv::distanceTransform(
-            srcMask,
-            distance,
-            cv::DIST_L2,
-            3
-        );
-
-        cv::Mat weights;
-        distance.convertTo(
-            weights,
-            CV_32FC1,
-            1.0f / kFeatherRadiusPx
-        );
-
-        cv::threshold(
-            weights,
-            weights,
-            1.0,
-            1.0,
-            cv::THRESH_TRUNC
-        );
-
-        weights.setTo(0.0f, srcMask == 0);
-
-        cv::Mat frame32;
-        frame.convertTo(frame32, CV_32FC3);
-
-        for (int y = 0; y < frame.rows; ++y) {
-            const cv::Vec3f* srcRow = frame32.ptr<cv::Vec3f>(y);
-            const float* weightRow = weights.ptr<float>(y);
-
-            cv::Vec3f* accumRow = accum.ptr<cv::Vec3f>(y);
-            float* weightSumRow = weightSum.ptr<float>(y);
-
-            for (int x = 0; x < frame.cols; ++x) {
-                const float w = weightRow[x];
-
-                if (w <= kMinWeight) {
-                    continue;
-                }
-
-                accumRow[x] += srcRow[x] * w;
-                weightSumRow[x] += w;
-            }
-        }
+        accum += frame32f;
+        weightSum += cache.weight32f;
     }
 
     if (accum.empty()) {
@@ -3175,57 +3235,45 @@ cv::Mat CompositePreprojectedFrames(
         return {};
     }
 
-    cv::Mat pano(
-        panoSize,
-        CV_8UC3,
-        cv::Scalar(0, 0, 0)
+    cv::Mat valid =
+        weightSum > kMinWeight;
+
+    cv::Mat safeWeightSum =
+        weightSum.clone();
+
+    safeWeightSum.setTo(
+        1.0f,
+        valid == 0
     );
 
-    cv::Mat mask(
-        panoSize,
-        CV_8UC1,
-        cv::Scalar(0)
-    );
+    std::vector<cv::Mat> channels;
+    cv::split(accum, channels);
 
-    for (int y = 0; y < pano.rows; ++y) {
-        const cv::Vec3f* accumRow = accum.ptr<cv::Vec3f>(y);
-        const float* weightSumRow = weightSum.ptr<float>(y);
-
-        cv::Vec3b* panoRow = pano.ptr<cv::Vec3b>(y);
-        std::uint8_t* maskRow = mask.ptr<std::uint8_t>(y);
-
-        for (int x = 0; x < pano.cols; ++x) {
-            const float w = weightSumRow[x];
-
-            if (w <= kMinWeight) {
-                continue;
-            }
-
-            const cv::Vec3f value = accumRow[x] / w;
-
-            panoRow[x] = cv::Vec3b(
-                static_cast<std::uint8_t>(
-                    std::clamp(value[0], 0.0f, 255.0f)
-                ),
-                static_cast<std::uint8_t>(
-                    std::clamp(value[1], 0.0f, 255.0f)
-                ),
-                static_cast<std::uint8_t>(
-                    std::clamp(value[2], 0.0f, 255.0f)
-                )
-            );
-
-            maskRow[x] = 255;
-        }
+    for (auto& channel : channels) {
+        cv::divide(
+            channel,
+            safeWeightSum,
+            channel
+        );
     }
 
+    cv::Mat blended32f;
+    cv::merge(channels, blended32f);
+
+    cv::Mat pano;
+    blended32f.convertTo(pano, CV_8UC3);
+
+    pano.setTo(
+        cv::Scalar(0, 0, 0),
+        valid == 0
+    );
+
     if (validMask != nullptr) {
-        *validMask = mask;
+        *validMask = valid;
     }
 
     return pano;
 }
-
 
 //cv::Mat CompositePreprojectedFrames(
     //std::vector<LiveCameraState>& liveCameras,

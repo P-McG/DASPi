@@ -62,6 +62,9 @@ namespace DASPi{
         static constexpr std::size_t moduleIndex_ = ModuleIndex;
                 
         ModuleSphericalMapType sphericalMap_;  
+        static constexpr std::uint16_t kBlendWeightOneQ12_{4096};
+        std::array<std::vector<std::uint16_t>, regionCount_> blendWeightsQ12_;
+        bool blendWeightsReady_{false};
 
         const int processingThreads_{4};
         const int chunkThreads_{4};
@@ -190,6 +193,8 @@ namespace DASPi{
         std::string ExtractCameraBusAddr(const std::string& libcameraId);
         uint32_t ParseBusAndAddressCameraId(const std::string& libcameraId);
         void SendSphereMap();
+        
+
 
     private:
         std::thread controlThread_;
@@ -201,6 +206,8 @@ namespace DASPi{
         uint32_t latestGainFrameId_{0};
         bool gainValid_{false};
         
+        void BuildBlendWeightMapsQ12();
+        void ApplyBlendWeightsQ12(tpgydp_t& output);        
         bool ReceiveGainReply();
         void HandleGainReply(const GainReply& reply);
         bool RunControlLoop();
