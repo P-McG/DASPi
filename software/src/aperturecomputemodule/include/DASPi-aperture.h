@@ -10,6 +10,9 @@
 #include <arpa/inet.h>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <array>
+#include <vector>
 
 #include <queue>
 #include <mutex>
@@ -63,7 +66,7 @@ namespace DASPi{
                 
         ModuleSphericalMapType sphericalMap_;  
         static constexpr std::uint16_t kBlendWeightOneQ12_{4096};
-        std::array<std::vector<std::uint16_t>, regionCount_> blendWeightsQ12_;
+        std::array< std::vector<std::uint16_t>, tpgydp_t::NumberOfRegions() > blendWeightsQ12_;
         bool blendWeightsReady_{false};
 
         const int processingThreads_{4};

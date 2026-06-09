@@ -3065,9 +3065,10 @@ cv::Mat CompositePreprojectedFrames(
     struct PreprojectedBlendCache {
         cv::Size frameSize{};
         int frameType{-1};
+        std::size_t localStreamIndex{kPeerStreams};
+        bool usedExternalMask{false};
         bool ready{false};
         cv::Mat weight32f;
-        cv::Mat weightBgr32f;
     };
 
     constexpr float kFeatherRadiusPx = 48.0f;
@@ -3080,39 +3081,86 @@ cv::Mat CompositePreprojectedFrames(
         blendCaches.resize(liveCameras.size());
     }
 
+    auto makeSourceMask =
+        [](const cv::Mat& frame,
+           const cv::Mat& validMaskForStream,
+           bool& usedExternalMask) -> cv::Mat
+    {
+        usedExternalMask = false;
+
+        if (!validMaskForStream.empty() &&
+            validMaskForStream.size() == frame.size() &&
+            validMaskForStream.type() == CV_8UC1) {
+            usedExternalMask = true;
+            return validMaskForStream > 0;
+        }
+
+        /*
+         * Fallback only.
+         *
+         * After Stage 3b, ApertureComputeModule may pre-weight edge pixels
+         * close to zero. So prefer live.validMask whenever available.
+         */
+        cv::Mat gray;
+        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+
+        return gray > 0;
+    };
+
     auto buildBlendCache =
         [&](PreprojectedBlendCache& cache,
             const cv::Mat& frame,
+            const cv::Mat& validMaskForStream,
             std::size_t localStreamIndex) -> bool
     {
+        bool usedExternalMask = false;
+
+        /*
+         * We still need to inspect mask availability before accepting the
+         * cache. This lets the cache rebuild if the first frame arrived
+         * before live.validMask was initialized.
+         */
+        cv::Mat srcMask =
+            makeSourceMask(
+                frame,
+                validMaskForStream,
+                usedExternalMask
+            );
+
         if (cache.ready &&
             cache.frameSize == frame.size() &&
-            cache.frameType == frame.type()) {
+            cache.frameType == frame.type() &&
+            cache.localStreamIndex == localStreamIndex &&
+            cache.usedExternalMask == usedExternalMask) {
             return true;
         }
 
         cache = PreprojectedBlendCache{};
         cache.frameSize = frame.size();
         cache.frameType = frame.type();
-
-        cv::Mat gray;
-        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-
-        const cv::Mat srcMask = gray > 0;
+        cache.localStreamIndex = localStreamIndex;
+        cache.usedExternalMask = usedExternalMask;
 
         if (cv::countNonZero(srcMask) == 0) {
             return false;
         }
 
         cache.weight32f =
-            cv::Mat::zeros(frame.rows, frame.cols, CV_32FC1);
+            cv::Mat::zeros(
+                frame.rows,
+                frame.cols,
+                CV_32FC1
+            );
 
         if (localStreamIndex == 0) {
             /*
              * Region 0 is the owning/non-overlap region.
-             * It should contribute at full strength wherever valid.
+             * It contributes at full strength wherever valid.
              */
-            cache.weight32f.setTo(1.0f, srcMask);
+            cache.weight32f.setTo(
+                1.0f,
+                srcMask
+            );
         } else {
             /*
              * Regions 1..n are overlap regions.
@@ -3141,16 +3189,11 @@ cv::Mat CompositePreprojectedFrames(
                 cv::THRESH_TRUNC
             );
 
-            cache.weight32f.setTo(0.0f, srcMask == 0);
+            cache.weight32f.setTo(
+                0.0f,
+                srcMask == 0
+            );
         }
-
-        std::vector<cv::Mat> weightChannels{
-            cache.weight32f,
-            cache.weight32f,
-            cache.weight32f
-        };
-
-        cv::merge(weightChannels, cache.weightBgr32f);
 
         cache.ready = true;
         return true;
@@ -3208,7 +3251,11 @@ cv::Mat CompositePreprojectedFrames(
         PreprojectedBlendCache& cache =
             blendCaches[i];
 
-        if (!buildBlendCache(cache, frame, localStreamIndex)) {
+        if (!buildBlendCache(
+                cache,
+                frame,
+                live.validMask,
+                localStreamIndex)) {
             continue;
         }
 
@@ -3274,7 +3321,6 @@ cv::Mat CompositePreprojectedFrames(
 
     return pano;
 }
-
 //cv::Mat CompositePreprojectedFrames(
     //std::vector<LiveCameraState>& liveCameras,
     //cv::Mat* validMask)

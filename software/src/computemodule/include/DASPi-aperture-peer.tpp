@@ -597,6 +597,46 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
         const uint16_t* src =
             this->tpgydp_[regionIndex].data();
 
+        /*
+         * Stage 3c:
+         *
+         * The old scatter rule used:
+         *
+         *     dstSample = std::max(dstSample, src[i]);
+         *
+         * That avoids over-brightening, but it throws away samples whenever
+         * multiple source pixels land in the same equirect/channel slot.
+         *
+         * Use an intra-region averaged scatter instead:
+         *
+         *     sum[channel-slot]   += src[i]
+         *     count[channel-slot] += 1
+         *     dst[channel-slot]    = round(sum / count)
+         *
+         * The output buffer remains BGR16 interleaved, so the rest of the
+         * pipeline does not need to change.
+         */
+        static thread_local std::vector<std::uint32_t> scatterSums;
+        static thread_local std::vector<std::uint32_t> scatterCounts;
+        static thread_local std::vector<std::size_t> touchedSlots;
+
+        if (scatterSums.size() != scatterOutputElems) {
+            scatterSums.assign(scatterOutputElems, std::uint32_t{0});
+            scatterCounts.assign(scatterOutputElems, std::uint32_t{0});
+        }
+
+        touchedSlots.clear();
+        touchedSlots.reserve(validSize);
+
+        auto resetTouchedSlots = [&]() {
+            for (const std::size_t slot : touchedSlots) {
+                scatterSums[slot] = 0;
+                scatterCounts[slot] = 0;
+            }
+
+            touchedSlots.clear();
+        };
+
         for (std::size_t i = 0; i < validSize; ++i) {
             const std::uint32_t packedEntry =
                 map[i];
@@ -616,6 +656,7 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
                           << " frame_id=" << frameHeader.gainMsg_.frame_id
                           << '\n';
 
+                resetTouchedSlots();
                 return false;
             }
 
@@ -645,24 +686,41 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
                           << std::hex << packedEntry << std::dec
                           << '\n';
 
+                resetTouchedSlots();
                 return false;
             }
 
-            /*
-             * First Stage 2 compositing rule:
-             *
-             * If multiple samples land in the same equirect/channel slot,
-             * keep the brightest sample.
-             *
-             * Later this can become averaging, weighted blending, or
-             * confidence-based accumulation.
-             */
-            uint16_t& dstSample =
-                dst[base + channelOffset];
+            const std::size_t slot =
+                base + channelOffset;
 
-            dstSample =
-                std::max(dstSample, src[i]);
+            if (scatterCounts[slot] == 0) {
+                touchedSlots.push_back(slot);
+            }
+
+            scatterSums[slot] +=
+                static_cast<std::uint32_t>(src[i]);
+
+            ++scatterCounts[slot];
         }
+
+        for (const std::size_t slot : touchedSlots) {
+            const std::uint32_t count =
+                scatterCounts[slot];
+
+            if (count == 0) {
+                continue;
+            }
+
+            const std::uint32_t average =
+                (scatterSums[slot] + (count / 2u)) / count;
+
+            dst[slot] =
+                static_cast<std::uint16_t>(
+                    std::min<std::uint32_t>(average, 65535u)
+                );
+        }
+
+        resetTouchedSlots();
 
         return true;
     };
