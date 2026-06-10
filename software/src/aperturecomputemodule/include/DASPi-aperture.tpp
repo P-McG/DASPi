@@ -980,147 +980,259 @@ void Aperture<FacetIndex, ModuleIndex>::RunEventLoop(int timeout){
 template<unsigned int FacetIndex, std::size_t ModuleIndex>
 void Aperture<FacetIndex, ModuleIndex>::BuildBlendWeightMapsQ12()
 {
-    constexpr float kFeatherRadiusPx = 48.0f;
-
-    const std::uint32_t outputWidth =
-        sphericalMap_.OutputWidth();
-
-    const std::uint32_t outputHeight =
-        sphericalMap_.OutputHeight();
-
-    const std::uint32_t outputSize =
-        sphericalMap_.OutputSize();
-
-    if (outputWidth == 0 || outputHeight == 0 || outputSize == 0) {
-        std::cerr << "[BuildBlendWeightMapsQ12] invalid spherical map output size\n";
-        std::exit(EXIT_FAILURE);
-    }
-
     const auto toQ12 =
-        [](float w) -> std::uint16_t
+        [](double w) -> std::uint16_t
     {
         if (!std::isfinite(w)) {
-            w = 0.0f;
+            w = 0.0;
         }
 
-        w = std::clamp(w, 0.0f, 1.0f);
+        w = std::clamp(w, 0.0, 1.0);
 
         return static_cast<std::uint16_t>(
-            std::lround(w * static_cast<float>(kBlendWeightOneQ12_))
+            std::llround(
+                w * static_cast<double>(kBlendWeightOneQ12_)
+            )
         );
     };
 
-    for (std::size_t region = 0; region < regionCount_; ++region) {
-        const auto& map =
-            sphericalMap_.Region(region);
+    /*
+     * Region 0 is non-overlap and remains full strength.
+     */
+    {
+        const auto& nonOverlapTopology =
+            NonOverlapTopologyRef();
 
-        cv::Mat srcMask =
-            cv::Mat::zeros(
-                static_cast<int>(outputHeight),
-                static_cast<int>(outputWidth),
-                CV_8UC1
+        auto& weights =
+            blendWeightsQ12_[0];
+
+        weights.assign(
+            nonOverlapTopology.size(),
+            kBlendWeightOneQ12_
+        );
+
+        std::cout << "[BlendWeightMapQ12]"
+                  << " moduleIndex=" << moduleIndex_
+                  << " facetIndex=" << facetIndex_
+                  << " region=0"
+                  << " samples=" << weights.size()
+                  << " role=non-overlap"
+                  << " mode=full"
+                  << '\n';
+    }
+
+    const auto& overlapTopology =
+        OverlapTopologyRef();
+
+    const auto& coverageTopology =
+        static_cast<
+            const typename OverlapTopologyType::CoverageTopology_t&
+        >(overlapTopology);
+
+    const auto& nonOverlapTopology =
+        NonOverlapTopologyRef();
+
+    const auto pointX =
+        [](const auto& p) -> double
+    {
+        return static_cast<double>(p.x());
+    };
+
+    const auto pointY =
+        [](const auto& p) -> double
+    {
+        return static_cast<double>(p.y());
+    };
+
+    /*
+     * For each local edge:
+     *
+     *   coverage edge      -> weight 0
+     *   non-overlap edge   -> weight 1
+     *
+     * This is a directional linear ramp across the overlap band.
+     */
+    for (std::size_t localEdgeIndex = 0;
+         localEdgeIndex < n_;
+         ++localEdgeIndex) {
+        const std::size_t region =
+            localEdgeIndex + 1;
+
+        const auto& fullP0 =
+            coverageTopology.shapeDefiningPoints_[localEdgeIndex];
+
+        const auto& fullP1 =
+            coverageTopology.shapeDefiningPoints_[
+                (localEdgeIndex + 1) % n_
+            ];
+
+        const auto& innerP0 =
+            nonOverlapTopology.shapeDefiningPoints_[localEdgeIndex];
+
+        const double ax =
+            pointX(fullP0);
+
+        const double ay =
+            pointY(fullP0);
+
+        const double bx =
+            pointX(fullP1);
+
+        const double by =
+            pointY(fullP1);
+
+        const double edgeX =
+            bx - ax;
+
+        const double edgeY =
+            by - ay;
+
+        /*
+         * Candidate inward normal for the full facet edge.
+         */
+        double normalX =
+            -edgeY;
+
+        double normalY =
+            edgeX;
+
+        const double normalLen =
+            std::sqrt(
+                normalX * normalX +
+                normalY * normalY
             );
 
-        for (const std::uint32_t packedEntry : map) {
-            const std::uint32_t outIndex =
-                UnpackSphereMapOutputIndex(packedEntry);
+        if (normalLen <= 1.0e-9) {
+            std::cerr << "[BuildBlendWeightMapsQ12] degenerate edge:"
+                      << " region=" << region
+                      << " localEdgeIndex=" << localEdgeIndex
+                      << '\n';
 
-            if (outIndex >= outputSize) {
-                std::cerr << "[BuildBlendWeightMapsQ12] output index OOB:"
-                          << " region=" << region
-                          << " outIndex=" << outIndex
-                          << " outputSize=" << outputSize
-                          << '\n';
-
-                std::exit(EXIT_FAILURE);
-            }
-
-            const std::uint32_t y =
-                outIndex / outputWidth;
-
-            const std::uint32_t x =
-                outIndex % outputWidth;
-
-            srcMask.at<std::uint8_t>(
-                static_cast<int>(y),
-                static_cast<int>(x)
-            ) = 255;
+            std::exit(EXIT_FAILURE);
         }
 
-        cv::Mat weight32f =
-            cv::Mat::zeros(
-                srcMask.rows,
-                srcMask.cols,
-                CV_32FC1
-            );
+        normalX /= normalLen;
+        normalY /= normalLen;
 
-        if (region == 0) {
-            /*
-             * Region 0 is the owning/non-overlap region.
-             * It contributes at full weight wherever valid.
-             */
-            weight32f.setTo(1.0f, srcMask);
-        } else {
-            /*
-             * Regions 1..n are overlap regions.
-             * Feather inward from their projected edge.
-             */
-            cv::Mat distance;
+        /*
+         * Make the normal point inward, toward the sensor/facet center.
+         */
+        const double centerX =
+            pointX(coverageTopology.sensorCenter_);
 
-            cv::distanceTransform(
-                srcMask,
-                distance,
-                cv::DIST_L2,
-                3
-            );
+        const double centerY =
+            pointY(coverageTopology.sensorCenter_);
 
-            distance.convertTo(
-                weight32f,
-                CV_32FC1,
-                1.0f / kFeatherRadiusPx
-            );
+        const double centerDot =
+            (centerX - ax) * normalX +
+            (centerY - ay) * normalY;
 
-            cv::threshold(
-                weight32f,
-                weight32f,
-                1.0,
-                1.0,
-                cv::THRESH_TRUNC
-            );
+        if (centerDot < 0.0) {
+            normalX = -normalX;
+            normalY = -normalY;
+        }
 
-            weight32f.setTo(0.0f, srcMask == 0);
+        /*
+         * Distance between the full facet edge and the corresponding
+         * non-overlap edge. This is the overlap-band width in this direction.
+         */
+        const double innerDistance =
+            (pointX(innerP0) - ax) * normalX +
+            (pointY(innerP0) - ay) * normalY;
+
+        if (innerDistance <= 1.0e-9) {
+            std::cerr << "[BuildBlendWeightMapsQ12] invalid inner distance:"
+                      << " region=" << region
+                      << " localEdgeIndex=" << localEdgeIndex
+                      << " innerDistance=" << innerDistance
+                      << '\n';
+
+            std::exit(EXIT_FAILURE);
+        }
+
+        const auto& indexLinear =
+            *overlapTopology.indexLinearMaxs_[localEdgeIndex];
+
+        const std::size_t valid =
+            overlapTopology.size(localEdgeIndex);
+
+        if (valid > indexLinear.size()) {
+            std::cerr << "[BuildBlendWeightMapsQ12] valid exceeds indexLinear:"
+                      << " region=" << region
+                      << " valid=" << valid
+                      << " indexLinear.size=" << indexLinear.size()
+                      << '\n';
+
+            std::exit(EXIT_FAILURE);
         }
 
         auto& weights =
             blendWeightsQ12_[region];
 
-        weights.resize(map.size());
+        weights.resize(valid);
 
-        for (std::size_t i = 0; i < map.size(); ++i) {
-            const std::uint32_t outIndex =
-                UnpackSphereMapOutputIndex(map[i]);
+        std::uint16_t minWeight =
+            kBlendWeightOneQ12_;
 
-            const std::uint32_t y =
-                outIndex / outputWidth;
+        std::uint16_t maxWeight =
+            0;
 
-            const std::uint32_t x =
-                outIndex % outputWidth;
-
-            const float w =
-                weight32f.at<float>(
-                    static_cast<int>(y),
-                    static_cast<int>(x)
+        for (std::size_t i = 0; i < valid; ++i) {
+            const std::size_t sensorIndex =
+                static_cast<std::size_t>(
+                    indexLinear[i].value()
                 );
 
-            weights[i] = toQ12(w);
+            const double px =
+                static_cast<double>(
+                    sensorIndex % sensorWidthValue_
+                ) + 0.5;
+
+            const double py =
+                static_cast<double>(
+                    sensorIndex / sensorWidthValue_
+                ) + 0.5;
+
+            const double d =
+                (px - ax) * normalX +
+                (py - ay) * normalY;
+
+            /*
+             * d = 0             -> full facet outer edge -> 0
+             * d = innerDistance -> non-overlap boundary  -> 1
+             */
+            const double w =
+                d / innerDistance;
+
+            const std::uint16_t q =
+                toQ12(w);
+
+            weights[i] = q;
+
+            minWeight =
+                std::min(
+                    minWeight,
+                    q
+                );
+
+            maxWeight =
+                std::max(
+                    maxWeight,
+                    q
+                );
         }
 
         std::cout << "[BlendWeightMapQ12]"
                   << " moduleIndex=" << moduleIndex_
                   << " facetIndex=" << facetIndex_
                   << " region=" << region
+                  << " localEdgeIndex=" << localEdgeIndex
                   << " samples=" << weights.size()
-                  << " role=" << ((region == 0) ? "non-overlap" : "overlap")
+                  << " role=overlap"
+                  << " mode=linear-full-to-zero"
+                  << " minQ12=" << minWeight
+                  << " maxQ12=" << maxWeight
+                  << " innerDistance=" << innerDistance
                   << '\n';
     }
 
@@ -1131,7 +1243,7 @@ template<unsigned int FacetIndex, std::size_t ModuleIndex>
 void Aperture<FacetIndex, ModuleIndex>::ApplyBlendWeightsQ12(
     tpgydp_t& output)
 {
-    constexpr bool kEnableAperturePreBlendWeights = false;
+    constexpr bool kEnableAperturePreBlendWeights = true;
 
     if constexpr (!kEnableAperturePreBlendWeights) {
         return;
@@ -1141,7 +1253,16 @@ void Aperture<FacetIndex, ModuleIndex>::ApplyBlendWeightsQ12(
         BuildBlendWeightMapsQ12();
     }
 
-    for (std::size_t region = 0; region < regionCount_; ++region) {
+    for (std::size_t region = 0;
+         region < regionCount_;
+         ++region) {
+        /*
+         * Region 0 is non-overlap and remains full strength.
+         */
+        if (region == 0) {
+            continue;
+        }
+
         const std::size_t valid =
             output.RegionValidSize(region);
 
@@ -1173,7 +1294,10 @@ void Aperture<FacetIndex, ModuleIndex>::ApplyBlendWeightsQ12(
 
             dst[i] =
                 static_cast<std::uint16_t>(
-                    std::min<std::uint32_t>(weighted, 65535u)
+                    std::min<std::uint32_t>(
+                        weighted,
+                        65535u
+                    )
                 );
         }
     }

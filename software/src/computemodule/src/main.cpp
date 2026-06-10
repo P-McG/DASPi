@@ -3138,324 +3138,23 @@ cv::Mat CompositePreprojectedFrames(
     std::vector<LiveCameraState>& liveCameras,
     cv::Mat* validMask)
 {
-    struct PreprojectedBlendCache {
-        cv::Size frameSize{};
-        int frameType{-1};
-        std::size_t localStreamIndex{kPeerStreams};
-
-        bool maskReady{false};
-        bool weightReady{false};
-
-        cv::Mat srcMask;
-        cv::Mat usableMask;
-        cv::Mat weight32f;
-        cv::Mat weightBgr32f;
-    };
-
-    struct CoverageCache {
-        cv::Size frameSize{};
-        std::size_t cameraCount{0};
-        bool ready{false};
-
-        /*
-         * Count only overlap regions that are allowed to feather-blend.
-         *
-         * This intentionally excludes:
-         *   - region 0
-         *   - overlap regions whose adjacent face is not an active module
-         */
-        cv::Mat eligibleOverlapCoverageCount32s;
-    };
-
-    struct ActiveFrame {
-        std::size_t streamIndex{};
-        std::size_t localStreamIndex{};
-        cv::Mat frame;
-    };
-
-    constexpr float kFeatherRadiusPx = 48.0f;
-    constexpr float kMinWeight = 1.0e-6f;
-
-    static std::vector<PreprojectedBlendCache> blendCaches;
-    static CoverageCache coverageCache;
-
-    if (blendCaches.size() != liveCameras.size()) {
-        blendCaches.clear();
-        blendCaches.resize(liveCameras.size());
-        coverageCache = CoverageCache{};
-    }
-
-    auto getLocalStreamIndex =
-        [&](std::size_t streamIndex) -> std::size_t
-    {
-        if (streamIndex < liveCameras.size() &&
-            liveCameras[streamIndex].localStreamIndex >= 0) {
-            return static_cast<std::size_t>(
-                liveCameras[streamIndex].localStreamIndex
-            );
-        }
-
-        /*
-         * Fallback only.
-         * Normal operation should use localStreamIndex copied from CameraConfig.
-         */
-        return streamIndex % kPeerStreams;
-    };
-
-    auto isBlendEligibleOverlap =
-        [&](std::size_t streamIndex,
-            const PreprojectedBlendCache& cache) -> bool
-    {
-        return cache.localStreamIndex != 0 &&
-               streamIndex < liveCameras.size() &&
-               liveCameras[streamIndex].blendEligible;
-    };
-
-    auto invalidateWeights = [&]() {
-        coverageCache = CoverageCache{};
-
-        for (auto& cache : blendCaches) {
-            cache.weightReady = false;
-            cache.usableMask.release();
-            cache.weight32f.release();
-            cache.weightBgr32f.release();
-        }
-    };
-
-    auto buildProjectedMaskIfNeeded =
-        [&](PreprojectedBlendCache& cache,
-            const cv::Mat& frame,
-            std::size_t localStreamIndex) -> bool
-    {
-        if (cache.maskReady &&
-            cache.frameSize == frame.size() &&
-            cache.frameType == frame.type() &&
-            cache.localStreamIndex == localStreamIndex &&
-            !cache.srcMask.empty()) {
-            return true;
-        }
-
-        /*
-         * This mask is in projected/equirect space.
-         * Do not use live.validMask here.
-         */
-        cv::Mat gray;
-        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-
-        cv::Mat srcMask =
-            gray > 0;
-
-        if (cv::countNonZero(srcMask) == 0) {
-            return false;
-        }
-
-        cache = PreprojectedBlendCache{};
-        cache.frameSize = frame.size();
-        cache.frameType = frame.type();
-        cache.localStreamIndex = localStreamIndex;
-        cache.srcMask = std::move(srcMask);
-        cache.maskReady = true;
-        cache.weightReady = false;
-
-        invalidateWeights();
-
-        return true;
-    };
-
-    auto rebuildCoverageCache =
-        [&](const cv::Size& frameSize) -> bool
-    {
-        coverageCache = CoverageCache{};
-        coverageCache.frameSize = frameSize;
-        coverageCache.cameraCount = liveCameras.size();
-
-        coverageCache.eligibleOverlapCoverageCount32s =
-            cv::Mat::zeros(
-                frameSize,
-                CV_32SC1
-            );
-
-        bool anyVisibleMask = false;
-
-        for (std::size_t streamIndex = 0;
-             streamIndex < blendCaches.size();
-             ++streamIndex) {
-            PreprojectedBlendCache& cache =
-                blendCaches[streamIndex];
-
-            if (!cache.maskReady ||
-                cache.srcMask.empty() ||
-                cache.frameSize != frameSize) {
-                continue;
-            }
-
-            /*
-             * Important:
-             *
-             * Every projected stream remains visible.
-             * blendEligible controls feather blending only.
-             */
-            cache.usableMask =
-                cache.srcMask.clone();
-
-            anyVisibleMask = true;
-
-            if (!isBlendEligibleOverlap(streamIndex, cache)) {
-                continue;
-            }
-
-            cv::Mat usable32s;
-
-            cache.usableMask.convertTo(
-                usable32s,
-                CV_32SC1,
-                1.0 / 255.0
-            );
-
-            coverageCache.eligibleOverlapCoverageCount32s += usable32s;
-        }
-
-        coverageCache.ready = anyVisibleMask;
-        return anyVisibleMask;
-    };
-
-    auto buildWeightCacheIfNeeded =
-        [&](PreprojectedBlendCache& cache,
-            std::size_t streamIndex) -> bool
-    {
-        if (cache.weightReady) {
-            return true;
-        }
-
-        if (!cache.maskReady || cache.srcMask.empty()) {
-            return false;
-        }
-
-        if (!coverageCache.ready ||
-            coverageCache.frameSize != cache.frameSize ||
-            coverageCache.cameraCount != liveCameras.size()) {
-            if (!rebuildCoverageCache(cache.frameSize)) {
-                return false;
-            }
-        }
-
-        if (cache.usableMask.empty()) {
-            return false;
-        }
-
-        if (cv::countNonZero(cache.usableMask) == 0) {
-            return false;
-        }
-
-        cache.weight32f =
-            cv::Mat::zeros(
-                cache.frameSize,
-                CV_32FC1
-            );
-
-        /*
-         * Default for all visible streams:
-         * full weight wherever projected signal exists.
-         */
-        cache.weight32f.setTo(
-            1.0f,
-            cache.usableMask
-        );
-
-        /*
-         * Only the facet-adjacent eligible overlap regions get feathered.
-         *
-         * Region 0:
-         *   full weight
-         *
-         * Non-eligible overlap:
-         *   full weight
-         *
-         * Eligible overlap:
-         *   full weight normally, feathered only where another eligible
-         *   overlap region also covers the same projected pixel.
-         */
-        if (isBlendEligibleOverlap(streamIndex, cache)) {
-            cv::Mat sharedEligibleOverlapMask =
-                coverageCache.eligibleOverlapCoverageCount32s > 1;
-
-            cv::bitwise_and(
-                sharedEligibleOverlapMask,
-                cache.usableMask,
-                sharedEligibleOverlapMask
-            );
-
-            if (cv::countNonZero(sharedEligibleOverlapMask) > 0) {
-                cv::Mat distance;
-
-                cv::distanceTransform(
-                    cache.usableMask,
-                    distance,
-                    cv::DIST_L2,
-                    3
-                );
-
-                cv::Mat featherWeight;
-
-                distance.convertTo(
-                    featherWeight,
-                    CV_32FC1,
-                    1.0f / kFeatherRadiusPx
-                );
-
-                cv::threshold(
-                    featherWeight,
-                    featherWeight,
-                    1.0,
-                    1.0,
-                    cv::THRESH_TRUNC
-                );
-
-                featherWeight.copyTo(
-                    cache.weight32f,
-                    sharedEligibleOverlapMask
-                );
-            }
-        }
-
-        cache.weight32f.setTo(
-            0.0f,
-            cache.usableMask == 0
-        );
-
-        std::vector<cv::Mat> weightChannels{
-            cache.weight32f,
-            cache.weight32f,
-            cache.weight32f
-        };
-
-        cv::merge(
-            weightChannels,
-            cache.weightBgr32f
-        );
-
-        cache.weightReady = true;
-        return true;
-    };
-
-    /*
-     * First pass:
-     * collect every visible stream.
-     *
-     * Do not filter by blendEligible here.
-     */
-    std::vector<ActiveFrame> activeFrames;
-    activeFrames.reserve(liveCameras.size());
-
     cv::Size panoSize;
     int panoType = -1;
 
-    bool maskChangedThisCall = false;
+    cv::Mat accum;
+    cv::Mat outputMask;
 
-    for (std::size_t i = 0; i < liveCameras.size(); ++i) {
+    bool initialized = false;
+    std::size_t usedStreams = 0;
+
+    for (std::size_t streamIndex = 0;
+         streamIndex < liveCameras.size();
+         ++streamIndex) {
         cv::Mat frame;
 
-        if (!tryGetLatestFrame(liveCameras[i].frame, frame)) {
+        if (!tryGetLatestFrame(
+                liveCameras[streamIndex].frame,
+                frame)) {
             continue;
         }
 
@@ -3465,164 +3164,128 @@ cv::Mat CompositePreprojectedFrames(
 
         if (frame.type() != CV_8UC3) {
             std::cerr << "[CompositePreprojectedFrames] expected CV_8UC3 frame"
-                      << " stream=" << i
+                      << " stream=" << streamIndex
                       << " type=" << frame.type()
                       << '\n';
             continue;
         }
 
-        if (activeFrames.empty()) {
+        if (!initialized) {
             panoSize = frame.size();
             panoType = frame.type();
+
+            accum =
+                cv::Mat::zeros(
+                    panoSize,
+                    CV_32SC3
+                );
+
+            outputMask =
+                cv::Mat::zeros(
+                    panoSize,
+                    CV_8UC1
+                );
+
+            initialized = true;
         }
 
         if (frame.size() != panoSize ||
             frame.type() != panoType) {
             std::cerr << "[CompositePreprojectedFrames] frame shape mismatch"
-                      << " stream=" << i
+                      << " stream=" << streamIndex
+                      << " expected=" << panoSize.width << "x" << panoSize.height
+                      << " got=" << frame.cols << "x" << frame.rows
                       << '\n';
             continue;
         }
 
-        const std::size_t localStreamIndex =
-            getLocalStreamIndex(i);
+        /*
+         * The frame is already preprojected.
+         *
+         * After Patch B, overlap regions will already be linearly preweighted
+         * on the ApertureComputeModule. The ComputeModule should not do
+         * ownership, feathering, or normalization anymore.
+         */
+        cv::Mat frame32s;
 
-        PreprojectedBlendCache& cache =
-            blendCaches[i];
+        frame.convertTo(
+            frame32s,
+            CV_32SC3
+        );
 
-        const bool wasReady =
-            cache.maskReady;
+        accum += frame32s;
 
-        if (!buildProjectedMaskIfNeeded(
-                cache,
-                frame,
-                localStreamIndex)) {
-            continue;
+        /*
+         * Build output validity from projected non-black pixels.
+         * This is only for display/overlay validity, not blending.
+         */
+        cv::Mat gray;
+
+        cv::cvtColor(
+            frame,
+            gray,
+            cv::COLOR_BGR2GRAY
+        );
+
+        cv::Mat srcMask =
+            gray > 0;
+
+        if (cv::countNonZero(srcMask) > 0) {
+            outputMask.setTo(
+                255,
+                srcMask
+            );
+
+            ++usedStreams;
         }
-
-        if (!wasReady) {
-            maskChangedThisCall = true;
-        }
-
-        activeFrames.push_back(ActiveFrame{
-            .streamIndex = i,
-            .localStreamIndex = localStreamIndex,
-            .frame = std::move(frame)
-        });
     }
 
-    if (activeFrames.empty()) {
+    if (!initialized ||
+        usedStreams == 0 ||
+        cv::countNonZero(outputMask) == 0) {
         if (validMask != nullptr) {
             validMask->release();
         }
 
         return {};
     }
-
-    if (maskChangedThisCall ||
-        !coverageCache.ready ||
-        coverageCache.frameSize != panoSize ||
-        coverageCache.cameraCount != liveCameras.size()) {
-        if (!rebuildCoverageCache(panoSize)) {
-            if (validMask != nullptr) {
-                validMask->release();
-            }
-
-            return {};
-        }
-
-        for (auto& cache : blendCaches) {
-            cache.weightReady = false;
-            cache.weight32f.release();
-            cache.weightBgr32f.release();
-        }
-    }
-
-    cv::Mat accum =
-        cv::Mat::zeros(
-            panoSize,
-            CV_32FC3
-        );
-
-    cv::Mat weightSum =
-        cv::Mat::zeros(
-            panoSize,
-            CV_32FC1
-        );
 
     /*
-     * Second pass:
-     * all visible streams contribute;
-     * only eligible overlap streams feather.
+     * Debug only:
+     * Before Patch B, this may exceed 255 because overlap regions are still
+     * full-strength. After Aperture-side preweighting, maxAccum should normally
+     * stay close to 255 for properly complementary seams.
      */
-    for (const auto& active : activeFrames) {
-        PreprojectedBlendCache& cache =
-            blendCaches[active.streamIndex];
+    double minAccum = 0.0;
+    double maxAccum = 0.0;
 
-        if (!buildWeightCacheIfNeeded(
-                cache,
-                active.streamIndex)) {
-            continue;
-        }
-
-        cv::Mat frame32f;
-        active.frame.convertTo(frame32f, CV_32FC3);
-
-        cv::Mat weightedFrame;
-
-        cv::multiply(
-            frame32f,
-            cache.weightBgr32f,
-            weightedFrame
-        );
-
-        accum += weightedFrame;
-        weightSum += cache.weight32f;
-    }
-
-    cv::Mat valid =
-        weightSum > kMinWeight;
-
-    if (cv::countNonZero(valid) == 0) {
-        if (validMask != nullptr) {
-            validMask->release();
-        }
-
-        return {};
-    }
-
-    cv::Mat safeWeightSum =
-        weightSum.clone();
-
-    safeWeightSum.setTo(
-        1.0f,
-        valid == 0
+    cv::minMaxLoc(
+        accum.reshape(1),
+        &minAccum,
+        &maxAccum
     );
 
-    std::vector<cv::Mat> channels;
-    cv::split(accum, channels);
-
-    for (auto& channel : channels) {
-        cv::divide(
-            channel,
-            safeWeightSum,
-            channel
-        );
-    }
-
-    cv::Mat blended32f;
-    cv::merge(channels, blended32f);
+    std::cout << "[add compositor]"
+              << " usedStreams=" << usedStreams
+              << " validPixels=" << cv::countNonZero(outputMask)
+              << " minAccum=" << minAccum
+              << " maxAccum=" << maxAccum
+              << '\n';
 
     cv::Mat pano;
-    blended32f.convertTo(pano, CV_8UC3);
+
+    accum.convertTo(
+        pano,
+        CV_8UC3
+    );
 
     pano.setTo(
         cv::Scalar(0, 0, 0),
-        valid == 0
+        outputMask == 0
     );
 
     if (validMask != nullptr) {
-        *validMask = valid;
+        *validMask = outputMask;
     }
 
     return pano;
