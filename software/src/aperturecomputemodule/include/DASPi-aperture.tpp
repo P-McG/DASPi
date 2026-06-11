@@ -996,6 +996,118 @@ void Aperture<FacetIndex, ModuleIndex>::BuildBlendWeightMapsQ12()
         );
     };
 
+    const auto cross2 =
+        [](double ax,
+           double ay,
+           double bx,
+           double by) -> double
+    {
+        return ax * by - ay * bx;
+    };
+
+    const auto pointX =
+        [](const auto& p) -> double
+    {
+        return static_cast<double>(p.x());
+    };
+
+    const auto pointY =
+        [](const auto& p) -> double
+    {
+        return static_cast<double>(p.y());
+    };
+
+    const auto rayPolygonDistance =
+        [&](double cx,
+            double cy,
+            double dx,
+            double dy,
+            const auto& polygon,
+            double& outDistance) -> bool
+    {
+        double bestDistance =
+            std::numeric_limits<double>::infinity();
+
+        for (std::size_t edge = 0;
+             edge < n_;
+             ++edge) {
+            const auto& p0 =
+                polygon.shapeDefiningPoints_[edge];
+
+            const auto& p1 =
+                polygon.shapeDefiningPoints_[
+                    (edge + 1) % n_
+                ];
+
+            const double ax =
+                pointX(p0);
+
+            const double ay =
+                pointY(p0);
+
+            const double bx =
+                pointX(p1);
+
+            const double by =
+                pointY(p1);
+
+            const double ex =
+                bx - ax;
+
+            const double ey =
+                by - ay;
+
+            const double denom =
+                cross2(dx, dy, ex, ey);
+
+            if (std::abs(denom) < 1.0e-9) {
+                continue;
+            }
+
+            /*
+             * Ray:
+             *   C + t * D
+             *
+             * Edge segment:
+             *   A + u * E
+             */
+            const double acx =
+                ax - cx;
+
+            const double acy =
+                ay - cy;
+
+            const double t =
+                cross2(acx, acy, ex, ey) / denom;
+
+            const double u =
+                cross2(acx, acy, dx, dy) / denom;
+
+            if (t <= 1.0e-6) {
+                continue;
+            }
+
+            if (u < -1.0e-6 || u > 1.0 + 1.0e-6) {
+                continue;
+            }
+
+            bestDistance =
+                std::min(
+                    bestDistance,
+                    t
+                );
+        }
+
+        if (!std::isfinite(bestDistance)) {
+            return false;
+        }
+
+        outDistance =
+            bestDistance;
+
+        return true;
+    };
+
     /*
      * Region 0 is non-overlap and remains full strength.
      */
@@ -1032,129 +1144,33 @@ void Aperture<FacetIndex, ModuleIndex>::BuildBlendWeightMapsQ12()
     const auto& nonOverlapTopology =
         NonOverlapTopologyRef();
 
-    const auto pointX =
-        [](const auto& p) -> double
-    {
-        return static_cast<double>(p.x());
-    };
+    const double centerX =
+        pointX(coverageTopology.sensorCenter_);
 
-    const auto pointY =
-        [](const auto& p) -> double
-    {
-        return static_cast<double>(p.y());
-    };
+    const double centerY =
+        pointY(coverageTopology.sensorCenter_);
 
     /*
-     * For each local edge:
+     * For each overlap region:
      *
-     *   coverage edge      -> weight 0
-     *   non-overlap edge   -> weight 1
+     *   inner/non-overlap boundary -> weight 1
+     *   outer/coverage boundary    -> weight 0
      *
-     * This is a directional linear ramp across the overlap band.
+     * The coordinate is measured along the actual ray from the sensor center
+     * through the pixel. This matches how OverlapTopology::Mask() partitions
+     * the overlap annulus into angular regions.
      */
-    for (std::size_t localEdgeIndex = 0;
-         localEdgeIndex < n_;
-         ++localEdgeIndex) {
+    for (std::size_t localRegionIndex = 0;
+         localRegionIndex < n_;
+         ++localRegionIndex) {
         const std::size_t region =
-            localEdgeIndex + 1;
-
-        const auto& fullP0 =
-            coverageTopology.shapeDefiningPoints_[localEdgeIndex];
-
-        const auto& fullP1 =
-            coverageTopology.shapeDefiningPoints_[
-                (localEdgeIndex + 1) % n_
-            ];
-
-        const auto& innerP0 =
-            nonOverlapTopology.shapeDefiningPoints_[localEdgeIndex];
-
-        const double ax =
-            pointX(fullP0);
-
-        const double ay =
-            pointY(fullP0);
-
-        const double bx =
-            pointX(fullP1);
-
-        const double by =
-            pointY(fullP1);
-
-        const double edgeX =
-            bx - ax;
-
-        const double edgeY =
-            by - ay;
-
-        /*
-         * Candidate inward normal for the full facet edge.
-         */
-        double normalX =
-            -edgeY;
-
-        double normalY =
-            edgeX;
-
-        const double normalLen =
-            std::sqrt(
-                normalX * normalX +
-                normalY * normalY
-            );
-
-        if (normalLen <= 1.0e-9) {
-            std::cerr << "[BuildBlendWeightMapsQ12] degenerate edge:"
-                      << " region=" << region
-                      << " localEdgeIndex=" << localEdgeIndex
-                      << '\n';
-
-            std::exit(EXIT_FAILURE);
-        }
-
-        normalX /= normalLen;
-        normalY /= normalLen;
-
-        /*
-         * Make the normal point inward, toward the sensor/facet center.
-         */
-        const double centerX =
-            pointX(coverageTopology.sensorCenter_);
-
-        const double centerY =
-            pointY(coverageTopology.sensorCenter_);
-
-        const double centerDot =
-            (centerX - ax) * normalX +
-            (centerY - ay) * normalY;
-
-        if (centerDot < 0.0) {
-            normalX = -normalX;
-            normalY = -normalY;
-        }
-
-        /*
-         * Distance between the full facet edge and the corresponding
-         * non-overlap edge. This is the overlap-band width in this direction.
-         */
-        const double innerDistance =
-            (pointX(innerP0) - ax) * normalX +
-            (pointY(innerP0) - ay) * normalY;
-
-        if (innerDistance <= 1.0e-9) {
-            std::cerr << "[BuildBlendWeightMapsQ12] invalid inner distance:"
-                      << " region=" << region
-                      << " localEdgeIndex=" << localEdgeIndex
-                      << " innerDistance=" << innerDistance
-                      << '\n';
-
-            std::exit(EXIT_FAILURE);
-        }
+            localRegionIndex + 1;
 
         const auto& indexLinear =
-            *overlapTopology.indexLinearMaxs_[localEdgeIndex];
+            *overlapTopology.indexLinearMaxs_[localRegionIndex];
 
         const std::size_t valid =
-            overlapTopology.size(localEdgeIndex);
+            overlapTopology.size(localRegionIndex);
 
         if (valid > indexLinear.size()) {
             std::cerr << "[BuildBlendWeightMapsQ12] valid exceeds indexLinear:"
@@ -1177,6 +1193,9 @@ void Aperture<FacetIndex, ModuleIndex>::BuildBlendWeightMapsQ12()
         std::uint16_t maxWeight =
             0;
 
+        std::size_t fallbackCount =
+            0;
+
         for (std::size_t i = 0; i < valid; ++i) {
             const std::size_t sensorIndex =
                 static_cast<std::size_t>(
@@ -1193,16 +1212,69 @@ void Aperture<FacetIndex, ModuleIndex>::BuildBlendWeightMapsQ12()
                     sensorIndex / sensorWidthValue_
                 ) + 0.5;
 
-            const double d =
-                (px - ax) * normalX +
-                (py - ay) * normalY;
+            double vx =
+                px - centerX;
 
-            /*
-             * d = 0             -> full facet outer edge -> 0
-             * d = innerDistance -> non-overlap boundary  -> 1
-             */
-            const double w =
-                d / innerDistance;
+            double vy =
+                py - centerY;
+
+            const double pixelDistance =
+                std::sqrt(
+                    vx * vx +
+                    vy * vy
+                );
+
+            if (pixelDistance <= 1.0e-9) {
+                weights[i] = kBlendWeightOneQ12_;
+                continue;
+            }
+
+            vx /= pixelDistance;
+            vy /= pixelDistance;
+
+            double outerDistance = 0.0;
+            double innerDistance = 0.0;
+
+            const bool haveOuter =
+                rayPolygonDistance(
+                    centerX,
+                    centerY,
+                    vx,
+                    vy,
+                    coverageTopology,
+                    outerDistance
+                );
+
+            const bool haveInner =
+                rayPolygonDistance(
+                    centerX,
+                    centerY,
+                    vx,
+                    vy,
+                    nonOverlapTopology,
+                    innerDistance
+                );
+
+            double w = 0.0;
+
+            if (!haveOuter ||
+                !haveInner ||
+                outerDistance <= innerDistance + 1.0e-6) {
+                /*
+                 * Fallback should be rare. Keep the pixel visible rather than
+                 * creating a black notch in the overlap.
+                 */
+                w = 1.0;
+                ++fallbackCount;
+            } else {
+                /*
+                 * innerDistance -> 1
+                 * outerDistance -> 0
+                 */
+                w =
+                    (outerDistance - pixelDistance) /
+                    (outerDistance - innerDistance);
+            }
 
             const std::uint16_t q =
                 toQ12(w);
@@ -1226,13 +1298,13 @@ void Aperture<FacetIndex, ModuleIndex>::BuildBlendWeightMapsQ12()
                   << " moduleIndex=" << moduleIndex_
                   << " facetIndex=" << facetIndex_
                   << " region=" << region
-                  << " localEdgeIndex=" << localEdgeIndex
+                  << " localRegionIndex=" << localRegionIndex
                   << " samples=" << weights.size()
                   << " role=overlap"
-                  << " mode=linear-full-to-zero"
+                  << " mode=radial-inner-full-outer-zero"
                   << " minQ12=" << minWeight
                   << " maxQ12=" << maxWeight
-                  << " innerDistance=" << innerDistance
+                  << " fallbackCount=" << fallbackCount
                   << '\n';
     }
 
