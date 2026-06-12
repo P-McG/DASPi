@@ -386,17 +386,63 @@ int UDPClnt::BindSocketWithClientAddress(){
 bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
                                               FrameHeader& outHeader)
 {
-    constexpr auto MAX_IDLE_WAIT = std::chrono::milliseconds(250);
+    using Clock = std::chrono::steady_clock;
 
-    constexpr bool kVerboseRxFrame = false;
-    constexpr bool kVerboseRxDrops = false;
+    constexpr auto MAX_IDLE_WAIT = std::chrono::milliseconds(250);
+    constexpr auto IDLE_SLEEP    = std::chrono::milliseconds(1);
+
+    constexpr bool kVerboseRxFrame  = false;
+    constexpr bool kVerboseRxDrops  = false;
     constexpr bool kVerboseRxIgnore = false;
 
-    auto lastProgress = std::chrono::steady_clock::now();
+    /*
+     * Enable while diagnosing receive_ms.
+     * Disable once wait_first_ms/drain_ms are understood.
+     */
+    constexpr bool kVerboseRxTiming = true;
+
+    enum class RecvResult {
+        Packet,
+        Timeout,
+        Fatal
+    };
+
+    enum class FinishResult {
+        Incomplete,
+        Complete,
+        Corrupt
+    };
+
+    struct RxTiming {
+        Clock::time_point enter{Clock::now()};
+        Clock::time_point firstAccepted{};
+        Clock::time_point payloadComplete{};
+        Clock::time_point checksumStart{};
+        Clock::time_point checksumDone{};
+
+        bool sawFirstAccepted{false};
+
+        std::uint64_t recvCalls{0};
+        std::uint64_t eagainCount{0};
+        std::uint64_t acceptedPackets{0};
+        std::uint64_t ignoredSender{0};
+        std::uint64_t invalidPackets{0};
+        std::uint64_t ignoredMissingHeader{0};
+        std::uint64_t duplicatePackets{0};
+        std::uint64_t droppedOldFrames{0};
+    };
+
+    RxTiming timing{};
+    auto lastProgress = Clock::now();
 
     std::vector<uint8_t> packet(maxUdpPayloadBytes_);
 
     static std::mutex rxLogMutex;
+
+    auto elapsedMs = [](const Clock::time_point a,
+                        const Clock::time_point b) -> double {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
 
     auto senderToString = [](const sockaddr_in& addr) {
         char ip[INET_ADDRSTRLEN] = {};
@@ -424,7 +470,8 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         return false;
     };
 
-    auto dropFrame = [&](uint32_t frameId, const std::string& reason) {
+    auto dropFrame = [&](const uint32_t frameId,
+                         const std::string& reason) {
         rxAssemblies_.erase(frameId);
 
         if constexpr (kVerboseRxDrops) {
@@ -433,6 +480,410 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
                 << " reason=" << reason;
             log(oss.str());
         }
+    };
+
+    auto isExpectedSender = [&](const sockaddr_in& sender) -> bool {
+        return sender.sin_addr.s_addr == srvAddr_.sin_addr.s_addr &&
+               sender.sin_port == srvAddr_.sin_port;
+    };
+
+    auto markAcceptedPacket = [&]() {
+        if (!timing.sawFirstAccepted) {
+            timing.sawFirstAccepted = true;
+            timing.firstAccepted = Clock::now();
+        }
+
+        ++timing.acceptedPackets;
+    };
+
+    auto logTiming = [&](const uint32_t frameId,
+                         const RxFrameAssembly& assembly) {
+        if constexpr (!kVerboseRxTiming) {
+            return;
+        }
+
+        const double waitFirstMs =
+            timing.sawFirstAccepted
+                ? elapsedMs(timing.enter, timing.firstAccepted)
+                : -1.0;
+
+        const double drainMs =
+            timing.sawFirstAccepted
+                ? elapsedMs(timing.firstAccepted, timing.payloadComplete)
+                : -1.0;
+
+        const double checksumMs =
+            elapsedMs(timing.checksumStart, timing.checksumDone);
+
+        const double totalMs =
+            elapsedMs(timing.enter, timing.checksumDone);
+
+        std::ostringstream oss;
+        oss << "[RX detailed]"
+            << " frame_id=" << frameId
+            << " chunks=" << assembly.chunkCount
+            << " payload_bytes=" << assembly.totalBytesExpected
+            << " recv_calls=" << timing.recvCalls
+            << " accepted_packets=" << timing.acceptedPackets
+            << " eagain=" << timing.eagainCount
+            << " ignored_sender=" << timing.ignoredSender
+            << " invalid_packets=" << timing.invalidPackets
+            << " missing_header=" << timing.ignoredMissingHeader
+            << " duplicate=" << timing.duplicatePackets
+            << " dropped_old=" << timing.droppedOldFrames
+            << " wait_first_ms=" << waitFirstMs
+            << " drain_ms=" << drainMs
+            << " checksum_ms=" << checksumMs
+            << " total_receive_call_ms=" << totalMs;
+
+        log(oss.str());
+    };
+
+    auto receivePacket = [&](sockaddr_in& sender,
+                             size_t& got) -> RecvResult {
+        sender = {};
+        got = 0;
+
+        socklen_t senderLen = sizeof(sender);
+
+        const ssize_t received = recvfrom(sockfd_,
+                                          packet.data(),
+                                          packet.size(),
+                                          0,
+                                          reinterpret_cast<sockaddr*>(&sender),
+                                          &senderLen);
+
+        ++timing.recvCalls;
+
+        if (received >= 0) {
+            got = static_cast<size_t>(received);
+            lastProgress = Clock::now();
+            return RecvResult::Packet;
+        }
+
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            ++timing.eagainCount;
+
+            const auto now = Clock::now();
+
+            if (now - lastProgress > MAX_IDLE_WAIT) {
+                ++rxCounters_.timeout;
+                rxAssemblies_.clear();
+                return RecvResult::Timeout;
+            }
+
+            std::this_thread::sleep_for(IDLE_SLEEP);
+            return RecvResult::Packet;
+        }
+
+        return RecvResult::Fatal;
+    };
+
+    auto decodeWireChunkHeader = [&](const size_t got,
+                                     UdpChunkHeader& wire) -> bool {
+        if (got < sizeof(UdpChunkHeader)) {
+            ++timing.invalidPackets;
+
+            if constexpr (kVerboseRxDrops) {
+                log("[RXF DROP] packet too small for UdpChunkHeader");
+            }
+
+            return false;
+        }
+
+        uint32_t magic = 0;
+        std::memcpy(&magic, packet.data(), sizeof(magic));
+        magic = ntohl(magic);
+
+        if (magic != MAGIC_NUMBER) {
+            ++timing.invalidPackets;
+
+            if constexpr (kVerboseRxDrops) {
+                log("[RXF DROP] bad packet magic");
+            }
+
+            return false;
+        }
+
+        std::memcpy(&wire, packet.data(), sizeof(wire));
+
+        wire.magic_        = ntohl(wire.magic_);
+        wire.frameId_      = ntohl(wire.frameId_);
+        wire.chunkId_      = ntohs(wire.chunkId_);
+        wire.chunkCount_   = ntohs(wire.chunkCount_);
+        wire.payloadBytes_ = ntohs(wire.payloadBytes_);
+
+        if (wire.magic_ != MAGIC_NUMBER) {
+            ++timing.invalidPackets;
+
+            if constexpr (kVerboseRxDrops) {
+                log("[RXF DROP] decoded magic mismatch");
+            }
+
+            return false;
+        }
+
+        if (wire.chunkCount_ == 0 || wire.chunkId_ >= wire.chunkCount_) {
+            ++timing.invalidPackets;
+
+            if constexpr (kVerboseRxDrops) {
+                std::ostringstream oss;
+                oss << "[RXF DROP] invalid chunk fields frameId="
+                    << wire.frameId_
+                    << " chunkId=" << wire.chunkId_
+                    << " chunkCount=" << wire.chunkCount_;
+                log(oss.str());
+            }
+
+            return false;
+        }
+
+        if (sizeof(UdpChunkHeader) + wire.payloadBytes_ > got) {
+            ++timing.invalidPackets;
+
+            if constexpr (kVerboseRxDrops) {
+                std::ostringstream oss;
+                oss << "[RXF DROP] payload exceeds datagram frameId="
+                    << wire.frameId_
+                    << " got=" << got
+                    << " payloadBytes=" << wire.payloadBytes_
+                    << " headerSize=" << sizeof(UdpChunkHeader);
+                log(oss.str());
+            }
+
+            return false;
+        }
+
+        return true;
+    };
+
+     auto resetReceiveTimingForNewFrame = [&]() {
+        const auto droppedOldFrames = timing.droppedOldFrames;
+    
+        timing.enter = Clock::now();
+        timing.firstAccepted = {};
+        timing.payloadComplete = {};
+        timing.checksumStart = {};
+        timing.checksumDone = {};
+        timing.sawFirstAccepted = false;
+    
+        timing.recvCalls = 0;
+        timing.eagainCount = 0;
+        timing.acceptedPackets = 0;
+        timing.ignoredSender = 0;
+        timing.invalidPackets = 0;
+        timing.ignoredMissingHeader = 0;
+        timing.duplicatePackets = 0;
+    
+        /*
+         * Preserve this across the reset so the completed-frame log still shows
+         * that an old partial frame was dropped before this frame completed.
+         */
+        timing.droppedOldFrames = droppedOldFrames;
+    };
+    
+    auto logDropOldFrame = [&](const UdpChunkHeader& wire) {
+        if constexpr (kVerboseRxDrops) {
+            std::ostringstream oss;
+            oss << "[RXF DROP OLD] newFrameId=" << wire.frameId_
+                << " reason=new frame started before old frame completed";
+            log(oss.str());
+        }
+    };
+    
+    auto isCurrentFrame = [&](const UdpChunkHeader& wire) -> bool {
+        return rxAssemblies_.find(wire.frameId_) != rxAssemblies_.end();
+    };
+    
+    auto canStartReplacementFrame = [](const UdpChunkHeader& wire) -> bool {
+        /*
+         * Only chunk 0 can initialize the frame header.
+         * A mid-frame packet for a different frame must be ignored.
+         */
+        return wire.chunkId_ == 0;
+    };
+    
+    auto dropOldFrameAndStartNewTiming = [&](const UdpChunkHeader& wire) {
+        rxAssemblies_.clear();
+    
+        ++rxCounters_.dropOld;
+        ++timing.droppedOldFrames;
+    
+        logDropOldFrame(wire);
+        resetReceiveTimingForNewFrame();
+    };
+    
+    auto acceptFrameIdOrDropOld = [&](const UdpChunkHeader& wire) -> bool {
+        if (rxAssemblies_.empty()) {
+            return true;
+        }
+    
+        if (isCurrentFrame(wire)) {
+            return true;
+        }
+    
+        if (!canStartReplacementFrame(wire)) {
+            return false;
+        }
+    
+        dropOldFrameAndStartNewTiming(wire);
+        return true;
+    };
+
+    auto getOrCreateAssembly = [&](const UdpChunkHeader& wire)
+        -> RxFrameAssembly* {
+        auto [it, inserted] = rxAssemblies_.try_emplace(wire.frameId_);
+        auto& assembly = it->second;
+
+        if (inserted) {
+            assembly = RxFrameAssembly{};
+            assembly.frameId = wire.frameId_;
+            assembly.chunkCount = wire.chunkCount_;
+            assembly.chunkSeen.assign(wire.chunkCount_, 0);
+            return &assembly;
+        }
+
+        if (assembly.chunkCount != wire.chunkCount_) {
+            dropFrame(wire.frameId_, "chunkCount mismatch");
+            return nullptr;
+        }
+
+        return &assembly;
+    };
+
+    auto initializeHeaderIfPresent = [&](RxFrameAssembly& assembly,
+                                         const UdpChunkHeader& wire) -> bool {
+        if (assembly.headerSeen) {
+            return true;
+        }
+
+        if (wire.chunkId_ != 0) {
+            ++timing.ignoredMissingHeader;
+            return false;
+        }
+
+        assembly.frameHeader = FromWireFrameHeader(wire.frameHeader_);
+
+        if (assembly.frameHeader.magic_ != MAGIC_NUMBER) {
+            dropFrame(wire.frameId_, "frameHeader magic mismatch");
+            return false;
+        }
+
+        if (assembly.frameHeader.payloadSize_ == 0 ||
+            assembly.frameHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_ ||
+            (assembly.frameHeader.payloadSize_ % sizeof(uint16_t)) != 0) {
+            std::ostringstream oss;
+            oss << "invalid frameHeader payloadSize="
+                << assembly.frameHeader.payloadSize_;
+            dropFrame(wire.frameId_, oss.str());
+            return false;
+        }
+
+        size_t totalElems = 0;
+
+        for (const auto regionSize : assembly.frameHeader.regionSizes_) {
+            totalElems += regionSize;
+        }
+
+        if (totalElems > std::numeric_limits<size_t>::max() / sizeof(uint16_t)) {
+            dropFrame(wire.frameId_, "regionSizes byte count overflow");
+            return false;
+        }
+
+        const size_t totalBytesFromRegions = totalElems * sizeof(uint16_t);
+
+        if (totalBytesFromRegions != assembly.frameHeader.payloadSize_) {
+            std::ostringstream oss;
+            oss << "regionSizes mismatch totalElems=" << totalElems
+                << " totalBytes=" << totalBytesFromRegions
+                << " payloadSize=" << assembly.frameHeader.payloadSize_;
+            dropFrame(wire.frameId_, oss.str());
+            return false;
+        }
+
+        assembly.totalBytesExpected = assembly.frameHeader.payloadSize_;
+        assembly.totalBytesReceived = 0;
+        assembly.payload.assign(assembly.totalBytesExpected / sizeof(uint16_t), 0);
+        assembly.headerSeen = true;
+
+        return true;
+    };
+
+    auto copyChunkPayload = [&](RxFrameAssembly& assembly,
+                                const UdpChunkHeader& wire) -> bool {
+        if (!assembly.headerSeen) {
+            ++timing.ignoredMissingHeader;
+            return false;
+        }
+
+        if (wire.chunkId_ >= assembly.chunkSeen.size()) {
+            dropFrame(wire.frameId_, "chunkId outside chunkSeen size");
+            return false;
+        }
+
+        if (assembly.chunkSeen[wire.chunkId_]) {
+            ++timing.duplicatePackets;
+            return false;
+        }
+
+        const size_t maxChunkPayload =
+            maxUdpPayloadBytes_ - sizeof(UdpChunkHeader);
+
+        const size_t dstOffset =
+            static_cast<size_t>(wire.chunkId_) * maxChunkPayload;
+
+        if (dstOffset + wire.payloadBytes_ > assembly.totalBytesExpected) {
+            std::ostringstream oss;
+            oss << "chunk write exceeds payload dstOffset=" << dstOffset
+                << " payloadBytes=" << wire.payloadBytes_
+                << " expected=" << assembly.totalBytesExpected;
+            dropFrame(wire.frameId_, oss.str());
+            return false;
+        }
+
+        auto dstBytes = std::as_writable_bytes(std::span(assembly.payload));
+
+        std::memcpy(dstBytes.data() + dstOffset,
+                    packet.data() + sizeof(UdpChunkHeader),
+                    wire.payloadBytes_);
+
+        assembly.chunkSeen[wire.chunkId_] = 1;
+        assembly.totalBytesReceived += wire.payloadBytes_;
+
+        return true;
+    };
+
+    auto finishFrameIfComplete = [&](RxFrameAssembly& assembly,
+                                     const UdpChunkHeader& wire) -> FinishResult {
+        if (assembly.totalBytesReceived < assembly.totalBytesExpected) {
+            return FinishResult::Incomplete;
+        }
+
+        timing.payloadComplete = Clock::now();
+
+        const auto usedBytes =
+            std::as_bytes(std::span(assembly.payload)).first(assembly.totalBytesExpected);
+
+        timing.checksumStart = Clock::now();
+        const uint32_t computed = SimpleChecksum(usedBytes);
+        timing.checksumDone = Clock::now();
+
+        if (computed != assembly.frameHeader.checksum_) {
+            std::ostringstream oss;
+            oss << "checksum mismatch computed=" << computed
+                << " expected=" << assembly.frameHeader.checksum_;
+            dropFrame(wire.frameId_, oss.str());
+            return FinishResult::Corrupt;
+        }
+
+        logTiming(wire.frameId_, assembly);
+
+        outHeader = assembly.frameHeader;
+        outPayload = std::move(assembly.payload);
+
+        rxAssemblies_.erase(wire.frameId_);
+
+        return FinishResult::Complete;
     };
 
     if constexpr (kVerboseRxFrame) {
@@ -445,41 +896,32 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
 
     while (true) {
         sockaddr_in sender{};
-        socklen_t senderLen = sizeof(sender);
+        size_t got = 0;
 
-        const ssize_t received = recvfrom(sockfd_,
-                                          packet.data(),
-                                          packet.size(),
-                                          0,
-                                          reinterpret_cast<sockaddr*>(&sender),
-                                          &senderLen);
+        const RecvResult recvResult = receivePacket(sender, got);
 
-        if (received < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                const auto now = std::chrono::steady_clock::now();
+        if (recvResult == RecvResult::Timeout) {
+            return fail("idle timeout waiting for frame chunks");
+        }
 
-                if (now - lastProgress > MAX_IDLE_WAIT) {
-                    ++rxCounters_.timeout;
-                    rxAssemblies_.clear();
-                    return fail("idle timeout waiting for frame chunks");
-                }
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                continue;
-            }
-
+        if (recvResult == RecvResult::Fatal) {
             std::ostringstream oss;
             oss << "recvfrom failed errno=" << errno
                 << " " << std::strerror(errno);
             return fail(oss.str());
         }
 
-        lastProgress = std::chrono::steady_clock::now();
+        /*
+         * EAGAIN/EWOULDBLOCK returns RecvResult::Packet after sleeping,
+         * but got stays 0. Continue the loop and try again.
+         */
+        if (got == 0) {
+            continue;
+        }
 
-        const size_t got = static_cast<size_t>(received);
+        if (!isExpectedSender(sender)) {
+            ++timing.ignoredSender;
 
-        if (sender.sin_addr.s_addr != srvAddr_.sin_addr.s_addr ||
-            sender.sin_port != srvAddr_.sin_port) {
             if constexpr (kVerboseRxIgnore) {
                 std::ostringstream oss;
                 oss << "[RXF IGNORE] unexpected sender got="
@@ -487,209 +929,45 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
                     << " expected=" << senderToString(srvAddr_);
                 log(oss.str());
             }
-            continue;
-        }
 
-        if (got < sizeof(UdpChunkHeader)) {
-            if constexpr (kVerboseRxDrops) {
-                log("[RXF DROP] packet too small for UdpChunkHeader");
-            }
-            continue;
-        }
-
-        uint32_t magic = 0;
-        std::memcpy(&magic, packet.data(), sizeof(magic));
-        magic = ntohl(magic);
-
-        if (magic != MAGIC_NUMBER) {
-            if constexpr (kVerboseRxDrops) {
-                log("[RXF DROP] bad packet magic");
-            }
             continue;
         }
 
         UdpChunkHeader wire{};
-        std::memcpy(&wire, packet.data(), sizeof(wire));
 
-        wire.magic_        = ntohl(wire.magic_);
-        wire.frameId_      = ntohl(wire.frameId_);
-        wire.chunkId_      = ntohs(wire.chunkId_);
-        wire.chunkCount_   = ntohs(wire.chunkCount_);
-        wire.payloadBytes_ = ntohs(wire.payloadBytes_);
-
-        if (wire.magic_ != MAGIC_NUMBER) {
-            if constexpr (kVerboseRxDrops) {
-                log("[RXF DROP] decoded magic mismatch");
-            }
+        if (!decodeWireChunkHeader(got, wire)) {
             continue;
         }
 
-        if (wire.chunkCount_ == 0 || wire.chunkId_ >= wire.chunkCount_) {
-            if constexpr (kVerboseRxDrops) {
-                std::ostringstream oss;
-                oss << "[RXF DROP] invalid chunk fields frameId="
-                    << wire.frameId_
-                    << " chunkId=" << wire.chunkId_
-                    << " chunkCount=" << wire.chunkCount_;
-                log(oss.str());
-            }
+        markAcceptedPacket();
+
+        if (!acceptFrameIdOrDropOld(wire)) {
             continue;
         }
 
-        if (sizeof(UdpChunkHeader) + wire.payloadBytes_ > got) {
-            if constexpr (kVerboseRxDrops) {
-                std::ostringstream oss;
-                oss << "[RXF DROP] payload exceeds datagram frameId="
-                    << wire.frameId_
-                    << " got=" << got
-                    << " payloadBytes=" << wire.payloadBytes_
-                    << " headerSize=" << sizeof(UdpChunkHeader);
-                log(oss.str());
-            }
+        RxFrameAssembly* assembly = getOrCreateAssembly(wire);
+
+        if (assembly == nullptr) {
             continue;
         }
 
-        /*
-         * Keep only one active frame per UDPClnt.
-         *
-         * Important:
-         * - If a new frame starts with chunk 0, drop the old partial frame.
-         * - If a packet from another frame arrives but it is not chunk 0,
-         *   ignore it. Do not switch to a mid-frame packet, because then
-         *   headerSeen will be false and this call can spin until timeout.
-         */
-        if (!rxAssemblies_.empty() &&
-            rxAssemblies_.find(wire.frameId_) == rxAssemblies_.end()) {
-            if (wire.chunkId_ != 0) {
-                continue;
-            }
-
-            rxAssemblies_.clear();
-            ++rxCounters_.dropOld;
-
-            if constexpr (kVerboseRxDrops) {
-                std::ostringstream oss;
-                oss << "[RXF DROP OLD] newFrameId=" << wire.frameId_
-                    << " reason=new frame started before old frame completed";
-                log(oss.str());
-            }
-        }
-
-        auto& a = rxAssemblies_[wire.frameId_];
-
-        if (a.frameId == 0) {
-            a.frameId = wire.frameId_;
-            a.chunkCount = wire.chunkCount_;
-            a.chunkSeen.assign(wire.chunkCount_, 0);
-            a.totalBytesExpected = 0;
-            a.totalBytesReceived = 0;
-            a.headerSeen = false;
-        } else if (a.chunkCount != wire.chunkCount_) {
-            dropFrame(wire.frameId_, "chunkCount mismatch");
+        if (!initializeHeaderIfPresent(*assembly, wire)) {
             continue;
         }
 
-        if (wire.chunkId_ == 0 && !a.headerSeen) {
-            a.frameHeader = FromWireFrameHeader(wire.frameHeader_);
-
-            if (a.frameHeader.magic_ != MAGIC_NUMBER) {
-                dropFrame(wire.frameId_, "frameHeader magic mismatch");
-                continue;
-            }
-
-            if (a.frameHeader.payloadSize_ == 0 ||
-                a.frameHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_ ||
-                (a.frameHeader.payloadSize_ % sizeof(uint16_t)) != 0) {
-                std::ostringstream oss;
-                oss << "invalid frameHeader payloadSize="
-                    << a.frameHeader.payloadSize_;
-                dropFrame(wire.frameId_, oss.str());
-                continue;
-            }
-
-            size_t totalElems = 0;
-            for (const auto s : a.frameHeader.regionSizes_) {
-                totalElems += s;
-            }
-
-            if (totalElems * sizeof(uint16_t) != a.frameHeader.payloadSize_) {
-                std::ostringstream oss;
-                oss << "regionSizes mismatch totalElems=" << totalElems
-                    << " totalBytes=" << totalElems * sizeof(uint16_t)
-                    << " payloadSize=" << a.frameHeader.payloadSize_;
-                dropFrame(wire.frameId_, oss.str());
-                continue;
-            }
-
-            a.totalBytesExpected = a.frameHeader.payloadSize_;
-            a.payload.assign(a.totalBytesExpected / sizeof(uint16_t), 0);
-            a.headerSeen = true;
-        }
-
-        if (!a.headerSeen) {
-            /*
-             * We saw a non-zero chunk for a frame whose header was not seen.
-             * Ignore it and wait for a real chunk 0 frame start.
-             */
+        if (!copyChunkPayload(*assembly, wire)) {
             continue;
         }
 
-        if (wire.chunkId_ >= a.chunkSeen.size()) {
-            dropFrame(wire.frameId_, "chunkId outside chunkSeen size");
-            continue;
+        const FinishResult finishResult = finishFrameIfComplete(*assembly, wire);
+
+        if (finishResult == FinishResult::Complete) {
+            return true;
         }
 
-        if (a.chunkSeen[wire.chunkId_]) {
-            continue;
-        }
-
-        const size_t maxChunkPayload =
-            maxUdpPayloadBytes_ - sizeof(UdpChunkHeader);
-
-        const size_t dstOffset =
-            static_cast<size_t>(wire.chunkId_) * maxChunkPayload;
-
-        if (dstOffset + wire.payloadBytes_ > a.totalBytesExpected) {
-            std::ostringstream oss;
-            oss << "chunk write exceeds payload dstOffset=" << dstOffset
-                << " payloadBytes=" << wire.payloadBytes_
-                << " expected=" << a.totalBytesExpected;
-            dropFrame(wire.frameId_, oss.str());
-            continue;
-        }
-
-        auto dstBytes = std::as_writable_bytes(std::span(a.payload));
-
-        std::memcpy(dstBytes.data() + dstOffset,
-                    packet.data() + sizeof(UdpChunkHeader),
-                    wire.payloadBytes_);
-
-        a.chunkSeen[wire.chunkId_] = 1;
-        a.totalBytesReceived += wire.payloadBytes_;
-
-        if (a.totalBytesReceived < a.totalBytesExpected) {
-            continue;
-        }
-
-        const auto usedBytes =
-            std::as_bytes(std::span(a.payload)).first(a.totalBytesExpected);
-
-        const uint32_t computed = SimpleChecksum(usedBytes);
-
-        if (computed != a.frameHeader.checksum_) {
-            std::ostringstream oss;
-            oss << "checksum mismatch computed=" << computed
-                << " expected=" << a.frameHeader.checksum_;
-            dropFrame(wire.frameId_, oss.str());
+        if (finishResult == FinishResult::Corrupt) {
             return false;
         }
-
-        outHeader = a.frameHeader;
-        outPayload = std::move(a.payload);
-
-        rxAssemblies_.erase(wire.frameId_);
-
-        return true;
     }
 }
 

@@ -104,6 +104,7 @@ namespace DASPi{
 	{
 		constexpr bool kVerboseRunFrameLoopTiming = true;
 		constexpr bool kWriteBuffersToFile = false;
+		constexpr bool kUseAveragedScatter = true;//keep true. max scatter(aka false) is slower and lower quality. Slotted for removal
 	
 		constexpr std::size_t regionCount =
 			verticesPerFaceN_ + 1;
@@ -794,167 +795,302 @@ namespace DASPi{
 			/*
 			 * Stage 3c:
 			 *
-			 * The old scatter rule used:
+			 * Averaged scatter preserves contributions when multiple source pixels land
+			 * in the same equirect/channel slot.
 			 *
-			 *     dstSample = std::max(dstSample, src[i]);
+			 * Max scatter is a performance comparison mode:
 			 *
-			 * That avoids over-brightening, but it throws away samples whenever
-			 * multiple source pixels land in the same equirect/channel slot.
+			 *     dst[slot] = max(dst[slot], src[i])
 			 *
-			 * Use an intra-region averaged scatter instead:
-			 *
-			 *     sum[channel-slot]   += src[i]
-			 *     count[channel-slot] += 1
-			 *     dst[channel-slot]    = round(sum / count)
-			 *
-			 * The output buffer remains BGR16 interleaved, so the rest of the
-			 * pipeline does not need to change.
+			 * It avoids scatterSums/scatterCounts/finalize/reset work, but may change
+			 * image brightness/detail in collision areas.
 			 */
-			static thread_local std::vector<std::uint32_t> scatterSums;
-			static thread_local std::vector<std::uint32_t> scatterCounts;
-			static thread_local std::vector<std::size_t> touchedSlots;
-	
-			const auto tScratchResizeStart =
-				Clock::now();
-	
-			if (scatterSums.size() != scatterOutputElems) {
-				scatterSums.assign(
-					scatterOutputElems,
-					std::uint32_t{0}
-				);
-	
-				scatterCounts.assign(
-					scatterOutputElems,
-					std::uint32_t{0}
-				);
-			}
-	
-			const auto tScratchResizeDone =
-				Clock::now();
-	
-			scatterDetail.scratchResizeMs +=
-				ms(tScratchResizeStart, tScratchResizeDone);
-	
-			const auto tTouchedReserveStart =
-				Clock::now();
-	
-			touchedSlots.clear();
-			touchedSlots.reserve(validSize);
-	
-			const auto tTouchedReserveDone =
-				Clock::now();
-	
-			scatterDetail.touchedReserveMs +=
-				ms(tTouchedReserveStart, tTouchedReserveDone);
-	
-			auto resetTouchedSlots = [&]() {
+			if constexpr (kUseAveragedScatter) {
+				static thread_local std::vector<std::uint32_t> scatterSums;
+				static thread_local std::vector<std::uint32_t> scatterCounts;
+				static thread_local std::vector<std::size_t> touchedSlots;
+			
+				const auto tScratchResizeStart =
+					Clock::now();
+			
+				if (scatterSums.size() != scatterOutputElems) {
+					scatterSums.assign(
+						scatterOutputElems,
+						std::uint32_t{0}
+					);
+			
+					scatterCounts.assign(
+						scatterOutputElems,
+						std::uint32_t{0}
+					);
+				}
+			
+				const auto tScratchResizeDone =
+					Clock::now();
+			
+				scatterDetail.scratchResizeMs +=
+					ms(tScratchResizeStart, tScratchResizeDone);
+			
+				const auto tTouchedReserveStart =
+					Clock::now();
+			
+				touchedSlots.clear();
+				touchedSlots.reserve(validSize);
+			
+				const auto tTouchedReserveDone =
+					Clock::now();
+			
+				scatterDetail.touchedReserveMs +=
+					ms(tTouchedReserveStart, tTouchedReserveDone);
+			
+				auto resetTouchedSlots = [&]() {
+					const auto tResetStart =
+						Clock::now();
+			
+					previousTouchedSlots.clear();
+					previousTouchedSlots.reserve(
+						touchedSlots.size()
+					);
+			
+					for (const std::size_t slot : touchedSlots) {
+						previousTouchedSlots.push_back(slot);
+			
+						scatterSums[slot] =
+							std::uint32_t{0};
+			
+						scatterCounts[slot] =
+							std::uint32_t{0};
+					}
+			
+					touchedSlots.clear();
+			
+					const auto tResetDone =
+						Clock::now();
+			
+					scatterDetail.resetScratchMs +=
+						ms(tResetStart, tResetDone);
+				};
+			
+				const auto tAccumulateStart =
+					Clock::now();
+			
+				for (std::size_t i = 0;
+					 i < validSize;
+					 ++i) {
+					const std::uint32_t slot32 =
+						bgrSlots[i];
+			
+					if (slot32 >= scatterOutputElems) {
+						std::cerr << "[RunFrameLoop] precomputed BGR slot OOB:"
+								  << " region=" << regionIndex
+								  << " i=" << i
+								  << " slot=" << slot32
+								  << " scatterOutputElems="
+								  << scatterOutputElems
+								  << " frame_id="
+								  << frameHeader.gainMsg_.frame_id
+								  << '\n';
+			
+						resetTouchedSlots();
+			
+						return false;
+					}
+			
+					const std::size_t slot =
+						static_cast<std::size_t>(slot32);
+			
+					if (scatterCounts[slot] == 0) {
+						touchedSlots.push_back(slot);
+					}
+			
+					scatterSums[slot] +=
+						static_cast<std::uint32_t>(src[i]);
+			
+					++scatterCounts[slot];
+				}
+			
+				const auto tAccumulateDone =
+					Clock::now();
+			
+				scatterDetail.accumulateMs +=
+					ms(tAccumulateStart, tAccumulateDone);
+			
+				scatterDetail.touchedSlots +=
+					static_cast<std::uint64_t>(
+						touchedSlots.size()
+					);
+			
+				const auto tFinalizeStart =
+					Clock::now();
+			
+				for (const std::size_t slot : touchedSlots) {
+					const std::uint32_t count =
+						scatterCounts[slot];
+			
+					if (count == 0) {
+						continue;
+					}
+			
+					const std::uint32_t average =
+						(scatterSums[slot] + (count / 2u)) / count;
+			
+					dst[slot] =
+						static_cast<std::uint16_t>(
+							std::min<std::uint32_t>(
+								average,
+								65535u
+							)
+						);
+				}
+			
+				const auto tFinalizeDone =
+					Clock::now();
+			
+				scatterDetail.finalizeMs +=
+					ms(tFinalizeStart, tFinalizeDone);
+			
+				resetTouchedSlots();
+			} else {
+				/*
+				 * Max-scatter test path.
+				 *
+				 * Use a generation-mark table so touchedSlots only records unique slots.
+				 * This keeps the reusable-buffer clearing path efficient on the next frame.
+				 */
+				static thread_local std::vector<std::uint32_t> touchedGenerations;
+				static thread_local std::vector<std::size_t> touchedSlots;
+				static thread_local std::uint32_t generation = 1;
+			
+				const auto tScratchResizeStart =
+					Clock::now();
+			
+				if (touchedGenerations.size() != scatterOutputElems) {
+					touchedGenerations.assign(
+						scatterOutputElems,
+						std::uint32_t{0}
+					);
+			
+					generation = 1;
+				}
+			
+				++generation;
+			
+				if (generation == 0) {
+					std::fill(
+						touchedGenerations.begin(),
+						touchedGenerations.end(),
+						std::uint32_t{0}
+					);
+			
+					generation = 1;
+				}
+			
+				const auto tScratchResizeDone =
+					Clock::now();
+			
+				scatterDetail.scratchResizeMs +=
+					ms(tScratchResizeStart, tScratchResizeDone);
+			
+				const auto tTouchedReserveStart =
+					Clock::now();
+			
+				touchedSlots.clear();
+				touchedSlots.reserve(validSize);
+			
+				const auto tTouchedReserveDone =
+					Clock::now();
+			
+				scatterDetail.touchedReserveMs +=
+					ms(tTouchedReserveStart, tTouchedReserveDone);
+			
+				const auto tAccumulateStart =
+					Clock::now();
+			
+				for (std::size_t i = 0;
+					 i < validSize;
+					 ++i) {
+					const std::uint32_t slot32 =
+						bgrSlots[i];
+			
+					if (slot32 >= scatterOutputElems) {
+						std::cerr << "[RunFrameLoop] precomputed BGR slot OOB:"
+								  << " region=" << regionIndex
+								  << " i=" << i
+								  << " slot=" << slot32
+								  << " scatterOutputElems="
+								  << scatterOutputElems
+								  << " frame_id="
+								  << frameHeader.gainMsg_.frame_id
+								  << '\n';
+			
+						return false;
+					}
+			
+					const std::size_t slot =
+						static_cast<std::size_t>(slot32);
+			
+					if (touchedGenerations[slot] != generation) {
+						touchedGenerations[slot] =
+							generation;
+			
+						touchedSlots.push_back(slot);
+					}
+			
+					const uint16_t value =
+						src[i];
+			
+					if (value > dst[slot]) {
+						dst[slot] =
+							value;
+					}
+				}
+			
+				const auto tAccumulateDone =
+					Clock::now();
+			
+				scatterDetail.accumulateMs +=
+					ms(tAccumulateStart, tAccumulateDone);
+			
+				scatterDetail.touchedSlots +=
+					static_cast<std::uint64_t>(
+						touchedSlots.size()
+					);
+			
+				/*
+				 * No finalize pass in max-scatter mode.
+				 */
+				const auto tFinalizeStart =
+					Clock::now();
+			
+				const auto tFinalizeDone =
+					Clock::now();
+			
+				scatterDetail.finalizeMs +=
+					ms(tFinalizeStart, tFinalizeDone);
+			
 				const auto tResetStart =
 					Clock::now();
-	
+			
 				previousTouchedSlots.clear();
 				previousTouchedSlots.reserve(
 					touchedSlots.size()
 				);
-	
-				for (const std::size_t slot : touchedSlots) {
-					previousTouchedSlots.push_back(slot);
-	
-					scatterSums[slot] =
-						std::uint32_t{0};
-	
-					scatterCounts[slot] =
-						std::uint32_t{0};
-				}
-	
+			
+				previousTouchedSlots.insert(
+					previousTouchedSlots.end(),
+					touchedSlots.begin(),
+					touchedSlots.end()
+				);
+			
 				touchedSlots.clear();
-	
+			
 				const auto tResetDone =
 					Clock::now();
-	
+			
 				scatterDetail.resetScratchMs +=
 					ms(tResetStart, tResetDone);
-			};
-	
-			const auto tAccumulateStart =
-				Clock::now();
-	
-			for (std::size_t i = 0;
-				 i < validSize;
-				 ++i) {
-				const std::uint32_t slot32 =
-					bgrSlots[i];
-			
-				if (slot32 >= scatterOutputElems) {
-					std::cerr << "[RunFrameLoop] precomputed BGR slot OOB:"
-							  << " region=" << regionIndex
-							  << " i=" << i
-							  << " slot=" << slot32
-							  << " scatterOutputElems="
-							  << scatterOutputElems
-							  << " frame_id="
-							  << frameHeader.gainMsg_.frame_id
-							  << '\n';
-			
-					resetTouchedSlots();
-			
-					return false;
-				}
-			
-				const std::size_t slot =
-					static_cast<std::size_t>(slot32);
-			
-				if (scatterCounts[slot] == 0) {
-					touchedSlots.push_back(slot);
-				}
-			
-				scatterSums[slot] +=
-					static_cast<std::uint32_t>(src[i]);
-			
-				++scatterCounts[slot];
 			}
-	
-			const auto tAccumulateDone =
-				Clock::now();
-	
-			scatterDetail.accumulateMs +=
-				ms(tAccumulateStart, tAccumulateDone);
-	
-			scatterDetail.touchedSlots +=
-				static_cast<std::uint64_t>(
-					touchedSlots.size()
-				);
-	
-			const auto tFinalizeStart =
-				Clock::now();
-	
-			for (const std::size_t slot : touchedSlots) {
-				const std::uint32_t count =
-					scatterCounts[slot];
-	
-				if (count == 0) {
-					continue;
-				}
-	
-				const std::uint32_t average =
-					(scatterSums[slot] + (count / 2u)) / count;
-	
-				dst[slot] =
-					static_cast<std::uint16_t>(
-						std::min<std::uint32_t>(
-							average,
-							65535u
-						)
-					);
-			}
-	
-			const auto tFinalizeDone =
-				Clock::now();
-	
-			scatterDetail.finalizeMs +=
-				ms(tFinalizeStart, tFinalizeDone);
-	
-			resetTouchedSlots();
-	
+			
 			return true;
 		};
 	
