@@ -679,13 +679,43 @@ CameraView makeCameraView(const cv::Mat& image,
     //return true;
 //}
 
-void updateLatestFrame(LiveFrameBuffer& dst, const cv::Mat& frameBgr8)
+void updateLatestFrame(
+    LiveFrameBuffer& dst,
+    cv::Mat frameBgr8)
 {
+    if (frameBgr8.empty()) {
+        return;
+    }
+
     std::scoped_lock lock(dst.mutex);
 
-    dst.latestBgr8 = frameBgr8.clone();
+    dst.latestBgr8 = std::move(frameBgr8);
     dst.hasFrame = true;
     ++dst.generation;
+}
+
+bool HasUsefulProjectedSignalSampled(
+    const std::vector<uint16_t>& data)
+{
+    if (data.empty()) {
+        return false;
+    }
+
+    constexpr std::size_t kMaxSamples = 16 * 1024;
+
+    const std::size_t stride =
+        std::max<std::size_t>(
+            1,
+            data.size() / kMaxSamples
+        );
+
+    for (std::size_t i = 0; i < data.size(); i += stride) {
+        if (data[i] != 0) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool HasUsefulProjectedSignal(const std::vector<std::uint16_t>& raw)
@@ -1462,24 +1492,85 @@ std::vector<CameraView> CreateCameraViews(const std::vector<CameraConfig>& confi
     return cameras;
 }
 
+//bool AddProjectedBgr16ToAccumulator(
+    //const std::vector<uint16_t>& raw,
+    //int width,
+    //int height,
+    //cv::Mat& accum16)
+//{
+    //const std::size_t expectedElems =
+        //static_cast<std::size_t>(width) *
+        //static_cast<std::size_t>(height) *
+        //3u;
+
+    //if (raw.size() != expectedElems) {
+        //return false;
+    //}
+
+    //if (accum16.empty()) {
+        //accum16 =
+            //cv::Mat::zeros(
+                //height,
+                //width,
+                //CV_16UC3
+            //);
+    //}
+
+    //if (accum16.rows != height ||
+        //accum16.cols != width ||
+        //accum16.type() != CV_16UC3) {
+        //return false;
+    //}
+
+    //cv::Mat src16(
+        //height,
+        //width,
+        //CV_16UC3,
+        //const_cast<uint16_t*>(raw.data())
+    //);
+
+    //cv::add(
+        //accum16,
+        //src16,
+        //accum16
+    //);
+
+    //return true;
+//}
+
+//cv::Mat ProjectedBgr16AccumulatorToBgr8(
+    //const cv::Mat& accum16)
+//{
+    //if (accum16.empty() ||
+        //accum16.type() != CV_16UC3) {
+        //return {};
+    //}
+
+    //cv::Mat bgr8;
+
+    //accum16.convertTo(
+        //bgr8,
+        //CV_8UC3,
+        //1.0 / 256.0
+    //);
+
+    //return bgr8;
+//}
+
 cv::Mat raw16ProjectedToGrayBgr8(
     const std::vector<uint16_t>& raw,
     int width,
     int height)
 {
-    const std::size_t expected =
+    const std::size_t expectedElems =
         static_cast<std::size_t>(width) *
         static_cast<std::size_t>(height);
 
-    if (raw.size() != expected) {
-        std::cerr << "[raw16ProjectedToGrayBgr8] size mismatch:"
-                  << " raw.size()=" << raw.size()
-                  << " expected=" << expected
-                  << '\n';
+    if (raw.size() != expectedElems) {
         return {};
     }
 
-    cv::Mat gray16(
+    cv::Mat src16(
         height,
         width,
         CV_16UC1,
@@ -1487,12 +1578,22 @@ cv::Mat raw16ProjectedToGrayBgr8(
     );
 
     cv::Mat gray8;
-    gray16.convertTo(gray8, CV_8UC1, 1.0 / 256.0);
 
-    cv::Mat bgr;
-    cv::cvtColor(gray8, bgr, cv::COLOR_GRAY2BGR);
+    src16.convertTo(
+        gray8,
+        CV_8UC1,
+        1.0 / 256.0
+    );
 
-    return bgr;
+    cv::Mat bgr8;
+
+    cv::cvtColor(
+        gray8,
+        bgr8,
+        cv::COLOR_GRAY2BGR
+    );
+
+    return bgr8;
 }
 
 cv::Mat raw16ProjectedBgrToBgr8(
@@ -1500,30 +1601,31 @@ cv::Mat raw16ProjectedBgrToBgr8(
     int width,
     int height)
 {
-    const std::size_t expected =
+    const std::size_t expectedElems =
         static_cast<std::size_t>(width) *
         static_cast<std::size_t>(height) *
         3u;
 
-    if (raw.size() != expected) {
-        std::cerr << "[raw16ProjectedBgrToBgr8] size mismatch:"
-                  << " raw.size()=" << raw.size()
-                  << " expected=" << expected
-                  << '\n';
+    if (raw.size() != expectedElems) {
         return {};
     }
 
-    cv::Mat bgr16(
+    cv::Mat src16(
         height,
         width,
         CV_16UC3,
         const_cast<uint16_t*>(raw.data())
     );
 
-    cv::Mat bgr8;
-    bgr16.convertTo(bgr8, CV_8UC3, 1.0 / 256.0);
+    cv::Mat dst8;
 
-    return bgr8;
+    src16.convertTo(
+        dst8,
+        CV_8UC3,
+        1.0 / 256.0
+    );
+
+    return dst8;
 }
 
 //cv::Mat raw16ProjectedToGrayBgr8(
@@ -2925,6 +3027,500 @@ bool haveAnyFrames(std::vector<LiveCameraState>& liveCameras)
     return false;
 }
 
+//template<class SphereSpaceType>
+//void StartPeerThreads(
+    //std::vector<std::unique_ptr<DASPi::AperturePeerBase>>& aperturePeers,
+    //std::vector<LiveCameraState>& liveCameras,
+    //std::vector<std::jthread>& frameThreads,
+    //std::vector<std::jthread>& controlThreads,
+    //bool reverseModuleOrder)
+//{
+    //static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
+
+    //constexpr std::size_t kLocalCameraCount =
+        //SphereSpaceType::verticesPerFaceN_ + 1;
+
+    //log_verbose("[StartPeerThreads]");
+
+    //std::cout << "[main] Starting per-peer frame/control threads\n";
+
+    //frameThreads.reserve(frameThreads.size() + aperturePeers.size());
+    //controlThreads.reserve(controlThreads.size() + aperturePeers.size());
+
+    //for (std::size_t peerIndex = 0;
+         //peerIndex < aperturePeers.size();
+         //++peerIndex) {
+
+        //if (!aperturePeers[peerIndex]) {
+            //throw std::runtime_error(
+                //"StartPeerThreads: null AperturePeer at peerIndex=" +
+                //std::to_string(peerIndex)
+            //);
+        //}
+
+        //const std::size_t moduleIndex =
+            //PeerToModuleIndex(
+                //peerIndex,
+                //aperturePeers.size(),
+                //reverseModuleOrder
+            //);
+
+        //DASPi::AperturePeerBase* peer =
+            //aperturePeers[peerIndex].get();
+
+        //frameThreads.emplace_back(
+            //[peer, peerIndex, moduleIndex, &liveCameras]() {
+                //using Clock = std::chrono::steady_clock;
+
+                //auto ms = [](const auto a, const auto b) -> double {
+                    //return std::chrono::duration<double, std::milli>(
+                        //b - a
+                    //).count();
+                //};
+
+                //struct PublishTimingStats {
+                    //std::uint64_t loops = 0;
+                    //std::uint64_t loopsWithAnyFrame = 0;
+                    //std::uint64_t publishedStreams = 0;
+                    //std::uint64_t copiedStreams = 0;
+                    //std::uint64_t convertedStreams = 0;
+                    //std::uint64_t updatedStreams = 0;
+
+                    //double copyMs = 0.0;
+                    //double validateMs = 0.0;
+                    //double debugMs = 0.0;
+                    //double convertMs = 0.0;
+                    //double updateMs = 0.0;
+                    //double totalMs = 0.0;
+
+                    //Clock::time_point lastPrint = Clock::now();
+
+                    //void reset(Clock::time_point now)
+                    //{
+                        //loops = 0;
+                        //loopsWithAnyFrame = 0;
+                        //publishedStreams = 0;
+                        //copiedStreams = 0;
+                        //convertedStreams = 0;
+                        //updatedStreams = 0;
+
+                        //copyMs = 0.0;
+                        //validateMs = 0.0;
+                        //debugMs = 0.0;
+                        //convertMs = 0.0;
+                        //updateMs = 0.0;
+                        //totalMs = 0.0;
+
+                        //lastPrint = now;
+                    //}
+                //};
+
+                //PublishTimingStats publishStats{};
+
+                //auto maybePrintPublishTiming = [&]() {
+                    //const auto now = Clock::now();
+
+                    //const double elapsed =
+                        //std::chrono::duration<double>(
+                            //now - publishStats.lastPrint
+                        //).count();
+
+                    //if (elapsed < 1.0 || publishStats.loops == 0) {
+                        //return;
+                    //}
+
+                    //const double loops =
+                        //static_cast<double>(publishStats.loops);
+
+                    //const double streams =
+                        //publishStats.publishedStreams == 0
+                            //? 1.0
+                            //: static_cast<double>(
+                                  //publishStats.publishedStreams
+                              //);
+
+                    //std::cout << "[Frame publish timing]"
+                              //<< " peer=" << peerIndex
+                              //<< " module=" << moduleIndex
+                              //<< " loops=" << publishStats.loops
+                              //<< " loopsWithAnyFrame="
+                              //<< publishStats.loopsWithAnyFrame
+                              //<< " loop_fps="
+                              //<< static_cast<double>(publishStats.loops) /
+                                     //elapsed
+                              //<< " publishedStreams="
+                              //<< publishStats.publishedStreams
+                              //<< " copiedStreams="
+                              //<< publishStats.copiedStreams
+                              //<< " convertedStreams="
+                              //<< publishStats.convertedStreams
+                              //<< " updatedStreams="
+                              //<< publishStats.updatedStreams
+                              //<< " copy_ms_per_loop="
+                              //<< publishStats.copyMs / loops
+                              //<< " validate_ms_per_loop="
+                              //<< publishStats.validateMs / loops
+                              //<< " debug_ms_per_loop="
+                              //<< publishStats.debugMs / loops
+                              //<< " convert_ms_per_loop="
+                              //<< publishStats.convertMs / loops
+                              //<< " update_ms_per_loop="
+                              //<< publishStats.updateMs / loops
+                              //<< " total_ms_per_loop="
+                              //<< publishStats.totalMs / loops
+                              //<< " copy_ms_per_stream="
+                              //<< publishStats.copyMs / streams
+                              //<< " convert_ms_per_stream="
+                              //<< publishStats.convertMs / streams
+                              //<< " update_ms_per_stream="
+                              //<< publishStats.updateMs / streams
+                              //<< '\n';
+
+                    //publishStats.reset(now);
+                //};
+
+                //std::shared_ptr<const std::vector<uint16_t>> raw;
+
+                //std::uint64_t noFrameLoopCount = 0;
+                //std::uint64_t runFrameLoopFailCount = 0;
+                
+                //cv::Mat moduleAccum16;
+                //cv::Mat moduleBgr8;
+
+                //for (;;) {
+                    //if (!peer->RunFrameLoop()) {
+                        //++runFrameLoopFailCount;
+
+                        //std::cerr << "[frame thread] RunFrameLoop failed for peer "
+                                  //<< peerIndex
+                                  //<< " (module " << moduleIndex << ")\n";
+
+                        //if ((runFrameLoopFailCount %
+                             //kSignatureLogEvery) == 0) {
+                            //std::cout << "[frame warning] peer="
+                                      //<< peerIndex
+                                      //<< " module=" << moduleIndex
+                                      //<< " RunFrameLoop failed for "
+                                      //<< runFrameLoopFailCount
+                                      //<< " consecutive attempts\n";
+                        //}
+
+                        //std::this_thread::sleep_for(kRetryDelay);
+                        //continue;
+                    //}
+
+                    //runFrameLoopFailCount = 0;
+
+                    //const auto tPublishLoopStart =
+                        //Clock::now();
+
+                    //std::array<bool, kLocalCameraCount> gotStreamThisLoop{};
+                    //gotStreamThisLoop.fill(false);
+
+                    //bool gotAnyFrameThisLoop = false;
+
+                    //for (std::size_t publishOrderIndex = 0;
+                         //publishOrderIndex < kLocalCameraCount;
+                         //++publishOrderIndex) {
+                        //const std::size_t localCameraIndex =
+                            //(publishOrderIndex + 1) % kLocalCameraCount;
+
+                        //raw.reset();
+                        
+                        //const auto tShareStart =
+                            //Clock::now();
+                        
+                        //if (!peer->TryShareLatestFrame(
+                                //localCameraIndex,
+                                //raw)) {
+                            //continue;
+                        //}
+                        
+                        //const auto tShareDone =
+                            //Clock::now();
+                        
+                        //++publishStats.copiedStreams;
+                        //publishStats.copyMs += ms(tShareStart, tShareDone);
+
+                        //gotAnyFrameThisLoop = true;
+                        //gotStreamThisLoop[localCameraIndex] = true;
+
+                        //const auto tValidateStart =
+                            //Clock::now();
+
+                        //const std::size_t expectedGrayElems =
+                            //static_cast<std::size_t>(kExpectedPixels);
+
+                        //const std::size_t expectedBgrElems =
+                            //expectedGrayElems * 3u;
+
+                        //const bool isGrayProjected =
+                            //raw->size() == expectedGrayElems;
+
+                        //const bool isBgrProjected =
+                            //raw->size() == expectedBgrElems;
+
+                        //if (!isGrayProjected && !isBgrProjected) {
+                            //std::cerr << "[frame thread] unexpected projected frame size for peer "
+                                      //<< peerIndex
+                                      //<< " (module " << moduleIndex << ")"
+                                      //<< " localCameraIndex="
+                                      //<< localCameraIndex
+                                      //<< " size=" << raw->size()
+                                      //<< " expectedGray="
+                                      //<< expectedGrayElems
+                                      //<< " expectedBgr="
+                                      //<< expectedBgrElems
+                                      //<< '\n';
+
+                            //gotStreamThisLoop[localCameraIndex] = false;
+
+                            //const auto tValidateDone =
+                                //Clock::now();
+
+                            //publishStats.validateMs +=
+                                //ms(tValidateStart, tValidateDone);
+
+                            //continue;
+                        //}
+
+                         //if (localCameraIndex == 0 &&
+                            //!HasUsefulProjectedSignalSampled(*raw)) {
+                            ///*
+                             //* Only pay for the full scan when the cheap sampled test thinks the
+                             //* frame is black. This preserves the old behavior for true black drops,
+                             //* but avoids a full-frame scan on normal frames.
+                             //*/
+                            //if (!HasUsefulProjectedSignal(*raw)) {
+                                //static std::atomic<std::uint64_t> blackDropCount{0};
+                        
+                                //const auto n = ++blackDropCount;
+                        
+                                //if ((n % kSignatureLogEvery) == 0) {
+                                    //std::cerr << "[frame thread] dropping all-black projected frame"
+                                              //<< " peer=" << peerIndex
+                                              //<< " module=" << moduleIndex
+                                              //<< " localCameraIndex=" << localCameraIndex
+                                              //<< " raw.size()=" << raw->size()
+                                              //<< '\n';
+                                //}
+                        
+                                //gotStreamThisLoop[localCameraIndex] = false;
+                        
+                                //const auto tValidateDone =
+                                    //Clock::now();
+                        
+                                //publishStats.validateMs +=
+                                    //ms(tValidateStart, tValidateDone);
+                        
+                                //continue;
+                            //}
+                        //}
+
+                        //const std::size_t globalIndex =
+                            //GlobalCameraIndex(
+                                //moduleIndex,
+                                //localCameraIndex
+                            //);
+
+                        //if (globalIndex >= liveCameras.size()) {
+                            //std::cerr << "[frame thread] globalIndex out of range "
+                                      //<< "(peer " << peerIndex
+                                      //<< ", module " << moduleIndex
+                                      //<< "): " << globalIndex
+                                      //<< " liveCameras.size()="
+                                      //<< liveCameras.size()
+                                      //<< '\n';
+
+                            //gotStreamThisLoop[localCameraIndex] = false;
+
+                            //const auto tValidateDone =
+                                //Clock::now();
+
+                            //publishStats.validateMs +=
+                                //ms(tValidateStart, tValidateDone);
+
+                            //continue;
+                        //}
+
+                        //const auto tValidateDone =
+                            //Clock::now();
+
+                        //publishStats.validateMs +=
+                            //ms(tValidateStart, tValidateDone);
+
+                        //const auto tDebugStart =
+                            //Clock::now();
+
+                        //SaveBayerRegionDebugOnce(
+                            //*raw,
+                            //peerIndex,
+                            //moduleIndex,
+                            //localCameraIndex
+                        //);
+
+                        ///*
+                         //* Stage 2 buffers are already projected BGR16, not Bayer.
+                         //* Only run the old Bayer debug helper for Stage 1 gray/raw
+                         //* buffers.
+                         //*/
+                        //if (isGrayProjected && localCameraIndex == 0) {
+                            //SaveBayerBGGRDebugOnce(
+                                //*raw,
+                                //moduleIndex,
+                                //localCameraIndex
+                            //);
+                        //}
+
+                        //const auto tDebugDone =
+                            //Clock::now();
+
+                        //publishStats.debugMs +=
+                            //ms(tDebugStart, tDebugDone);
+
+                        //const auto tConvertStart =
+                            //Clock::now();
+
+                        //cv::Mat bgr;
+
+                        //if (isBgrProjected) {
+                            //bgr =
+                                //raw16ProjectedBgrToBgr8(
+                                    //*raw,
+                                    //kFrameWidth,
+                                    //kFrameHeight
+                                //);
+                        //} else {
+                            //bgr =
+                                //raw16ProjectedToGrayBgr8(
+                                    //*raw,
+                                    //kFrameWidth,
+                                    //kFrameHeight
+                                //);
+                        //}
+
+                        //const auto tConvertDone =
+                            //Clock::now();
+
+                        //++publishStats.convertedStreams;
+                        //publishStats.convertMs +=
+                            //ms(tConvertStart, tConvertDone);
+
+                        //if (bgr.empty()) {
+                            //std::cerr << "[frame thread] projected frame conversion returned empty "
+                                      //<< "for peer " << peerIndex
+                                      //<< " (module " << moduleIndex << ")"
+                                      //<< " localCameraIndex="
+                                      //<< localCameraIndex
+                                      //<< '\n';
+
+                            //gotStreamThisLoop[localCameraIndex] = false;
+                            //continue;
+                        //}
+
+                        //const auto tUpdateStart =
+                            //Clock::now();
+
+                        //updateLatestFrame(
+                            //liveCameras[globalIndex].frame,
+                            //std::move(bgr)
+                        //);
+
+                        //const auto tUpdateDone =
+                            //Clock::now();
+
+                        //++publishStats.updatedStreams;
+                        //++publishStats.publishedStreams;
+                        //publishStats.updateMs +=
+                            //ms(tUpdateStart, tUpdateDone);
+                    //}
+
+                    //const auto tPublishLoopDone =
+                        //Clock::now();
+
+                    //++publishStats.loops;
+                    //publishStats.totalMs +=
+                        //ms(tPublishLoopStart, tPublishLoopDone);
+
+                    //if (gotAnyFrameThisLoop) {
+                        //++publishStats.loopsWithAnyFrame;
+                    //}
+
+                    //maybePrintPublishTiming();
+
+                    //if (!gotAnyFrameThisLoop) {
+                        //++noFrameLoopCount;
+
+                        //if ((noFrameLoopCount %
+                             //kSignatureLogEvery) == 0) {
+                            //std::cout << "[frame warning] peer="
+                                      //<< peerIndex
+                                      //<< " module=" << moduleIndex
+                                      //<< " has not published any frames for "
+                                      //<< noFrameLoopCount
+                                      //<< " RunFrameLoop cycles\n";
+                        //}
+
+                        //continue;
+                    //}
+
+                    //bool missingAnyStream = false;
+
+                    //for (std::size_t i = 0;
+                         //i < kLocalCameraCount;
+                         //++i) {
+                        //if (!gotStreamThisLoop[i]) {
+                            //missingAnyStream = true;
+                            //break;
+                        //}
+                    //}
+
+                    //if (missingAnyStream) {
+                        //++noFrameLoopCount;
+
+                        //if ((noFrameLoopCount %
+                             //kSignatureLogEvery) == 0) {
+                            //std::cout << "[frame warning] peer="
+                                      //<< peerIndex
+                                      //<< " module=" << moduleIndex
+                                      //<< " missing stream(s):";
+
+                            //for (std::size_t i = 0;
+                                 //i < kLocalCameraCount;
+                                 //++i) {
+                                //if (!gotStreamThisLoop[i]) {
+                                    //std::cout << ' ' << i;
+                                //}
+                            //}
+
+                            //std::cout << " for "
+                                      //<< noFrameLoopCount
+                                      //<< " RunFrameLoop cycles\n";
+                        //}
+                    //} else {
+                        //noFrameLoopCount = 0;
+                    //}
+                //}
+            //}
+        //);
+
+        //controlThreads.emplace_back(
+            //[peer, peerIndex, moduleIndex]() {
+                //for (;;) {
+                    //if (!peer->RunControlLoop()) {
+                        //std::cerr << "[control thread] RunControlLoop failed for peer "
+                                  //<< peerIndex
+                                  //<< " (module " << moduleIndex << ")\n";
+                        //break;
+                    //}
+                //}
+            //}
+        //);
+    //}
+
+    //std::cout << "[main] Threads running\n";
+//}
+
 template<class SphereSpaceType>
 void StartPeerThreads(
     std::vector<std::unique_ptr<DASPi::AperturePeerBase>>& aperturePeers,
@@ -2968,11 +3564,122 @@ void StartPeerThreads(
 
         frameThreads.emplace_back(
             [peer, peerIndex, moduleIndex, &liveCameras]() {
-                std::vector<uint16_t> raw;
-                raw.reserve(static_cast<std::size_t>(kExpectedPixels) * 3u);
+                using Clock = std::chrono::steady_clock;
+
+                auto ms = [](const auto a, const auto b) -> double {
+                    return std::chrono::duration<double, std::milli>(
+                        b - a
+                    ).count();
+                };
+
+                struct PublishTimingStats {
+                    std::uint64_t loops = 0;
+                    std::uint64_t loopsWithAnyFrame = 0;
+                    std::uint64_t publishedStreams = 0;
+                    std::uint64_t copiedStreams = 0;
+                    std::uint64_t convertedStreams = 0;
+                    std::uint64_t updatedStreams = 0;
+
+                    double copyMs = 0.0;
+                    double validateMs = 0.0;
+                    double debugMs = 0.0;
+                    double convertMs = 0.0;
+                    double updateMs = 0.0;
+                    double totalMs = 0.0;
+
+                    Clock::time_point lastPrint = Clock::now();
+
+                    void reset(Clock::time_point now)
+                    {
+                        loops = 0;
+                        loopsWithAnyFrame = 0;
+                        publishedStreams = 0;
+                        copiedStreams = 0;
+                        convertedStreams = 0;
+                        updatedStreams = 0;
+
+                        copyMs = 0.0;
+                        validateMs = 0.0;
+                        debugMs = 0.0;
+                        convertMs = 0.0;
+                        updateMs = 0.0;
+                        totalMs = 0.0;
+
+                        lastPrint = now;
+                    }
+                };
+
+                PublishTimingStats publishStats{};
+
+                auto maybePrintPublishTiming = [&]() {
+                    const auto now = Clock::now();
+
+                    const double elapsed =
+                        std::chrono::duration<double>(
+                            now - publishStats.lastPrint
+                        ).count();
+
+                    if (elapsed < 1.0 || publishStats.loops == 0) {
+                        return;
+                    }
+
+                    const double loops =
+                        static_cast<double>(publishStats.loops);
+
+                    const double streams =
+                        publishStats.publishedStreams == 0
+                            ? 1.0
+                            : static_cast<double>(
+                                  publishStats.publishedStreams
+                              );
+
+                    std::cout << "[Frame publish timing]"
+                              << " peer=" << peerIndex
+                              << " module=" << moduleIndex
+                              << " loops=" << publishStats.loops
+                              << " loopsWithAnyFrame="
+                              << publishStats.loopsWithAnyFrame
+                              << " loop_fps="
+                              << static_cast<double>(publishStats.loops) /
+                                     elapsed
+                              << " publishedStreams="
+                              << publishStats.publishedStreams
+                              << " copiedStreams="
+                              << publishStats.copiedStreams
+                              << " convertedStreams="
+                              << publishStats.convertedStreams
+                              << " updatedStreams="
+                              << publishStats.updatedStreams
+                              << " copy_ms_per_loop="
+                              << publishStats.copyMs / loops
+                              << " validate_ms_per_loop="
+                              << publishStats.validateMs / loops
+                              << " debug_ms_per_loop="
+                              << publishStats.debugMs / loops
+                              << " convert_ms_per_loop="
+                              << publishStats.convertMs / loops
+                              << " update_ms_per_loop="
+                              << publishStats.updateMs / loops
+                              << " total_ms_per_loop="
+                              << publishStats.totalMs / loops
+                              << " copy_ms_per_stream="
+                              << publishStats.copyMs / streams
+                              << " convert_ms_per_stream="
+                              << publishStats.convertMs / streams
+                              << " update_ms_per_stream="
+                              << publishStats.updateMs / streams
+                              << '\n';
+
+                    publishStats.reset(now);
+                };
+
+                std::shared_ptr<const std::vector<uint16_t>> raw;
 
                 std::uint64_t noFrameLoopCount = 0;
                 std::uint64_t runFrameLoopFailCount = 0;
+                
+                cv::Mat moduleAccum16;
+                cv::Mat moduleBgr8;
 
                 for (;;) {
                     if (!peer->RunFrameLoop()) {
@@ -2982,8 +3689,10 @@ void StartPeerThreads(
                                   << peerIndex
                                   << " (module " << moduleIndex << ")\n";
 
-                        if ((runFrameLoopFailCount % kSignatureLogEvery) == 0) {
-                            std::cout << "[frame warning] peer=" << peerIndex
+                        if ((runFrameLoopFailCount %
+                             kSignatureLogEvery) == 0) {
+                            std::cout << "[frame warning] peer="
+                                      << peerIndex
                                       << " module=" << moduleIndex
                                       << " RunFrameLoop failed for "
                                       << runFrameLoopFailCount
@@ -2996,147 +3705,250 @@ void StartPeerThreads(
 
                     runFrameLoopFailCount = 0;
 
+                    const auto tPublishLoopStart =
+                        Clock::now();
+
                     std::array<bool, kLocalCameraCount> gotStreamThisLoop{};
                     gotStreamThisLoop.fill(false);
 
                     bool gotAnyFrameThisLoop = false;
 
-                    for (std::size_t localCameraIndex = 0;
-                         localCameraIndex < kLocalCameraCount;
-                         ++localCameraIndex) {
+                    for (std::size_t publishOrderIndex = 0;
+                         publishOrderIndex < kLocalCameraCount;
+                         ++publishOrderIndex) {
+                        const std::size_t localCameraIndex =
+                            (publishOrderIndex + 1) % kLocalCameraCount;
 
-                        raw.clear();
-
-                        if (!peer->TryCopyLatestFrame(localCameraIndex, raw)) {
+                        raw.reset();
+                        
+                        const auto tShareStart =
+                            Clock::now();
+                        
+                        if (!peer->TryShareLatestFrame(
+                                localCameraIndex,
+                                raw)) {
                             continue;
                         }
+                        
+                        const auto tShareDone =
+                            Clock::now();
+                        
+                        ++publishStats.copiedStreams;
+                        publishStats.copyMs += ms(tShareStart, tShareDone);
 
                         gotAnyFrameThisLoop = true;
                         gotStreamThisLoop[localCameraIndex] = true;
 
+                        const auto tValidateStart =
+                            Clock::now();
+
                         const std::size_t expectedGrayElems =
                             static_cast<std::size_t>(kExpectedPixels);
-                        
+
                         const std::size_t expectedBgrElems =
                             expectedGrayElems * 3u;
-                        
+
                         const bool isGrayProjected =
-                            raw.size() == expectedGrayElems;
-                        
+                            raw->size() == expectedGrayElems;
+
                         const bool isBgrProjected =
-                            raw.size() == expectedBgrElems;
-                        
+                            raw->size() == expectedBgrElems;
+
                         if (!isGrayProjected && !isBgrProjected) {
                             std::cerr << "[frame thread] unexpected projected frame size for peer "
                                       << peerIndex
                                       << " (module " << moduleIndex << ")"
-                                      << " localCameraIndex=" << localCameraIndex
-                                      << " size=" << raw.size()
-                                      << " expectedGray=" << expectedGrayElems
-                                      << " expectedBgr=" << expectedBgrElems
+                                      << " localCameraIndex="
+                                      << localCameraIndex
+                                      << " size=" << raw->size()
+                                      << " expectedGray="
+                                      << expectedGrayElems
+                                      << " expectedBgr="
+                                      << expectedBgrElems
                                       << '\n';
-                        
+
                             gotStreamThisLoop[localCameraIndex] = false;
+
+                            const auto tValidateDone =
+                                Clock::now();
+
+                            publishStats.validateMs +=
+                                ms(tValidateStart, tValidateDone);
+
                             continue;
                         }
+
+                         if (localCameraIndex == 0 &&
+                            !HasUsefulProjectedSignalSampled(*raw)) {
+                            /*
+                             * Only pay for the full scan when the cheap sampled test thinks the
+                             * frame is black. This preserves the old behavior for true black drops,
+                             * but avoids a full-frame scan on normal frames.
+                             */
+                            if (!HasUsefulProjectedSignal(*raw)) {
+                                static std::atomic<std::uint64_t> blackDropCount{0};
                         
-                        //if (!HasUsefulProjectedSignal(raw)) {
-                        if (localCameraIndex == 0 && !HasUsefulProjectedSignal(raw)) {
-                            static std::atomic<std::uint64_t> blackDropCount{0};
+                                const auto n = ++blackDropCount;
                         
-                            const auto n = ++blackDropCount;
+                                if ((n % kSignatureLogEvery) == 0) {
+                                    std::cerr << "[frame thread] dropping all-black projected frame"
+                                              << " peer=" << peerIndex
+                                              << " module=" << moduleIndex
+                                              << " localCameraIndex=" << localCameraIndex
+                                              << " raw.size()=" << raw->size()
+                                              << '\n';
+                                }
                         
-                            if ((n % kSignatureLogEvery) == 0) {
-                                std::cerr << "[frame thread] dropping all-black projected frame"
-                                          << " peer=" << peerIndex
-                                          << " module=" << moduleIndex
-                                          << " localCameraIndex=" << localCameraIndex
-                                          << " raw.size()=" << raw.size()
-                                          << '\n';
+                                gotStreamThisLoop[localCameraIndex] = false;
+                        
+                                const auto tValidateDone =
+                                    Clock::now();
+                        
+                                publishStats.validateMs +=
+                                    ms(tValidateStart, tValidateDone);
+                        
+                                continue;
                             }
-                        
-                            gotStreamThisLoop[localCameraIndex] = false;
-                            continue; // Keep previous good liveCameras[globalIndex].frame
                         }
-                        
+
                         const std::size_t globalIndex =
                             GlobalCameraIndex(
                                 moduleIndex,
                                 localCameraIndex
                             );
-                        
+
                         if (globalIndex >= liveCameras.size()) {
                             std::cerr << "[frame thread] globalIndex out of range "
                                       << "(peer " << peerIndex
-                                      << ", module " << moduleIndex << "): "
-                                      << globalIndex
+                                      << ", module " << moduleIndex
+                                      << "): " << globalIndex
                                       << " liveCameras.size()="
                                       << liveCameras.size()
                                       << '\n';
-                        
+
                             gotStreamThisLoop[localCameraIndex] = false;
+
+                            const auto tValidateDone =
+                                Clock::now();
+
+                            publishStats.validateMs +=
+                                ms(tValidateStart, tValidateDone);
+
                             continue;
                         }
-                        
+
+                        const auto tValidateDone =
+                            Clock::now();
+
+                        publishStats.validateMs +=
+                            ms(tValidateStart, tValidateDone);
+
+                        const auto tDebugStart =
+                            Clock::now();
+
                         SaveBayerRegionDebugOnce(
-                            raw,
+                            *raw,
                             peerIndex,
                             moduleIndex,
                             localCameraIndex
                         );
-                        
+
                         /*
                          * Stage 2 buffers are already projected BGR16, not Bayer.
-                         * Only run the old Bayer debug helper for Stage 1 gray/raw buffers.
+                         * Only run the old Bayer debug helper for Stage 1 gray/raw
+                         * buffers.
                          */
                         if (isGrayProjected && localCameraIndex == 0) {
                             SaveBayerBGGRDebugOnce(
-                                raw,
+                                *raw,
                                 moduleIndex,
                                 localCameraIndex
                             );
                         }
 
-						cv::Mat bgr;
+                        const auto tDebugDone =
+                            Clock::now();
+
+                        publishStats.debugMs +=
+                            ms(tDebugStart, tDebugDone);
+
+                        const auto tConvertStart =
+                            Clock::now();
+
+                        cv::Mat bgr;
 
                         if (isBgrProjected) {
                             bgr =
                                 raw16ProjectedBgrToBgr8(
-                                    raw,
+                                    *raw,
                                     kFrameWidth,
                                     kFrameHeight
                                 );
                         } else {
                             bgr =
                                 raw16ProjectedToGrayBgr8(
-                                    raw,
+                                    *raw,
                                     kFrameWidth,
                                     kFrameHeight
                                 );
                         }
 
+                        const auto tConvertDone =
+                            Clock::now();
+
+                        ++publishStats.convertedStreams;
+                        publishStats.convertMs +=
+                            ms(tConvertStart, tConvertDone);
+
                         if (bgr.empty()) {
                             std::cerr << "[frame thread] projected frame conversion returned empty "
                                       << "for peer " << peerIndex
                                       << " (module " << moduleIndex << ")"
-                                      << " localCameraIndex=" << localCameraIndex
+                                      << " localCameraIndex="
+                                      << localCameraIndex
                                       << '\n';
 
                             gotStreamThisLoop[localCameraIndex] = false;
                             continue;
                         }
 
+                        const auto tUpdateStart =
+                            Clock::now();
+
                         updateLatestFrame(
                             liveCameras[globalIndex].frame,
-                            bgr
+                            std::move(bgr)
                         );
+
+                        const auto tUpdateDone =
+                            Clock::now();
+
+                        ++publishStats.updatedStreams;
+                        ++publishStats.publishedStreams;
+                        publishStats.updateMs +=
+                            ms(tUpdateStart, tUpdateDone);
                     }
+
+                    const auto tPublishLoopDone =
+                        Clock::now();
+
+                    ++publishStats.loops;
+                    publishStats.totalMs +=
+                        ms(tPublishLoopStart, tPublishLoopDone);
+
+                    if (gotAnyFrameThisLoop) {
+                        ++publishStats.loopsWithAnyFrame;
+                    }
+
+                    maybePrintPublishTiming();
 
                     if (!gotAnyFrameThisLoop) {
                         ++noFrameLoopCount;
 
-                        if ((noFrameLoopCount % kSignatureLogEvery) == 0) {
-                            std::cout << "[frame warning] peer=" << peerIndex
+                        if ((noFrameLoopCount %
+                             kSignatureLogEvery) == 0) {
+                            std::cout << "[frame warning] peer="
+                                      << peerIndex
                                       << " module=" << moduleIndex
                                       << " has not published any frames for "
                                       << noFrameLoopCount
@@ -3148,7 +3960,9 @@ void StartPeerThreads(
 
                     bool missingAnyStream = false;
 
-                    for (std::size_t i = 0; i < kLocalCameraCount; ++i) {
+                    for (std::size_t i = 0;
+                         i < kLocalCameraCount;
+                         ++i) {
                         if (!gotStreamThisLoop[i]) {
                             missingAnyStream = true;
                             break;
@@ -3158,12 +3972,16 @@ void StartPeerThreads(
                     if (missingAnyStream) {
                         ++noFrameLoopCount;
 
-                        if ((noFrameLoopCount % kSignatureLogEvery) == 0) {
-                            std::cout << "[frame warning] peer=" << peerIndex
+                        if ((noFrameLoopCount %
+                             kSignatureLogEvery) == 0) {
+                            std::cout << "[frame warning] peer="
+                                      << peerIndex
                                       << " module=" << moduleIndex
                                       << " missing stream(s):";
 
-                            for (std::size_t i = 0; i < kLocalCameraCount; ++i) {
+                            for (std::size_t i = 0;
+                                 i < kLocalCameraCount;
+                                 ++i) {
                                 if (!gotStreamThisLoop[i]) {
                                     std::cout << ' ' << i;
                                 }
@@ -3256,6 +4074,11 @@ cv::Mat CompositePreprojectedFrames(
     for (std::size_t streamIndex = 0;
          streamIndex < liveCameras.size();
          ++streamIndex) {
+         
+        //if (liveCameras[streamIndex].localStreamIndex != 0) {
+            //continue;
+        //}    
+             
         cv::Mat frame;
 
         if (!tryGetLatestFrame(

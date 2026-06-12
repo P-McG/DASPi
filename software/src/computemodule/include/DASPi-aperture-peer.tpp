@@ -770,10 +770,27 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 
     const auto tScatterDone = Clock::now();
 
-    {
-        std::scoped_lock lock(bufferMutex_);
-        this->buffer_ = std::move(newBuffers);
-    }
+	std::array<
+		std::shared_ptr<const std::vector<uint16_t>>,
+		regionCount
+	> publishedBuffers{};
+	
+	for (std::size_t regionIndex = 0;
+		 regionIndex < regionCount;
+		 ++regionIndex) {
+		auto writable =
+			std::make_shared<std::vector<uint16_t>>(
+				std::move(newBuffers[regionIndex])
+			);
+	
+		publishedBuffers[regionIndex] =
+			std::move(writable);
+	}
+	
+	{
+		std::scoped_lock lock(bufferMutex_);
+		this->buffer_ = std::move(publishedBuffers);
+	}
 
     const auto tPublishDone = Clock::now();
 
@@ -870,62 +887,57 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 		const bool shouldLogBuffer = ((bufferToFileCount_ % 30) == 0);
 
 		for (size_t i = 0; i < verticesPerFaceN_ + 1; ++i) {
-			log_verbose("Writing file:" + std::to_string(i));
-	
-			if (shouldLogBuffer) {
-				std::cout << "[BufferToFile] " << peerLabel_
-				          << " i=" << i
-						  << " files_[i]=" << files_[i].get()
-						  << " buffer_[i].size()=" << buffer_[i].size()
-						  << std::endl;
+			std::shared_ptr<const std::vector<uint16_t>> snapshot =
+				this->buffer_[i];
+		
+			if (!snapshot || snapshot->empty()) {
+				std::cerr << "[BufferToFile] buffer_[" << i
+						  << "] is empty, skipping\n";
+				continue;
 			}
-	
+		
 			if (!files_[i]) {
 				std::cerr << "[BufferToFile] files_[" << i << "] is null\n";
 				return false;
 			}
-	
+		
 			if (!files_[i]->is_open()) {
-				std::cerr << "[BufferToFile] files_[" << i << "] is not open\n";
+				std::cerr << "[BufferToFile] files_[" << i
+						  << "] is not open\n";
 				return false;
 			}
-	
-			const size_t bytesToWrite = this->buffer_[i].size() * sizeof(uint16_t);
-			if (bytesToWrite == 0) {
-				if (i == 1 && !this->buffer_[0].empty()) {
-					std::cout << "[BufferToFile trace] " << peerLabel_
-					          << " output *_1.bayer empty because buffer_[1] is empty"
-					          << " while buffer_[0] has " << this->buffer_[0].size() << " pixels"
-					          << std::endl;
-				}
-				std::cerr << "[BufferToFile] buffer_[" << i << "] is empty, skipping\n";
-				continue;
-			}
-
+		
+			const size_t bytesToWrite =
+				snapshot->size() * sizeof(uint16_t);
+		
 			if ((i <= 1) && shouldLogBuffer) {
-				const auto& buf = this->buffer_[i];
-				std::uint64_t sig = 1469598103934665603ull; // FNV offset basis
-				const size_t sampleCount = std::min<size_t>(buf.size(), 1024);
+				std::uint64_t sig = 1469598103934665603ull;
+				const size_t sampleCount =
+					std::min<size_t>(snapshot->size(), 1024);
+		
 				for (size_t j = 0; j < sampleCount; ++j) {
-					sig ^= static_cast<std::uint64_t>(buf[j]);
-					sig *= 1099511628211ull; // FNV prime
+					sig ^= static_cast<std::uint64_t>((*snapshot)[j]);
+					sig *= 1099511628211ull;
 				}
+		
 				std::cout << "[BufferSig] " << peerLabel_
-				          << " stream=" << i
-				          << " sampleCount=" << sampleCount
-				          << " fnv64=" << sig
-				          << " first=" << buf.front()
-				          << " last=" << buf.back()
-				          << std::endl;
+						  << " stream=" << i
+						  << " sampleCount=" << sampleCount
+						  << " fnv64=" << sig
+						  << " first=" << snapshot->front()
+						  << " last=" << snapshot->back()
+						  << std::endl;
 			}
-
+		
 			if (!this->files_[i]->write(
-					reinterpret_cast<const char*>(this->buffer_[i].data()),
+					reinterpret_cast<const char*>(snapshot->data()),
 					static_cast<std::streamsize>(bytesToWrite))) {
-				std::cerr << "[BufferToFile] Failed to write file " << i << std::endl;
+				std::cerr << "[BufferToFile] Failed to write file "
+						  << i
+						  << std::endl;
 				return false;
 			}
-	
+		
 			this->files_[i]->flush();
 		}
 	
@@ -933,28 +945,64 @@ bool AperturePeer<FacetIndex>::RunFrameLoop()
 	}
 	
 	template<unsigned int FacetIndex>
-	bool AperturePeer<FacetIndex>::CopyBuffer(size_t index, std::vector<uint16_t>& out) const
+	bool AperturePeer<FacetIndex>::TryShareLatestFrame(
+		std::size_t localCameraIndex,
+		std::shared_ptr<const std::vector<uint16_t>>& dst) const
 	{
 		constexpr bool kVerboseCopyBufferFailures = false;
 	
-		if (index >= verticesPerFaceN_ + 1) {
+		if (localCameraIndex >= verticesPerFaceN_ + 1) {
 			if constexpr (kVerboseCopyBufferFailures) {
-				std::cerr << "[CopyBuffer] index out of range: " << index
-						  << " (max valid: " << verticesPerFaceN_ << ")\n";
+				std::cerr << "[TryShareLatestFrame] index out of range: "
+						  << localCameraIndex
+						  << " max=" << verticesPerFaceN_
+						  << '\n';
 			}
+	
+			dst.reset();
 			return false;
 		}
 	
 		std::scoped_lock lock(bufferMutex_);
 	
-		if (buffer_[index].empty()) {
+		const auto& src =
+			buffer_[localCameraIndex];
+	
+		if (!src || src->empty()) {
 			if constexpr (kVerboseCopyBufferFailures) {
-				std::cerr << "[CopyBuffer] buffer_[" << index << "] is empty\n";
+				std::cerr << "[TryShareLatestFrame] buffer empty index="
+						  << localCameraIndex
+						  << '\n';
 			}
+	
+			dst.reset();
 			return false;
 		}
 	
-		out = buffer_[index];
+		dst = src;
+		return true;
+	}
+	
+	template<unsigned int FacetIndex>
+	bool AperturePeer<FacetIndex>::CopyBuffer(
+		size_t index,
+		std::vector<uint16_t>& out) const
+	{
+		constexpr bool kVerboseCopyBufferFailures = false;
+	
+		std::shared_ptr<const std::vector<uint16_t>> snapshot;
+	
+		if (!TryShareLatestFrame(index, snapshot)) {
+			if constexpr (kVerboseCopyBufferFailures) {
+				std::cerr << "[CopyBuffer] failed to share buffer index="
+						  << index
+						  << '\n';
+			}
+	
+			return false;
+		}
+	
+		out = *snapshot;
 		return true;
 	}
 	
@@ -1661,26 +1709,37 @@ bool AperturePeer<FacetIndex>::CopyValidMask(
     return !dst.empty();
 }
 
+//template<unsigned int FacetIndex>
+//bool AperturePeer<FacetIndex>::TryCopyLatestFrame(
+    //std::size_t localCameraIndex,
+    //std::vector<uint16_t>& dst
+//) const
+//{
+    //std::scoped_lock lock(bufferMutex_);
+
+    //if (localCameraIndex >= buffer_.size()) {
+        //return false;
+    //}
+
+    //const auto& src = buffer_[localCameraIndex];
+
+    //if (src.empty()) {
+        //return false;
+    //}
+
+    //dst = src;
+    //return true;
+//}
+
 template<unsigned int FacetIndex>
 bool AperturePeer<FacetIndex>::TryCopyLatestFrame(
     std::size_t localCameraIndex,
-    std::vector<uint16_t>& dst
-) const
+    std::vector<uint16_t>& dst) const
 {
-    std::scoped_lock lock(bufferMutex_);
-
-    if (localCameraIndex >= buffer_.size()) {
-        return false;
-    }
-
-    const auto& src = buffer_[localCameraIndex];
-
-    if (src.empty()) {
-        return false;
-    }
-
-    dst = src;
-    return true;
+    return CopyBuffer(
+        localCameraIndex,
+        dst
+    );
 }
 
 //template<size_t n>

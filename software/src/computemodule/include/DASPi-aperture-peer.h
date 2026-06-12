@@ -44,7 +44,10 @@ class AperturePeer : public AperturePeerBase
     static constexpr unsigned int facetIndex_ = FacetIndex;
     static constexpr size_t verticesPerFaceN_{tpgy_t::FacetSpace_t<FacetIndex>::verticesPerFaceN_};
 
-    std::array<std::vector<uint16_t>, verticesPerFaceN_ + 1> buffer_;
+    std::array<
+        std::shared_ptr<const std::vector<uint16_t>>,
+        verticesPerFaceN_ + 1
+    > buffer_;
     std::array<std::unique_ptr<std::ofstream>, verticesPerFaceN_ + 1> files_;
 
     tpgy_t tpgy_;
@@ -123,6 +126,7 @@ public:
     void MaybePrintRxSummary();
     //void MaybePrintRxSummary(size_t peerIndex, size_t moduleIndex);
     bool TryCopyLatestFrame(std::size_t localCameraIndex, std::vector<uint16_t>& dst) const override;
+    bool TryShareLatestFrame(std::size_t localCameraIndex, std::shared_ptr<const std::vector<uint16_t>>& dst) const override;
     unsigned int FacetIndexValue() const override { return FacetIndex;}
     
 private:
