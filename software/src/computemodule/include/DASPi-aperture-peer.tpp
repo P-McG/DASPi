@@ -11,6 +11,7 @@
 #include <cstring>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <limits>
 
 #include "DASPi-logger.h"
 #include "DASPi-udp-clnt.h"
@@ -707,16 +708,21 @@ namespace DASPi{
 	
 			const auto& map =
 				localSphereMap->regions[regionIndex];
-	
-			if (map.size() != validSize) {
+			
+			const auto& bgrSlots =
+				localSphereMap->bgrSlots[regionIndex];
+			
+			if (map.size() != validSize ||
+				bgrSlots.size() != validSize) {
 				std::cerr << "[RunFrameLoop] SphereMap/data size mismatch:"
 						  << " region=" << regionIndex
 						  << " map.size()=" << map.size()
+						  << " bgrSlots.size()=" << bgrSlots.size()
 						  << " validSize=" << validSize
 						  << " frame_id="
 						  << frameHeader.gainMsg_.frame_id
 						  << '\n';
-	
+			
 				return false;
 			}
 	
@@ -875,76 +881,35 @@ namespace DASPi{
 			for (std::size_t i = 0;
 				 i < validSize;
 				 ++i) {
-				const std::uint32_t packedEntry =
-					map[i];
-	
-				const std::uint32_t outIndex =
-					UnpackSphereMapOutputIndex(
-						packedEntry
-					);
-	
-				const SphereMapBayerChannel channel =
-					UnpackSphereMapBayerChannel(
-						packedEntry
-					);
-	
-				if (outIndex >= scatterOutputPixels) {
-					std::cerr << "[RunFrameLoop] SphereMap output index OOB:"
+				const std::uint32_t slot32 =
+					bgrSlots[i];
+			
+				if (slot32 >= scatterOutputElems) {
+					std::cerr << "[RunFrameLoop] precomputed BGR slot OOB:"
 							  << " region=" << regionIndex
 							  << " i=" << i
-							  << " outIndex=" << outIndex
-							  << " outputPixels="
-							  << scatterOutputPixels
+							  << " slot=" << slot32
+							  << " scatterOutputElems="
+							  << scatterOutputElems
 							  << " frame_id="
 							  << frameHeader.gainMsg_.frame_id
 							  << '\n';
-	
+			
 					resetTouchedSlots();
-	
+			
 					return false;
 				}
-	
-				const std::size_t base =
-					static_cast<std::size_t>(outIndex) * 3u;
-	
-				std::size_t channelOffset = 0;
-	
-				switch (channel) {
-				case SphereMapBayerChannel::Blue:
-					channelOffset = 0;
-					break;
-	
-				case SphereMapBayerChannel::Green:
-					channelOffset = 1;
-					break;
-	
-				case SphereMapBayerChannel::Red:
-					channelOffset = 2;
-					break;
-	
-				default:
-					std::cerr << "[RunFrameLoop] invalid Bayer channel:"
-							  << " region=" << regionIndex
-							  << " i=" << i
-							  << " packedEntry=0x"
-							  << std::hex << packedEntry << std::dec
-							  << '\n';
-	
-					resetTouchedSlots();
-	
-					return false;
-				}
-	
+			
 				const std::size_t slot =
-					base + channelOffset;
-	
+					static_cast<std::size_t>(slot32);
+			
 				if (scatterCounts[slot] == 0) {
 					touchedSlots.push_back(slot);
 				}
-	
+			
 				scatterSums[slot] +=
 					static_cast<std::uint32_t>(src[i]);
-	
+			
 				++scatterCounts[slot];
 			}
 	
@@ -1023,9 +988,12 @@ namespace DASPi{
 				std::cout << " r" << regionIndex
 						  << "_packed="
 						  << this->tpgydp_.RegionValidSize(regionIndex)
-						  << " r" << regionIndex
-						  << "_map="
-						  << localSphereMap->regions[regionIndex].size()
+							<< " r" << regionIndex
+							<< "_map="
+							<< localSphereMap->regions[regionIndex].size()
+							<< " r" << regionIndex
+							<< "_slots="
+							<< localSphereMap->bgrSlots[regionIndex].size()
 						  << " r" << regionIndex
 						  << "_bgr16_elems="
 						  << (
@@ -2389,23 +2357,29 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
                       << '\n';
             return false;
         }
-
-        auto& dst =
-            newMap->regions[region];
-
-        dst.clear();
-        dst.reserve(words / 2);
-
-        for (std::size_t i = 0; i < words; i += 2) {
-            const std::uint32_t packedEntry =
+		
+		auto& dst =
+			newMap->regions[region];
+		
+		auto& slotDst =
+			newMap->bgrSlots[region];
+		
+		dst.clear();
+		slotDst.clear();
+		
+		dst.reserve(words / 2);
+		slotDst.reserve(words / 2);
+		
+		for (std::size_t i = 0; i < words; i += 2) {
+			const std::uint32_t packedEntry =
 				ReadU32FromU16Words(payload, wordOffset + i);
-			
+		
 			const std::uint32_t outIndex =
 				UnpackSphereMapOutputIndex(packedEntry);
-			
+		
 			const SphereMapBayerChannel channel =
 				UnpackSphereMapBayerChannel(packedEntry);
-			
+		
 			if (outIndex >= newMap->outputSize) {
 				std::cerr << "[SphereMap RX] output index OOB:"
 						  << " region=" << region
@@ -2413,21 +2387,56 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
 						  << " outIndex=" << outIndex
 						  << " outputSize=" << newMap->outputSize
 						  << '\n';
+		
 				return false;
 			}
-			
-			if (channel == SphereMapBayerChannel::Unknown) {
+		
+			std::uint32_t channelOffset = 0;
+		
+			switch (channel) {
+			case SphereMapBayerChannel::Blue:
+				channelOffset = 0;
+				break;
+		
+			case SphereMapBayerChannel::Green:
+				channelOffset = 1;
+				break;
+		
+			case SphereMapBayerChannel::Red:
+				channelOffset = 2;
+				break;
+		
+			default:
 				std::cerr << "[SphereMap RX] invalid Bayer channel:"
 						  << " region=" << region
 						  << " localIndex=" << (i / 2)
 						  << " packedEntry=0x"
 						  << std::hex << packedEntry << std::dec
 						  << '\n';
+		
 				return false;
 			}
-			
+		
+			const std::uint64_t slot64 =
+				static_cast<std::uint64_t>(outIndex) * 3ull +
+				static_cast<std::uint64_t>(channelOffset);
+		
+			if (slot64 > std::numeric_limits<std::uint32_t>::max()) {
+				std::cerr << "[SphereMap RX] BGR slot overflow:"
+						  << " region=" << region
+						  << " localIndex=" << (i / 2)
+						  << " slot64=" << slot64
+						  << '\n';
+		
+				return false;
+			}
+		
 			dst.push_back(packedEntry);
-        }
+		
+			slotDst.push_back(
+				static_cast<std::uint32_t>(slot64)
+			);
+		}
 
         wordOffset += words;
     }
@@ -2454,11 +2463,14 @@ bool AperturePeer<FacetIndex>::StoreSphereMapFromPayload(
               << " size="
               << newMap->outputSize;
 
-    for (std::size_t r = 0; r < regionCount; ++r) {
-        std::cout << " r" << r
-                  << "_indices="
-                  << newMap->regions[r].size();
-    }
+	for (std::size_t r = 0; r < regionCount; ++r) {
+		std::cout << " r" << r
+				  << "_indices="
+				  << newMap->regions[r].size()
+				  << " r" << r
+				  << "_slots="
+				  << newMap->bgrSlots[r].size();
+	}
 
     std::cout << '\n';
 

@@ -82,12 +82,28 @@ class AperturePeer : public AperturePeerBase
     std::uint64_t bufferToFileCount_{0};
     
     mutable RxStats rxStats_;
+        
+    using SphereMapType =
+        std::array<
+            std::vector<std::uint32_t>,
+            verticesPerFaceN_ + 1
+        >;
     
-    using SphereMapType = std::array<std::vector<std::uint32_t>, verticesPerFaceN_ + 1>;
+    using SphereBgrSlotMapType =
+        std::array<
+            std::vector<std::uint32_t>,
+            verticesPerFaceN_ + 1
+        >;
     
     struct SphereMapSnapshot {
-        std::uint32_t outputWidth{static_cast<std::uint32_t>(sensorWidthValue_)};
-        std::uint32_t outputHeight{static_cast<std::uint32_t>(sensorHeightValue_)};
+        std::uint32_t outputWidth{
+            static_cast<std::uint32_t>(sensorWidthValue_)
+        };
+    
+        std::uint32_t outputHeight{
+            static_cast<std::uint32_t>(sensorHeightValue_)
+        };
+    
         std::uint32_t outputSize{
             static_cast<std::uint32_t>(
                 static_cast<std::size_t>(sensorWidthValue_) *
@@ -95,7 +111,28 @@ class AperturePeer : public AperturePeerBase
             )
         };
     
+        /*
+         * Original packed map entries:
+         *
+         *   bits  0..29 = output pixel index
+         *   bits 30..31 = Bayer channel
+         *
+         * Kept for diagnostics/debugging.
+         */
         SphereMapType regions{};
+    
+        /*
+         * Hot-path precomputed BGR16 slot:
+         *
+         *   slot = outputPixelIndex * 3 + channelOffset
+         *
+         * where channelOffset is:
+         *
+         *   B = 0
+         *   G = 1
+         *   R = 2
+         */
+        SphereBgrSlotMapType bgrSlots{};
     };
     
     mutable std::mutex sphereMapMutex_;
