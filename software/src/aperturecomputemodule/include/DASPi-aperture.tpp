@@ -632,7 +632,7 @@ void Aperture<FacetIndex, ModuleIndex>::QueueCameraRequests(bool isRequests){
         lastCamPrint = now;
     }
 
-    ProcessRequestImpl(request);
+    ProcessRequest(request);;
 }
 //void Aperture::RequestComplete(libcamera::Request *request){
     //std::cout << "[RequestComplete] req=" << request
@@ -1641,17 +1641,19 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
 
     for (std::size_t i = 0; i < regionCount_; ++i) {
         const auto valid = tpgydp.RegionValidSize(i);
-
+    
         regionSizes[i] =
             static_cast<uint32_t>(valid);
-
+    
         totalElems += valid;
-
-        std::cout << "[TX region] facet=" << FacetIndex
-                  << " region=" << i
-                  << " valid=" << valid
-                  << " capacity=" << tpgydp.RegionCapacity(i)
-                  << '\n';
+    
+        if constexpr (kApertureTxLogPerFrame) {
+            std::cout << "[TX region] facet=" << FacetIndex
+                      << " region=" << i
+                      << " valid=" << valid
+                      << " capacity=" << tpgydp.RegionCapacity(i)
+                      << '\n';
+        }
     }
 
     if (data.size() != totalElems) {

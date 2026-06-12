@@ -659,11 +659,33 @@ CameraView makeCameraView(const cv::Mat& image,
     //return bgr8;
 //}
 
+//bool tryGetLatestFrame(
+    //LiveFrameBuffer& src,
+    //cv::Mat& dst,
+    //std::uint64_t* generation = nullptr)
+//{
+    //std::scoped_lock lock(src.mutex);
+
+    //if (!src.hasFrame || src.latestBgr8.empty()) {
+        //return false;
+    //}
+
+    //dst = src.latestBgr8;
+
+    //if (generation != nullptr) {
+        //*generation = src.generation;
+    //}
+
+    //return true;
+//}
+
 void updateLatestFrame(LiveFrameBuffer& dst, const cv::Mat& frameBgr8)
 {
     std::scoped_lock lock(dst.mutex);
+
     dst.latestBgr8 = frameBgr8.clone();
     dst.hasFrame = true;
+    ++dst.generation;
 }
 
 bool HasUsefulProjectedSignal(const std::vector<std::uint16_t>& raw)
@@ -694,14 +716,61 @@ bool HasUsefulProjectedSignal(const std::vector<std::uint16_t>& raw)
     return nonZero >= kMinNonZeroPixels && maxValue >= kMinMaxValue;
 }
 
-bool tryGetLatestFrame(LiveFrameBuffer& src, cv::Mat& dst)
+//bool tryGetLatestFrame(LiveFrameBuffer& src, cv::Mat& dst)
+//{
+    //std::scoped_lock lock(src.mutex);
+    //if (!src.hasFrame || src.latestBgr8.empty()) {
+        //return false;
+    //}
+
+    //dst = src.latestBgr8.clone();
+    //return true;
+//}
+
+//bool tryGetLatestFrame(LiveFrameBuffer& src, cv::Mat& dst)
+//{
+    //std::scoped_lock lock(src.mutex);
+
+    //if (!src.hasFrame || src.latestBgr8.empty()) {
+        //return false;
+    //}
+
+    ///*
+     //* Shallow copy only.
+     //*
+     //* cv::Mat is reference-counted. This keeps the image data alive for the
+     //* caller without copying the whole frame. updateLatestFrame() replaces
+     //* latestBgr8 with a new Mat instead of modifying existing pixels in place.
+     //*/
+    //dst = src.latestBgr8;
+
+    //return true;
+//}
+
+bool tryGetLatestFrame(
+    LiveFrameBuffer& src,
+    cv::Mat& dst,
+    std::uint64_t* generation = nullptr)
 {
     std::scoped_lock lock(src.mutex);
+
     if (!src.hasFrame || src.latestBgr8.empty()) {
         return false;
     }
 
-    dst = src.latestBgr8.clone();
+    /*
+     * Shallow copy only.
+     *
+     * cv::Mat is reference-counted, so this does not copy the whole image.
+     * updateLatestFrame() replaces latestBgr8 with a new cloned Mat, so the
+     * old frame data remains alive while this shallow copy exists.
+     */
+    dst = src.latestBgr8;
+
+    if (generation != nullptr) {
+        *generation = src.generation;
+    }
+
     return true;
 }
 
@@ -2812,6 +2881,38 @@ void updateCameraImages(std::vector<CameraView>& cameras,
     //}
 //}
 
+bool haveNewPrimaryFrames(
+    std::vector<LiveCameraState>& liveCameras,
+    std::vector<std::uint64_t>& lastSeenPrimaryGenerations)
+{
+    if (lastSeenPrimaryGenerations.size() != liveCameras.size()) {
+        lastSeenPrimaryGenerations.assign(liveCameras.size(), 0);
+    }
+
+    bool anyNewPrimary = false;
+
+    for (std::size_t i = 0; i < liveCameras.size(); ++i) {
+        LiveCameraState& live = liveCameras[i];
+
+        if (live.localStreamIndex != 0) {
+            continue;
+        }
+
+        std::scoped_lock lock(live.frame.mutex);
+
+        if (!live.frame.hasFrame ||
+            live.frame.latestBgr8.empty()) {
+            continue;
+        }
+
+        if (live.frame.generation != lastSeenPrimaryGenerations[i]) {
+            lastSeenPrimaryGenerations[i] = live.frame.generation;
+            anyNewPrimary = true;
+        }
+    }
+
+    return anyNewPrimary;
+}
 
 bool haveAnyFrames(std::vector<LiveCameraState>& liveCameras)
 {
@@ -3138,11 +3239,16 @@ cv::Mat CompositePreprojectedFrames(
     std::vector<LiveCameraState>& liveCameras,
     cv::Mat* validMask)
 {
+    constexpr bool kVerboseAddCompositor = false;
+
+    if (validMask != nullptr) {
+        validMask->release();
+    }
+
     cv::Size panoSize;
     int panoType = -1;
 
-    cv::Mat accum;
-    cv::Mat outputMask;
+    cv::Mat pano;
 
     bool initialized = false;
     std::size_t usedStreams = 0;
@@ -3174,16 +3280,10 @@ cv::Mat CompositePreprojectedFrames(
             panoSize = frame.size();
             panoType = frame.type();
 
-            accum =
+            pano =
                 cv::Mat::zeros(
                     panoSize,
-                    CV_32SC3
-                );
-
-            outputMask =
-                cv::Mat::zeros(
-                    panoSize,
-                    CV_8UC1
+                    panoType
                 );
 
             initialized = true;
@@ -3200,92 +3300,45 @@ cv::Mat CompositePreprojectedFrames(
         }
 
         /*
-         * The frame is already preprojected.
+         * Fast saturated add.
          *
-         * After Patch B, overlap regions will already be linearly preweighted
-         * on the ApertureComputeModule. The ComputeModule should not do
-         * ownership, feathering, or normalization anymore.
+         * This avoids:
+         *   - CV_8UC3 -> CV_32SC3 conversion per stream
+         *   - 32-bit accumulator bandwidth
+         *   - final CV_32SC3 -> CV_8UC3 conversion
+         *
+         * This is correct when Aperture-side preweighting keeps summed pixels
+         * within 0..255. If seams are still full-strength, this can clip.
          */
-        cv::Mat frame32s;
-
-        frame.convertTo(
-            frame32s,
-            CV_32SC3
-        );
-
-        accum += frame32s;
-
-        /*
-         * Build output validity from projected non-black pixels.
-         * This is only for display/overlay validity, not blending.
-         */
-        cv::Mat gray;
-
-        cv::cvtColor(
+        cv::add(
+            pano,
             frame,
-            gray,
-            cv::COLOR_BGR2GRAY
+            pano
         );
 
-        cv::Mat srcMask =
-            gray > 0;
-
-        if (cv::countNonZero(srcMask) > 0) {
-            outputMask.setTo(
-                255,
-                srcMask
-            );
-
-            ++usedStreams;
-        }
+        ++usedStreams;
     }
 
     if (!initialized ||
-        usedStreams == 0 ||
-        cv::countNonZero(outputMask) == 0) {
-        if (validMask != nullptr) {
-            validMask->release();
-        }
-
+        usedStreams == 0) {
         return {};
     }
 
-    /*
-     * Debug only:
-     * Before Patch B, this may exceed 255 because overlap regions are still
-     * full-strength. After Aperture-side preweighting, maxAccum should normally
-     * stay close to 255 for properly complementary seams.
-     */
-    double minAccum = 0.0;
-    double maxAccum = 0.0;
+    if constexpr (kVerboseAddCompositor) {
+        double minValue = 0.0;
+        double maxValue = 0.0;
 
-    cv::minMaxLoc(
-        accum.reshape(1),
-        &minAccum,
-        &maxAccum
-    );
+        cv::minMaxLoc(
+            pano.reshape(1),
+            &minValue,
+            &maxValue
+        );
 
-    std::cout << "[add compositor]"
-              << " usedStreams=" << usedStreams
-              << " validPixels=" << cv::countNonZero(outputMask)
-              << " minAccum=" << minAccum
-              << " maxAccum=" << maxAccum
-              << '\n';
-
-    cv::Mat pano;
-
-    accum.convertTo(
-        pano,
-        CV_8UC3
-    );
-
-    pano.setTo(
-        cv::Scalar(0, 0, 0),
-        outputMask == 0
-    );
-
-    if (validMask != nullptr) {
-        *validMask = outputMask;
+        std::cout << "[add compositor]"
+                  << " usedStreams=" << usedStreams
+                  << " minValue=" << minValue
+                  << " maxValue=" << maxValue
+                  << '\n';
     }
 
     return pano;
@@ -3358,12 +3411,19 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
      *   Compute:
      *     receive packed raw pixels
      *     scatter into equirect buffers
-     *     convert scattered raw intensity to grayscale BGR
+     *     convert scattered raw intensity to BGR
      *     composite preprojected frames directly
      *
      * Set this to false to return to the legacy SphereStitcher path.
      */
     constexpr bool kUsePreprojectedSphereMap = true;
+
+    constexpr bool kVerboseStitchTiming = true;
+    constexpr bool kSaveDebugImagesEveryFrame = false;
+    [[maybe_unused]] constexpr bool kSaveOneShotDebugImages = true;
+    constexpr bool kSleepBetweenFrames = false;
+
+    using Clock = std::chrono::steady_clock;
 
     if (cameras.size() != configs.size() ||
         cameras.size() != liveCameras.size()) {
@@ -3380,7 +3440,7 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         }
     } else {
         /*
-         * Stage 1 does not use moduleFaceMasks because the frames have already
+         * Stage 1 does not use moduleFaceMasks because frames have already
          * been scattered into the global/equirect destination by AperturePeer.
          */
         (void)moduleFaceMasks;
@@ -3412,7 +3472,7 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
                   << forwardFaceIndex
                   << " dir=("
                   << rig.faces[static_cast<std::size_t>(forwardFaceIndex)]
-                        .lookDir.transpose()
+                         .lookDir.transpose()
                   << ")\n";
 
         stitcher =
@@ -3428,86 +3488,13 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         (void)rig;
     }
 
-    constexpr bool kVerboseStitchTiming = true;
-    constexpr bool kSaveDebugImagesEveryFrame = false;
-    [[maybe_unused]] constexpr bool kSaveOneShotDebugImages = true;
-    constexpr bool kSleepBetweenFrames = false;
-
-    using Clock = std::chrono::steady_clock;
-
-    uint64_t frameNumber = 0;
-
-    cv::namedWindow("Stitched Panorama", cv::WINDOW_NORMAL);
-    cv::resizeWindow("Stitched Panorama", 1200, 800);
-
-    [[maybe_unused]]
-    auto saveOneShotDebugImages = [&](const cv::Mat& sourceImage) {
-        static bool savedSource = false;
-
-        if (!savedSource && !sourceImage.empty()) {
-            cv::imwrite("/tmp/debug_camera0_source.png", sourceImage);
-            savedSource = true;
-        }
-    };
-    
-    [[maybe_unused]]
-    auto savePreprojectedDebugOnce =
-        [&](const cv::Mat& pano,
-            const cv::Mat& validMask)
-    {
-        static bool savedPreprojected = false;
-
-        if (savedPreprojected || pano.empty()) {
-            return;
-        }
-
-        const bool panoOk =
-            cv::imwrite(
-                "/tmp/debug_preprojected_pano.png",
-                pano
-            );
-
-        bool maskOk = true;
-
-        if (!validMask.empty()) {
-            maskOk =
-                cv::imwrite(
-                    "/tmp/debug_preprojected_valid_mask.png",
-                    validMask
-                );
-        }
-
-        std::cout << "[Stage1 debug]"
-                  << " saved_preprojected_pano="
-                  << panoOk
-                  << " saved_valid_mask="
-                  << maskOk
-                  << " pano="
-                  << pano.cols
-                  << "x"
-                  << pano.rows;
-
-        if (!validMask.empty()) {
-            std::cout << " validMask="
-                      << validMask.cols
-                      << "x"
-                      << validMask.rows
-                      << " nonzero="
-                      << cv::countNonZero(validMask);
-        }
-
-        std::cout << '\n';
-
-        savedPreprojected = true;
-    };
-
     auto ms = [](const auto a, const auto b) -> double {
         return std::chrono::duration<double, std::milli>(b - a).count();
     };
 
     struct StitchTimingStats {
-        uint64_t frames = 0;
-        uint64_t emptyPanoCount = 0;
+        std::uint64_t frames = 0;
+        std::uint64_t emptyPanoCount = 0;
 
         double waitMs = 0.0;
         double updateMs = 0.0;
@@ -3548,6 +3535,7 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         }
 
         const auto now = Clock::now();
+
         const double elapsed =
             std::chrono::duration<double>(now - stats.lastPrint).count();
 
@@ -3575,13 +3563,108 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         stats.reset(now);
     };
 
+    [[maybe_unused]]
+    auto saveOneShotDebugImages = [&](const cv::Mat& sourceImage) {
+        static bool savedSource = false;
+
+        if (savedSource || sourceImage.empty()) {
+            return;
+        }
+
+        cv::imwrite(
+            "/tmp/debug_camera0_source.png",
+            sourceImage
+        );
+
+        savedSource = true;
+    };
+
+    [[maybe_unused]]
+    auto savePreprojectedDebugOnce =
+        [&](const cv::Mat& pano,
+            const cv::Mat& validMask)
+    {
+        static bool savedPreprojected = false;
+
+        if (savedPreprojected || pano.empty()) {
+            return;
+        }
+
+        const bool panoOk =
+            cv::imwrite(
+                "/tmp/debug_preprojected_pano.png",
+                pano
+            );
+
+        bool maskOk = true;
+
+        if (!validMask.empty()) {
+            maskOk =
+                cv::imwrite(
+                    "/tmp/debug_preprojected_valid_mask.png",
+                    validMask
+                );
+        }
+
+        std::cout << "[Stage1 debug]"
+                  << " saved_preprojected_pano=" << panoOk
+                  << " saved_valid_mask=" << maskOk
+                  << " pano=" << pano.cols << "x" << pano.rows;
+
+        if (!validMask.empty()) {
+            std::cout << " validMask="
+                      << validMask.cols
+                      << "x"
+                      << validMask.rows;
+        }
+
+        std::cout << '\n';
+
+        savedPreprojected = true;
+    };
+
+    std::uint64_t frameNumber = 0;
+
+    std::vector<std::uint64_t> lastSeenPrimaryGenerations(
+        liveCameras.size(),
+        0
+    );
+
+    cv::namedWindow(
+        "Stitched Panorama",
+        cv::WINDOW_NORMAL
+    );
+
+    cv::resizeWindow(
+        "Stitched Panorama",
+        1200,
+        800
+    );
+
     for (;;) {
         const auto tLoopStart = Clock::now();
 
-        if (!haveAnyFrames(liveCameras)) {
-            std::this_thread::sleep_for(kNoFrameDelay);
-            maybePrintTiming();
-            continue;
+        /*
+         * In the preprojected fast path, only composite when at least one
+         * stream has a newer generation. Otherwise the display loop can redraw
+         * the same latest frames at 60+ fps and steal CPU from RX threads.
+         */
+        if constexpr (kUsePreprojectedSphereMap) {
+            if (!haveNewPrimaryFrames(liveCameras, lastSeenPrimaryGenerations)) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(1)
+                );
+            
+                maybePrintTiming();
+                continue;
+            }
+        } else {
+            if (!haveAnyFrames(liveCameras)) {
+                std::this_thread::sleep_for(kNoFrameDelay);
+
+                maybePrintTiming();
+                continue;
+            }
         }
 
         const auto tHaveFrames = Clock::now();
@@ -3679,7 +3762,8 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
 
             maybePrintTiming();
 
-            std::cerr << "[RunStitchLoop] composite/stitch returned empty pano\n";
+            std::cerr
+                << "[RunStitchLoop] composite/stitch returned empty pano\n";
 
             if constexpr (kSleepBetweenFrames) {
                 std::this_thread::sleep_for(kStitchDelay);
@@ -3689,10 +3773,16 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
         }
 
         if constexpr (kSaveDebugImagesEveryFrame) {
-            cv::imwrite("panorama.png", pano);
+            cv::imwrite(
+                "panorama.png",
+                pano
+            );
 
             if (!validMask.empty()) {
-                cv::imwrite("valid_mask.png", validMask);
+                cv::imwrite(
+                    "valid_mask.png",
+                    validMask
+                );
             }
         }
 
