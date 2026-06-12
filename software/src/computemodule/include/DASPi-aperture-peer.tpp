@@ -98,784 +98,1220 @@ namespace DASPi{
 	    //return true;
 	//}        
 	     
-template<unsigned int FacetIndex>
-bool AperturePeer<FacetIndex>::RunFrameLoop()
-{
-    constexpr bool kVerboseRunFrameLoopTiming = true;
-    constexpr bool kWriteBuffersToFile = false;
-
-    constexpr std::size_t regionCount =
-        verticesPerFaceN_ + 1;
-
-    static_assert(
-        NUM_REGIONS == regionCount,
-        "NUM_REGIONS must match verticesPerFaceN_ + 1"
-    );
-
-    using Clock = std::chrono::steady_clock;
-
-    const auto tStart = Clock::now();
-
-    FrameHeader frameHeader{};
-    std::vector<uint16_t> maskedBuffer;
-
-    UDPClnt::EpollData epollData;
-
-    if (!frameClnt_.InitEpollForSrvUDPPackets(epollData)) {
-        ++rxStats_.rxFail;
-        MaybePrintRxSummary();
-        return false;
-    }
-
-    const auto tEpollInitDone = Clock::now();
-
-    auto finalizeEpoll = [&]() -> bool {
-        if (!frameClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
-            ++rxStats_.rxFail;
-            MaybePrintRxSummary();
-            return false;
-        }
-
-        return true;
-    };
-
-    const bool receiveOk =
-        frameClnt_.ReceiveAndReassembleFramePacket(
-            maskedBuffer,
-            frameHeader
-        );
-
-    if (receiveOk &&
-        frameHeader.gainMsg_.header.type == MessageType::SphereMap) {
-
-        const bool stored =
-            StoreSphereMapFromPayload(maskedBuffer, frameHeader);
-
-        finalizeEpoll();
-
-        return stored;
-    }
-
-    const auto tReceiveDone = Clock::now();
-
-    const auto counters =
-        frameClnt_.ConsumeRxCounters();
-
-    rxStats_.rxDropOld += counters.dropOld;
-    rxStats_.rxTimeout += counters.timeout;
-
-    if (receiveOk) {
-        ++rxStats_.rxComplete;
-    } else {
-        ++rxStats_.rxFail;
-    }
-
-    MaybePrintRxSummary();
-
-    if (!receiveOk) {
-        finalizeEpoll();
-        return false;
-    }
-
-    if (!finalizeEpoll()) {
-        return false;
-    }
-
-    const auto tEpollFinalizeDone = Clock::now();
-
-    auto ms = [](const auto a, const auto b) {
-        return std::chrono::duration<double, std::milli>(b - a).count();
-    };
-
-    if constexpr (kRxOnlyBenchmark) {
-        if constexpr (kVerboseRunFrameLoopTiming) {
-            static std::mutex timingMutex;
-
-            struct TimingStats {
-                uint64_t frames = 0;
-                double epollInitMs = 0.0;
-                double receiveMs = 0.0;
-                double epollFinalizeMs = 0.0;
-                double totalMs = 0.0;
-                Clock::time_point lastPrint = Clock::now();
-            };
-
-            static std::map<const void*, TimingStats> statsByPeer;
-
-            std::lock_guard<std::mutex> lock(timingMutex);
-
-            auto& s = statsByPeer[this];
-
-            ++s.frames;
-            s.epollInitMs += ms(tStart, tEpollInitDone);
-            s.receiveMs += ms(tEpollInitDone, tReceiveDone);
-            s.epollFinalizeMs += ms(tReceiveDone, tEpollFinalizeDone);
-            s.totalMs += ms(tStart, tEpollFinalizeDone);
-
-            const auto now = Clock::now();
-            const double elapsed =
-                std::chrono::duration<double>(now - s.lastPrint).count();
-
-            if (elapsed >= 1.0) {
-                std::cout << "[RunFrameLoop timing] " << peerLabel_
-                          << " frames=" << s.frames
-                          << " epoll_init_ms=" << s.epollInitMs / s.frames
-                          << " receive_ms=" << s.receiveMs / s.frames
-                          << " epoll_finalize_ms="
-                          << s.epollFinalizeMs / s.frames
-                          << " unpack_ms=0"
-                          << " scatter_ms=0"
-                          << " publish_ms=0"
-                          << " buffer_file_ms=0"
-                          << " total_ms=" << s.totalMs / s.frames
-                          << '\n';
-
-                s.frames = 0;
-                s.epollInitMs = 0.0;
-                s.receiveMs = 0.0;
-                s.epollFinalizeMs = 0.0;
-                s.totalMs = 0.0;
-                s.lastPrint = now;
-            }
-        }
-
-        return true;
-    }
-
-    /*
-     * Normal RX processing.
-     *
-     * Wire layout:
-     *
-     *   region 0      = non-overlap / owning facet region
-     *   regions 1..N  = overlap regions
-     *
-     * RX mirrors TX:
-     *
-     *   packed UDP payload -> tpgydp_[region]
-     *
-     * Then the startup SphereMap scatters:
-     *
-     *   tpgydp_[region][i] -> buffer_[region][sphereMap_[region][i]]
-     */
-    this->tpgydp_.ResetValidSizes();
-
-    std::size_t offset = 0;
-
-    for (std::size_t regionIndex = 0;
-         regionIndex < regionCount;
-         ++regionIndex) {
-
-        const std::size_t count =
-            frameHeader.regionSizes_[regionIndex];
-
-        if (count > this->tpgydp_[regionIndex].size()) {
-            std::cerr << "[RunFrameLoop] region overflow:"
-                      << " regionIndex=" << regionIndex
-                      << " count=" << count
-                      << " capacity=" << this->tpgydp_[regionIndex].size()
-                      << '\n';
-
-            ++rxStats_.rxFail;
-            MaybePrintRxSummary();
-            return false;
-        }
-
-        if (offset + count > maskedBuffer.size()) {
-            std::cerr << "[RunFrameLoop] packed payload overflow:"
-                      << " regionIndex=" << regionIndex
-                      << " offset=" << offset
-                      << " count=" << count
-                      << " maskedBuffer.size()=" << maskedBuffer.size()
-                      << '\n';
-
-            ++rxStats_.rxFail;
-            MaybePrintRxSummary();
-            return false;
-        }
-
-        if (count != 0) {
-            std::memcpy(
-                this->tpgydp_[regionIndex].data(),
-                maskedBuffer.data() + offset,
-                count * sizeof(uint16_t)
-            );
-        }
-
-        this->tpgydp_.SetRegionValidSize(regionIndex, count);
-
-        offset += count;
-    }
-
-    if (offset != maskedBuffer.size()) {
-        std::cerr << "[RunFrameLoop] payload size mismatch after unpack:"
-                  << " offset=" << offset
-                  << " maskedBuffer.size()=" << maskedBuffer.size()
-                  << '\n';
-
-        ++rxStats_.rxFail;
-        MaybePrintRxSummary();
-        return false;
-    }
-
-    /*
-     * Topology is still needed for region-0 Bayer statistics.
-     * It is no longer used for full-frame unmasking in the hot path.
-     */
-    using FacetTopologyType =
-        typename tpgy_t::template FacetTopology_t<FacetIndex>;
-
-    using OverlapTopologyType =
-        typename tpgy_t::template OverlapTopology_t<FacetIndex>;
-
-    using NonOverlapFacetTopologyType =
-        typename OverlapTopologyType::NonOverlapFacetTopology_t;
-
-    using GlobalLinearTopologyType =
-        typename OverlapTopologyType::GlobalLinearTopology_t;
-
-    static_assert(
-        std::is_base_of_v<FacetTopologyType, tpgy_t>,
-        "FacetTopologyType is not a base of tpgy_t"
-    );
-
-    static_assert(
-        std::is_base_of_v<OverlapTopologyType, FacetTopologyType>,
-        "OverlapTopologyType is not a base of FacetTopologyType"
-    );
-
-    static_assert(
-        std::is_base_of_v<NonOverlapFacetTopologyType, OverlapTopologyType>,
-        "NonOverlapFacetTopologyType is not a base of OverlapTopologyType"
-    );
-
-    auto& facetTopology =
-        static_cast<FacetTopologyType&>(this->tpgy_);
-
-    auto& overlapTopology =
-        static_cast<OverlapTopologyType&>(facetTopology);
-
-    auto& nonOverlapTopology =
-        static_cast<NonOverlapFacetTopologyType&>(overlapTopology);
-
-    auto computeRegion0BayerStats =
-        [&](std::span<const uint16_t> region0Data)
-            -> detail::Region0BayerStats
-    {
-        detail::Region0BayerStats stats{};
-
-        const auto* indexMap =
-            nonOverlapTopology.indexLinearMax_.get();
-
-        if (indexMap == nullptr) {
-            std::cerr << "[RunFrameLoop] region 0 index map is null\n";
-            return stats;
-        }
-
-        const std::size_t sampleCount =
-            std::min(region0Data.size(), indexMap->size());
-
-        if (sampleCount != region0Data.size()) {
-            std::cerr << "[RunFrameLoop] region 0 WB sample size mismatch:"
-                      << " data=" << region0Data.size()
-                      << " indexMap=" << indexMap->size()
-                      << " using=" << sampleCount
-                      << '\n';
-        }
-
-        auto validAppliedGain = [](float gain) -> double {
-            if (std::isfinite(gain) && gain > 0.001f && gain < 64.0f) {
-                return static_cast<double>(gain);
-            }
-
-            return 1.0;
-        };
-
-        const double currentRGain =
-            validAppliedGain(frameHeader.gainMsg_.r_gain_apply);
-
-        const double currentBGain =
-            validAppliedGain(frameHeader.gainMsg_.b_gain_apply);
-
-        auto addRed01 = [&](double value01) {
-            if (!std::isfinite(value01)) {
-                return;
-            }
-
-            stats.rSum01 += std::clamp(value01, 0.0, 1.0);
-            ++stats.rCount;
-        };
-
-        auto addGreen01 = [&](double value01) {
-            if (!std::isfinite(value01)) {
-                return;
-            }
-
-            stats.gSum01 += std::clamp(value01, 0.0, 1.0);
-            ++stats.gCount;
-        };
-
-        auto addBlue01 = [&](double value01) {
-            if (!std::isfinite(value01)) {
-                return;
-            }
-
-            stats.bSum01 += std::clamp(value01, 0.0, 1.0);
-            ++stats.bCount;
-        };
-
-        for (std::size_t i = 0; i < sampleCount; ++i) {
-            const uint16_t v = region0Data[i];
-
-            if (v <= 16 || v >= 65000) {
-                continue;
-            }
-
-            typename GlobalLinearTopologyType::Index globalIndex{
-                (*indexMap)[i].value()
-            };
-
-            typename GlobalLinearTopologyType::Point globalPt{
-                GlobalLinearTopologyType::Transform(globalIndex)
-            };
-
-            const bool evenRow = (globalPt.y_ & 1) == 0;
-            const bool evenCol = (globalPt.x_ & 1) == 0;
-
-            const double received01 =
-                static_cast<double>(v) / 65535.0;
-
-            if (evenRow) {
-                if (evenCol) {
-                    addBlue01(received01 / currentBGain);
-                } else {
-                    addGreen01(received01);
-                }
-            } else {
-                if (evenCol) {
-                    addGreen01(received01);
-                } else {
-                    addRed01(received01 / currentRGain);
-                }
-            }
-        }
-
-        static std::atomic<uint64_t> statsPrintCount{0};
-
-        if ((statsPrintCount++ % 120) == 0) {
-            std::cout << "[Region0 WB stats]"
-                      << " peer=" << peerLabel_
-                      << " frame_id=" << frameHeader.gainMsg_.frame_id
-                      << " rCount=" << stats.rCount
-                      << " gCount=" << stats.gCount
-                      << " bCount=" << stats.bCount
-                      << " prev_r_apply=" << currentRGain
-                      << " prev_b_apply=" << currentBGain
-                      << '\n';
-        }
-
-        return stats;
-    };
-
-    {
-        GainMsg gainMsg = frameHeader.gainMsg_;
-
-        gainMsg.header.type = MessageType::GainMsg;
-        gainMsg.header.version = 1;
-
-        const detail::Region0BayerStats region0Stats =
-            computeRegion0BayerStats(
-                std::span<const uint16_t>(
-                    this->tpgydp_[0].data(),
-                    this->tpgydp_.RegionValidSize(0)
-                )
-            );
-
-        gainMsg.mean_brightness =
-            region0Stats.meanBrightness01();
-
-        if (gainMsg.target_brightness <= 0.0f) {
-            gainMsg.target_brightness = 0.35f;
-        }
-
-        const detail::Region0WhiteBalanceGains wbGains =
-            detail::Region0WhiteBalanceAggregatorInstance().Update(
-                this,
-                gainMsg.frame_id,
-                region0Stats
-            );
-
-        if (wbGains.valid) {
-            gainMsg.r_gain_apply = wbGains.rGainApply;
-            gainMsg.b_gain_apply = wbGains.bGainApply;
-        }
-
-        static std::atomic<uint64_t> wbPrintCount{0};
-
-        if ((wbPrintCount++ % 60) == 0) {
-            std::cout << "[Region0 aggregate WB]"
-                      << " peer=" << peerLabel_
-                      << " frame_id=" << gainMsg.frame_id
-                      << " mean=" << gainMsg.mean_brightness
-                      << " region0s=" << wbGains.contributingRegion0s
-                      << " r_apply=" << gainMsg.r_gain_apply
-                      << " b_apply=" << gainMsg.b_gain_apply
-                      << '\n';
-        }
-
-        HandleGainMsg(gainMsg);
-    }
-
-    const auto tUnpackDone = Clock::now();
-
-    /*
-     * Stage 2 SphereMap scatter.
-     *
-     * The SphereMap entry is now packed as:
-     *
-     *   bits  0..29 = equirect output pixel index
-     *   bits 30..31 = Bayer channel
-     *
-     * Output buffer layout is BGR16 interleaved:
-     *
-     *   [B0, G0, R0, B1, G1, R1, ...]
-     *
-     * This keeps UDP frame payloads unchanged. Only the startup map now
-     * tells Compute which color channel each raw Bayer sample belongs to.
-     */
-    std::array<std::vector<uint16_t>, regionCount> newBuffers;
-
-    std::shared_ptr<const SphereMapSnapshot> localSphereMap;
-    {
-        std::scoped_lock lock(sphereMapMutex_);
-        localSphereMap = sphereMap_;
-    }
-
-    if (!localSphereMap) {
-        std::cerr << "[RunFrameLoop] no SphereMap received yet for "
-                  << peerLabel_
-                  << "; dropping frame_id="
-                  << frameHeader.gainMsg_.frame_id
-                  << '\n';
-
-        ++rxStats_.rxFail;
-        MaybePrintRxSummary();
-        return false;
-    }
-
-    const std::size_t scatterOutputPixels =
-        static_cast<std::size_t>(localSphereMap->outputSize);
-
-    const std::size_t scatterOutputElems =
-        scatterOutputPixels * 3u;
-
-    auto scatterMappedRegionToBuffer =
-        [&](std::size_t regionIndex) -> bool
-    {
-        const std::size_t validSize =
-            this->tpgydp_.RegionValidSize(regionIndex);
-
-        const auto& map =
-            localSphereMap->regions[regionIndex];
-
-        if (map.size() != validSize) {
-            std::cerr << "[RunFrameLoop] SphereMap/data size mismatch:"
-                      << " region=" << regionIndex
-                      << " map.size()=" << map.size()
-                      << " validSize=" << validSize
-                      << " frame_id=" << frameHeader.gainMsg_.frame_id
-                      << '\n';
-
-            return false;
-        }
-
-        auto& dst =
-            newBuffers[regionIndex];
-
-        dst.assign(scatterOutputElems, uint16_t{0});
-
-        const uint16_t* src =
-            this->tpgydp_[regionIndex].data();
-
-        /*
-         * Stage 3c:
-         *
-         * The old scatter rule used:
-         *
-         *     dstSample = std::max(dstSample, src[i]);
-         *
-         * That avoids over-brightening, but it throws away samples whenever
-         * multiple source pixels land in the same equirect/channel slot.
-         *
-         * Use an intra-region averaged scatter instead:
-         *
-         *     sum[channel-slot]   += src[i]
-         *     count[channel-slot] += 1
-         *     dst[channel-slot]    = round(sum / count)
-         *
-         * The output buffer remains BGR16 interleaved, so the rest of the
-         * pipeline does not need to change.
-         */
-        static thread_local std::vector<std::uint32_t> scatterSums;
-        static thread_local std::vector<std::uint32_t> scatterCounts;
-        static thread_local std::vector<std::size_t> touchedSlots;
-
-        if (scatterSums.size() != scatterOutputElems) {
-            scatterSums.assign(scatterOutputElems, std::uint32_t{0});
-            scatterCounts.assign(scatterOutputElems, std::uint32_t{0});
-        }
-
-        touchedSlots.clear();
-        touchedSlots.reserve(validSize);
-
-        auto resetTouchedSlots = [&]() {
-            for (const std::size_t slot : touchedSlots) {
-                scatterSums[slot] = 0;
-                scatterCounts[slot] = 0;
-            }
-
-            touchedSlots.clear();
-        };
-
-        for (std::size_t i = 0; i < validSize; ++i) {
-            const std::uint32_t packedEntry =
-                map[i];
-
-            const std::uint32_t outIndex =
-                UnpackSphereMapOutputIndex(packedEntry);
-
-            const SphereMapBayerChannel channel =
-                UnpackSphereMapBayerChannel(packedEntry);
-
-            if (outIndex >= scatterOutputPixels) {
-                std::cerr << "[RunFrameLoop] SphereMap output index OOB:"
-                          << " region=" << regionIndex
-                          << " i=" << i
-                          << " outIndex=" << outIndex
-                          << " outputPixels=" << scatterOutputPixels
-                          << " frame_id=" << frameHeader.gainMsg_.frame_id
-                          << '\n';
-
-                resetTouchedSlots();
-                return false;
-            }
-
-            const std::size_t base =
-                static_cast<std::size_t>(outIndex) * 3u;
-
-            std::size_t channelOffset = 0;
-
-            switch (channel) {
-            case SphereMapBayerChannel::Blue:
-                channelOffset = 0; // B
-                break;
-
-            case SphereMapBayerChannel::Green:
-                channelOffset = 1; // G
-                break;
-
-            case SphereMapBayerChannel::Red:
-                channelOffset = 2; // R
-                break;
-
-            default:
-                std::cerr << "[RunFrameLoop] invalid Bayer channel:"
-                          << " region=" << regionIndex
-                          << " i=" << i
-                          << " packedEntry=0x"
-                          << std::hex << packedEntry << std::dec
-                          << '\n';
-
-                resetTouchedSlots();
-                return false;
-            }
-
-            const std::size_t slot =
-                base + channelOffset;
-
-            if (scatterCounts[slot] == 0) {
-                touchedSlots.push_back(slot);
-            }
-
-            scatterSums[slot] +=
-                static_cast<std::uint32_t>(src[i]);
-
-            ++scatterCounts[slot];
-        }
-
-        for (const std::size_t slot : touchedSlots) {
-            const std::uint32_t count =
-                scatterCounts[slot];
-
-            if (count == 0) {
-                continue;
-            }
-
-            const std::uint32_t average =
-                (scatterSums[slot] + (count / 2u)) / count;
-
-            dst[slot] =
-                static_cast<std::uint16_t>(
-                    std::min<std::uint32_t>(average, 65535u)
-                );
-        }
-
-        resetTouchedSlots();
-
-        return true;
-    };
-
-    for (std::size_t regionIndex = 0;
-         regionIndex < regionCount;
-         ++regionIndex) {
-
-        if (!scatterMappedRegionToBuffer(regionIndex)) {
-            ++rxStats_.rxFail;
-            MaybePrintRxSummary();
-            return false;
-        }
-    }
-
-    static std::once_flag printedRegionSizesOnce;
-
-    std::call_once(printedRegionSizesOnce, [&]() {
-        std::cout << "[RX map-scatter region sizes] "
-                  << peerLabel_
-                  << " output="
-                  << localSphereMap->outputWidth
-                  << "x"
-                  << localSphereMap->outputHeight
-                  << " pixels="
-                  << localSphereMap->outputSize
-                  << " bgr16_elems="
-                  << scatterOutputElems;
-
-        for (std::size_t regionIndex = 0;
-             regionIndex < regionCount;
-             ++regionIndex) {
-
-            std::cout << " r" << regionIndex
-                      << "_packed="
-                      << this->tpgydp_.RegionValidSize(regionIndex)
-                      << " r" << regionIndex
-                      << "_map="
-                      << localSphereMap->regions[regionIndex].size()
-                      << " r" << regionIndex
-                      << "_bgr16_elems="
-                      << newBuffers[regionIndex].size();
-        }
-
-        std::cout << '\n';
-    });
-
-    const auto tScatterDone = Clock::now();
-
-	std::array<
-		std::shared_ptr<const std::vector<uint16_t>>,
-		regionCount
-	> publishedBuffers{};
+	template<unsigned int FacetIndex>
+	bool AperturePeer<FacetIndex>::RunFrameLoop()
+	{
+		constexpr bool kVerboseRunFrameLoopTiming = true;
+		constexpr bool kWriteBuffersToFile = false;
 	
-	for (std::size_t regionIndex = 0;
-		 regionIndex < regionCount;
-		 ++regionIndex) {
-		auto writable =
-			std::make_shared<std::vector<uint16_t>>(
-				std::move(newBuffers[regionIndex])
+		constexpr std::size_t regionCount =
+			verticesPerFaceN_ + 1;
+	
+		static_assert(
+			NUM_REGIONS == regionCount,
+			"NUM_REGIONS must match verticesPerFaceN_ + 1"
+		);
+	
+		using Clock = std::chrono::steady_clock;
+	
+		auto ms = [](const auto a, const auto b) -> double {
+			return std::chrono::duration<double, std::milli>(
+				b - a
+			).count();
+		};
+	
+		const auto tStart =
+			Clock::now();
+	
+		FrameHeader frameHeader{};
+		std::vector<uint16_t> maskedBuffer;
+	
+		UDPClnt::EpollData epollData;
+	
+		if (!frameClnt_.InitEpollForSrvUDPPackets(epollData)) {
+			++rxStats_.rxFail;
+			MaybePrintRxSummary();
+			return false;
+		}
+	
+		const auto tEpollInitDone =
+			Clock::now();
+	
+		auto finalizeEpoll = [&]() -> bool {
+			if (!frameClnt_.FinalizeEpollForSrvUDPPackets(epollData)) {
+				++rxStats_.rxFail;
+				MaybePrintRxSummary();
+				return false;
+			}
+	
+			return true;
+		};
+	
+		const bool receiveOk =
+			frameClnt_.ReceiveAndReassembleFramePacket(
+				maskedBuffer,
+				frameHeader
 			);
 	
-		publishedBuffers[regionIndex] =
-			std::move(writable);
-	}
+		if (receiveOk &&
+			frameHeader.gainMsg_.header.type == MessageType::SphereMap) {
+			const bool stored =
+				StoreSphereMapFromPayload(
+					maskedBuffer,
+					frameHeader
+				);
 	
-	{
-		std::scoped_lock lock(bufferMutex_);
-		this->buffer_ = std::move(publishedBuffers);
+			finalizeEpoll();
+	
+			return stored;
+		}
+	
+		const auto tReceiveDone =
+			Clock::now();
+	
+		const auto counters =
+			frameClnt_.ConsumeRxCounters();
+	
+		rxStats_.rxDropOld += counters.dropOld;
+		rxStats_.rxTimeout += counters.timeout;
+	
+		if (receiveOk) {
+			++rxStats_.rxComplete;
+		} else {
+			++rxStats_.rxFail;
+		}
+	
+		MaybePrintRxSummary();
+	
+		if (!receiveOk) {
+			finalizeEpoll();
+			return false;
+		}
+	
+		if (!finalizeEpoll()) {
+			return false;
+		}
+	
+		const auto tEpollFinalizeDone =
+			Clock::now();
+	
+		if constexpr (kRxOnlyBenchmark) {
+			if constexpr (kVerboseRunFrameLoopTiming) {
+				static std::mutex timingMutex;
+	
+				struct TimingStats {
+					std::uint64_t frames = 0;
+	
+					double epollInitMs = 0.0;
+					double receiveMs = 0.0;
+					double epollFinalizeMs = 0.0;
+					double totalMs = 0.0;
+	
+					Clock::time_point lastPrint =
+						Clock::now();
+				};
+	
+				static std::map<const void*, TimingStats> statsByPeer;
+	
+				std::lock_guard<std::mutex> lock(timingMutex);
+	
+				auto& s =
+					statsByPeer[this];
+	
+				++s.frames;
+	
+				s.epollInitMs +=
+					ms(tStart, tEpollInitDone);
+	
+				s.receiveMs +=
+					ms(tEpollInitDone, tReceiveDone);
+	
+				s.epollFinalizeMs +=
+					ms(tReceiveDone, tEpollFinalizeDone);
+	
+				s.totalMs +=
+					ms(tStart, tEpollFinalizeDone);
+	
+				const auto now =
+					Clock::now();
+	
+				const double elapsed =
+					std::chrono::duration<double>(
+						now - s.lastPrint
+					).count();
+	
+				if (elapsed >= 1.0) {
+					std::cout << "[RunFrameLoop timing] " << peerLabel_
+							  << " frames=" << s.frames
+							  << " epoll_init_ms=" << s.epollInitMs / s.frames
+							  << " receive_ms=" << s.receiveMs / s.frames
+							  << " epoll_finalize_ms="
+							  << s.epollFinalizeMs / s.frames
+							  << " unpack_ms=0"
+							  << " scatter_ms=0"
+							  << " publish_ms=0"
+							  << " buffer_file_ms=0"
+							  << " total_ms=" << s.totalMs / s.frames
+							  << '\n';
+	
+					s.frames = 0;
+					s.epollInitMs = 0.0;
+					s.receiveMs = 0.0;
+					s.epollFinalizeMs = 0.0;
+					s.totalMs = 0.0;
+					s.lastPrint = now;
+				}
+			}
+	
+			return true;
+		}
+	
+		/*
+		 * Normal RX processing.
+		 *
+		 * Wire layout:
+		 *
+		 *   region 0      = non-overlap / owning facet region
+		 *   regions 1..N  = overlap regions
+		 *
+		 * RX mirrors TX:
+		 *
+		 *   packed UDP payload -> tpgydp_[region]
+		 *
+		 * Then the startup SphereMap scatters:
+		 *
+		 *   tpgydp_[region][i] -> buffer_[region][sphereMap_[region][i]]
+		 */
+		this->tpgydp_.ResetValidSizes();
+	
+		std::size_t offset = 0;
+	
+		for (std::size_t regionIndex = 0;
+			 regionIndex < regionCount;
+			 ++regionIndex) {
+			const std::size_t count =
+				frameHeader.regionSizes_[regionIndex];
+	
+			if (count > this->tpgydp_[regionIndex].size()) {
+				std::cerr << "[RunFrameLoop] region overflow:"
+						  << " regionIndex=" << regionIndex
+						  << " count=" << count
+						  << " capacity="
+						  << this->tpgydp_[regionIndex].size()
+						  << '\n';
+	
+				++rxStats_.rxFail;
+				MaybePrintRxSummary();
+				return false;
+			}
+	
+			if (offset + count > maskedBuffer.size()) {
+				std::cerr << "[RunFrameLoop] packed payload overflow:"
+						  << " regionIndex=" << regionIndex
+						  << " offset=" << offset
+						  << " count=" << count
+						  << " maskedBuffer.size()="
+						  << maskedBuffer.size()
+						  << '\n';
+	
+				++rxStats_.rxFail;
+				MaybePrintRxSummary();
+				return false;
+			}
+	
+			if (count != 0) {
+				std::memcpy(
+					this->tpgydp_[regionIndex].data(),
+					maskedBuffer.data() + offset,
+					count * sizeof(uint16_t)
+				);
+			}
+	
+			this->tpgydp_.SetRegionValidSize(
+				regionIndex,
+				count
+			);
+	
+			offset += count;
+		}
+	
+		if (offset != maskedBuffer.size()) {
+			std::cerr << "[RunFrameLoop] payload size mismatch after unpack:"
+					  << " offset=" << offset
+					  << " maskedBuffer.size()=" << maskedBuffer.size()
+					  << '\n';
+	
+			++rxStats_.rxFail;
+			MaybePrintRxSummary();
+			return false;
+		}
+	
+		/*
+		 * Topology is still needed for region-0 Bayer statistics.
+		 * It is no longer used for full-frame unmasking in the hot path.
+		 */
+		using FacetTopologyType =
+			typename tpgy_t::template FacetTopology_t<FacetIndex>;
+	
+		using OverlapTopologyType =
+			typename tpgy_t::template OverlapTopology_t<FacetIndex>;
+	
+		using NonOverlapFacetTopologyType =
+			typename OverlapTopologyType::NonOverlapFacetTopology_t;
+	
+		using GlobalLinearTopologyType =
+			typename OverlapTopologyType::GlobalLinearTopology_t;
+	
+		static_assert(
+			std::is_base_of_v<FacetTopologyType, tpgy_t>,
+			"FacetTopologyType is not a base of tpgy_t"
+		);
+	
+		static_assert(
+			std::is_base_of_v<OverlapTopologyType, FacetTopologyType>,
+			"OverlapTopologyType is not a base of FacetTopologyType"
+		);
+	
+		static_assert(
+			std::is_base_of_v<NonOverlapFacetTopologyType, OverlapTopologyType>,
+			"NonOverlapFacetTopologyType is not a base of OverlapTopologyType"
+		);
+	
+		auto& facetTopology =
+			static_cast<FacetTopologyType&>(this->tpgy_);
+	
+		auto& overlapTopology =
+			static_cast<OverlapTopologyType&>(facetTopology);
+	
+		auto& nonOverlapTopology =
+			static_cast<NonOverlapFacetTopologyType&>(overlapTopology);
+	
+		auto computeRegion0BayerStats =
+			[&](std::span<const uint16_t> region0Data)
+				-> detail::Region0BayerStats
+		{
+			detail::Region0BayerStats stats{};
+	
+			const auto* indexMap =
+				nonOverlapTopology.indexLinearMax_.get();
+	
+			if (indexMap == nullptr) {
+				std::cerr << "[RunFrameLoop] region 0 index map is null\n";
+				return stats;
+			}
+	
+			const std::size_t sampleCount =
+				std::min(
+					region0Data.size(),
+					indexMap->size()
+				);
+	
+			if (sampleCount != region0Data.size()) {
+				std::cerr << "[RunFrameLoop] region 0 WB sample size mismatch:"
+						  << " data=" << region0Data.size()
+						  << " indexMap=" << indexMap->size()
+						  << " using=" << sampleCount
+						  << '\n';
+			}
+	
+			auto validAppliedGain = [](float gain) -> double {
+				if (std::isfinite(gain) &&
+					gain > 0.001f &&
+					gain < 64.0f) {
+					return static_cast<double>(gain);
+				}
+	
+				return 1.0;
+			};
+	
+			const double currentRGain =
+				validAppliedGain(
+					frameHeader.gainMsg_.r_gain_apply
+				);
+	
+			const double currentBGain =
+				validAppliedGain(
+					frameHeader.gainMsg_.b_gain_apply
+				);
+	
+			auto addRed01 = [&](double value01) {
+				if (!std::isfinite(value01)) {
+					return;
+				}
+	
+				stats.rSum01 +=
+					std::clamp(value01, 0.0, 1.0);
+	
+				++stats.rCount;
+			};
+	
+			auto addGreen01 = [&](double value01) {
+				if (!std::isfinite(value01)) {
+					return;
+				}
+	
+				stats.gSum01 +=
+					std::clamp(value01, 0.0, 1.0);
+	
+				++stats.gCount;
+			};
+	
+			auto addBlue01 = [&](double value01) {
+				if (!std::isfinite(value01)) {
+					return;
+				}
+	
+				stats.bSum01 +=
+					std::clamp(value01, 0.0, 1.0);
+	
+				++stats.bCount;
+			};
+	
+			for (std::size_t i = 0;
+				 i < sampleCount;
+				 ++i) {
+				const uint16_t v =
+					region0Data[i];
+	
+				if (v <= 16 || v >= 65000) {
+					continue;
+				}
+	
+				typename GlobalLinearTopologyType::Index globalIndex{
+					(*indexMap)[i].value()
+				};
+	
+				typename GlobalLinearTopologyType::Point globalPt{
+					GlobalLinearTopologyType::Transform(globalIndex)
+				};
+	
+				const bool evenRow =
+					(globalPt.y_ & 1) == 0;
+	
+				const bool evenCol =
+					(globalPt.x_ & 1) == 0;
+	
+				const double received01 =
+					static_cast<double>(v) / 65535.0;
+	
+				if (evenRow) {
+					if (evenCol) {
+						addBlue01(
+							received01 / currentBGain
+						);
+					} else {
+						addGreen01(received01);
+					}
+				} else {
+					if (evenCol) {
+						addGreen01(received01);
+					} else {
+						addRed01(
+							received01 / currentRGain
+						);
+					}
+				}
+			}
+	
+			static std::atomic<std::uint64_t> statsPrintCount{0};
+	
+			if ((statsPrintCount++ % 120) == 0) {
+				std::cout << "[Region0 WB stats]"
+						  << " peer=" << peerLabel_
+						  << " frame_id="
+						  << frameHeader.gainMsg_.frame_id
+						  << " rCount=" << stats.rCount
+						  << " gCount=" << stats.gCount
+						  << " bCount=" << stats.bCount
+						  << " prev_r_apply=" << currentRGain
+						  << " prev_b_apply=" << currentBGain
+						  << '\n';
+			}
+	
+			return stats;
+		};
+	
+		{
+			GainMsg gainMsg =
+				frameHeader.gainMsg_;
+	
+			gainMsg.header.type =
+				MessageType::GainMsg;
+	
+			gainMsg.header.version =
+				1;
+	
+			const detail::Region0BayerStats region0Stats =
+				computeRegion0BayerStats(
+					std::span<const uint16_t>(
+						this->tpgydp_[0].data(),
+						this->tpgydp_.RegionValidSize(0)
+					)
+				);
+	
+			gainMsg.mean_brightness =
+				region0Stats.meanBrightness01();
+	
+			if (gainMsg.target_brightness <= 0.0f) {
+				gainMsg.target_brightness =
+					0.35f;
+			}
+	
+			const detail::Region0WhiteBalanceGains wbGains =
+				detail::Region0WhiteBalanceAggregatorInstance().Update(
+					this,
+					gainMsg.frame_id,
+					region0Stats
+				);
+	
+			if (wbGains.valid) {
+				gainMsg.r_gain_apply =
+					wbGains.rGainApply;
+	
+				gainMsg.b_gain_apply =
+					wbGains.bGainApply;
+			}
+	
+			static std::atomic<std::uint64_t> wbPrintCount{0};
+	
+			if ((wbPrintCount++ % 60) == 0) {
+				std::cout << "[Region0 aggregate WB]"
+						  << " peer=" << peerLabel_
+						  << " frame_id=" << gainMsg.frame_id
+						  << " mean=" << gainMsg.mean_brightness
+						  << " region0s="
+						  << wbGains.contributingRegion0s
+						  << " r_apply="
+						  << gainMsg.r_gain_apply
+						  << " b_apply="
+						  << gainMsg.b_gain_apply
+						  << '\n';
+			}
+	
+			HandleGainMsg(gainMsg);
+		}
+	
+		const auto tUnpackDone =
+			Clock::now();
+	
+		/*
+		 * Stage 2 SphereMap scatter.
+		 *
+		 * The SphereMap entry is now packed as:
+		 *
+		 *   bits  0..29 = equirect output pixel index
+		 *   bits 30..31 = Bayer channel
+		 *
+		 * Output buffer layout is BGR16 interleaved:
+		 *
+		 *   [B0, G0, R0, B1, G1, R1, ...]
+		 *
+		 * This keeps UDP frame payloads unchanged. Only the startup map now
+		 * tells Compute which color channel each raw Bayer sample belongs to.
+		 */
+		std::array<
+			std::shared_ptr<ScatterBufferState>,
+			regionCount
+		> newBufferStates{};
+	
+		struct ScatterDetailFrameStats {
+			double sphereMapSnapshotMs = 0.0;
+			double regionCheckMs = 0.0;
+			double dstAssignMs = 0.0;
+			double scratchResizeMs = 0.0;
+			double touchedReserveMs = 0.0;
+			double accumulateMs = 0.0;
+			double finalizeMs = 0.0;
+			double resetScratchMs = 0.0;
+			double publishSnapshotMs = 0.0;
+			double publishLockMs = 0.0;
+	
+			std::uint64_t validSamples = 0;
+			std::uint64_t touchedSlots = 0;
+			std::uint64_t outputElems = 0;
+		};
+	
+		ScatterDetailFrameStats scatterDetail{};
+	
+		std::shared_ptr<const SphereMapSnapshot> localSphereMap;
+	
+		const auto tSphereMapSnapshotStart =
+			Clock::now();
+	
+		{
+			std::scoped_lock lock(sphereMapMutex_);
+			localSphereMap = sphereMap_;
+		}
+	
+		const auto tSphereMapSnapshotDone =
+			Clock::now();
+	
+		scatterDetail.sphereMapSnapshotMs +=
+			ms(tSphereMapSnapshotStart, tSphereMapSnapshotDone);
+	
+		if (!localSphereMap) {
+			std::cerr << "[RunFrameLoop] no SphereMap received yet for "
+					  << peerLabel_
+					  << "; dropping frame_id="
+					  << frameHeader.gainMsg_.frame_id
+					  << '\n';
+	
+			++rxStats_.rxFail;
+			MaybePrintRxSummary();
+			return false;
+		}
+	
+		const std::size_t scatterOutputPixels =
+			static_cast<std::size_t>(
+				localSphereMap->outputSize
+			);
+	
+		const std::size_t scatterOutputElems =
+			scatterOutputPixels * 3u;
+	
+		scatterDetail.outputElems =
+			static_cast<std::uint64_t>(
+				scatterOutputElems
+			);
+	
+		auto acquireScatterBufferState =
+			[&](std::size_t regionIndex)
+				-> std::shared_ptr<ScatterBufferState>
+		{
+			auto& pool =
+				scatterBufferPool_[regionIndex];
+	
+			for (auto& state : pool) {
+				if (state &&
+					state.use_count() == 1) {
+					return state;
+				}
+			}
+	
+			auto state =
+				std::make_shared<ScatterBufferState>();
+	
+			pool.push_back(state);
+	
+			return state;
+		};
+	
+		auto scatterMappedRegionToBuffer =
+			[&](std::size_t regionIndex) -> bool
+		{
+			const auto tRegionCheckStart =
+				Clock::now();
+	
+			const std::size_t validSize =
+				this->tpgydp_.RegionValidSize(regionIndex);
+	
+			const auto& map =
+				localSphereMap->regions[regionIndex];
+	
+			if (map.size() != validSize) {
+				std::cerr << "[RunFrameLoop] SphereMap/data size mismatch:"
+						  << " region=" << regionIndex
+						  << " map.size()=" << map.size()
+						  << " validSize=" << validSize
+						  << " frame_id="
+						  << frameHeader.gainMsg_.frame_id
+						  << '\n';
+	
+				return false;
+			}
+	
+			const auto tRegionCheckDone =
+				Clock::now();
+	
+			scatterDetail.regionCheckMs +=
+				ms(tRegionCheckStart, tRegionCheckDone);
+	
+			scatterDetail.validSamples +=
+				static_cast<std::uint64_t>(validSize);
+	
+			auto state =
+				acquireScatterBufferState(regionIndex);
+	
+			if (!state) {
+				std::cerr << "[RunFrameLoop] failed to acquire scatter buffer:"
+						  << " region=" << regionIndex
+						  << " frame_id="
+						  << frameHeader.gainMsg_.frame_id
+						  << '\n';
+	
+				return false;
+			}
+	
+			newBufferStates[regionIndex] =
+				state;
+	
+			auto& dst =
+				state->data;
+	
+			auto& previousTouchedSlots =
+				state->previousTouchedSlots;
+	
+			const auto tDstClearStart =
+				Clock::now();
+	
+			/*
+			 * Avoid full-frame zero-fill on steady-state frames.
+			 *
+			 * Only slots that were written last time can contain stale values.
+			 * Clear those slots before scattering this frame.
+			 */
+			if (dst.size() != scatterOutputElems) {
+				dst.assign(
+					scatterOutputElems,
+					uint16_t{0}
+				);
+	
+				previousTouchedSlots.clear();
+			} else {
+				for (const std::size_t slot : previousTouchedSlots) {
+					if (slot < dst.size()) {
+						dst[slot] =
+							uint16_t{0};
+					}
+				}
+			}
+	
+			const auto tDstClearDone =
+				Clock::now();
+	
+			scatterDetail.dstAssignMs +=
+				ms(tDstClearStart, tDstClearDone);
+	
+			const uint16_t* src =
+				this->tpgydp_[regionIndex].data();
+	
+			/*
+			 * Stage 3c:
+			 *
+			 * The old scatter rule used:
+			 *
+			 *     dstSample = std::max(dstSample, src[i]);
+			 *
+			 * That avoids over-brightening, but it throws away samples whenever
+			 * multiple source pixels land in the same equirect/channel slot.
+			 *
+			 * Use an intra-region averaged scatter instead:
+			 *
+			 *     sum[channel-slot]   += src[i]
+			 *     count[channel-slot] += 1
+			 *     dst[channel-slot]    = round(sum / count)
+			 *
+			 * The output buffer remains BGR16 interleaved, so the rest of the
+			 * pipeline does not need to change.
+			 */
+			static thread_local std::vector<std::uint32_t> scatterSums;
+			static thread_local std::vector<std::uint32_t> scatterCounts;
+			static thread_local std::vector<std::size_t> touchedSlots;
+	
+			const auto tScratchResizeStart =
+				Clock::now();
+	
+			if (scatterSums.size() != scatterOutputElems) {
+				scatterSums.assign(
+					scatterOutputElems,
+					std::uint32_t{0}
+				);
+	
+				scatterCounts.assign(
+					scatterOutputElems,
+					std::uint32_t{0}
+				);
+			}
+	
+			const auto tScratchResizeDone =
+				Clock::now();
+	
+			scatterDetail.scratchResizeMs +=
+				ms(tScratchResizeStart, tScratchResizeDone);
+	
+			const auto tTouchedReserveStart =
+				Clock::now();
+	
+			touchedSlots.clear();
+			touchedSlots.reserve(validSize);
+	
+			const auto tTouchedReserveDone =
+				Clock::now();
+	
+			scatterDetail.touchedReserveMs +=
+				ms(tTouchedReserveStart, tTouchedReserveDone);
+	
+			auto resetTouchedSlots = [&]() {
+				const auto tResetStart =
+					Clock::now();
+	
+				previousTouchedSlots.clear();
+				previousTouchedSlots.reserve(
+					touchedSlots.size()
+				);
+	
+				for (const std::size_t slot : touchedSlots) {
+					previousTouchedSlots.push_back(slot);
+	
+					scatterSums[slot] =
+						std::uint32_t{0};
+	
+					scatterCounts[slot] =
+						std::uint32_t{0};
+				}
+	
+				touchedSlots.clear();
+	
+				const auto tResetDone =
+					Clock::now();
+	
+				scatterDetail.resetScratchMs +=
+					ms(tResetStart, tResetDone);
+			};
+	
+			const auto tAccumulateStart =
+				Clock::now();
+	
+			for (std::size_t i = 0;
+				 i < validSize;
+				 ++i) {
+				const std::uint32_t packedEntry =
+					map[i];
+	
+				const std::uint32_t outIndex =
+					UnpackSphereMapOutputIndex(
+						packedEntry
+					);
+	
+				const SphereMapBayerChannel channel =
+					UnpackSphereMapBayerChannel(
+						packedEntry
+					);
+	
+				if (outIndex >= scatterOutputPixels) {
+					std::cerr << "[RunFrameLoop] SphereMap output index OOB:"
+							  << " region=" << regionIndex
+							  << " i=" << i
+							  << " outIndex=" << outIndex
+							  << " outputPixels="
+							  << scatterOutputPixels
+							  << " frame_id="
+							  << frameHeader.gainMsg_.frame_id
+							  << '\n';
+	
+					resetTouchedSlots();
+	
+					return false;
+				}
+	
+				const std::size_t base =
+					static_cast<std::size_t>(outIndex) * 3u;
+	
+				std::size_t channelOffset = 0;
+	
+				switch (channel) {
+				case SphereMapBayerChannel::Blue:
+					channelOffset = 0;
+					break;
+	
+				case SphereMapBayerChannel::Green:
+					channelOffset = 1;
+					break;
+	
+				case SphereMapBayerChannel::Red:
+					channelOffset = 2;
+					break;
+	
+				default:
+					std::cerr << "[RunFrameLoop] invalid Bayer channel:"
+							  << " region=" << regionIndex
+							  << " i=" << i
+							  << " packedEntry=0x"
+							  << std::hex << packedEntry << std::dec
+							  << '\n';
+	
+					resetTouchedSlots();
+	
+					return false;
+				}
+	
+				const std::size_t slot =
+					base + channelOffset;
+	
+				if (scatterCounts[slot] == 0) {
+					touchedSlots.push_back(slot);
+				}
+	
+				scatterSums[slot] +=
+					static_cast<std::uint32_t>(src[i]);
+	
+				++scatterCounts[slot];
+			}
+	
+			const auto tAccumulateDone =
+				Clock::now();
+	
+			scatterDetail.accumulateMs +=
+				ms(tAccumulateStart, tAccumulateDone);
+	
+			scatterDetail.touchedSlots +=
+				static_cast<std::uint64_t>(
+					touchedSlots.size()
+				);
+	
+			const auto tFinalizeStart =
+				Clock::now();
+	
+			for (const std::size_t slot : touchedSlots) {
+				const std::uint32_t count =
+					scatterCounts[slot];
+	
+				if (count == 0) {
+					continue;
+				}
+	
+				const std::uint32_t average =
+					(scatterSums[slot] + (count / 2u)) / count;
+	
+				dst[slot] =
+					static_cast<std::uint16_t>(
+						std::min<std::uint32_t>(
+							average,
+							65535u
+						)
+					);
+			}
+	
+			const auto tFinalizeDone =
+				Clock::now();
+	
+			scatterDetail.finalizeMs +=
+				ms(tFinalizeStart, tFinalizeDone);
+	
+			resetTouchedSlots();
+	
+			return true;
+		};
+	
+		for (std::size_t regionIndex = 0;
+			 regionIndex < regionCount;
+			 ++regionIndex) {
+			if (!scatterMappedRegionToBuffer(regionIndex)) {
+				++rxStats_.rxFail;
+				MaybePrintRxSummary();
+				return false;
+			}
+		}
+	
+		static std::once_flag printedRegionSizesOnce;
+	
+		std::call_once(printedRegionSizesOnce, [&]() {
+			std::cout << "[RX map-scatter region sizes] "
+					  << peerLabel_
+					  << " output="
+					  << localSphereMap->outputWidth
+					  << "x"
+					  << localSphereMap->outputHeight
+					  << " pixels="
+					  << localSphereMap->outputSize
+					  << " bgr16_elems="
+					  << scatterOutputElems;
+	
+			for (std::size_t regionIndex = 0;
+				 regionIndex < regionCount;
+				 ++regionIndex) {
+				std::cout << " r" << regionIndex
+						  << "_packed="
+						  << this->tpgydp_.RegionValidSize(regionIndex)
+						  << " r" << regionIndex
+						  << "_map="
+						  << localSphereMap->regions[regionIndex].size()
+						  << " r" << regionIndex
+						  << "_bgr16_elems="
+						  << (
+								 newBufferStates[regionIndex]
+									 ? newBufferStates[regionIndex]->data.size()
+									 : 0
+							 );
+			}
+	
+			std::cout << '\n';
+		});
+	
+		const auto tScatterDone =
+			Clock::now();
+	
+		const auto tPublishSnapshotStart =
+			Clock::now();
+	
+		std::array<
+			std::shared_ptr<const std::vector<uint16_t>>,
+			regionCount
+		> publishedBuffers{};
+	
+		for (std::size_t regionIndex = 0;
+			 regionIndex < regionCount;
+			 ++regionIndex) {
+			auto state =
+				newBufferStates[regionIndex];
+	
+			if (!state) {
+				std::cerr << "[RunFrameLoop] missing scatter buffer state:"
+						  << " region=" << regionIndex
+						  << " frame_id="
+						  << frameHeader.gainMsg_.frame_id
+						  << '\n';
+	
+				++rxStats_.rxFail;
+				MaybePrintRxSummary();
+				return false;
+			}
+	
+			/*
+			 * Aliasing shared_ptr:
+			 *
+			 * Consumers receive shared_ptr<const vector<uint16_t>>, while the
+			 * control block keeps the owning ScatterBufferState alive.
+			 */
+			publishedBuffers[regionIndex] =
+				std::shared_ptr<const std::vector<uint16_t>>(
+					state,
+					&state->data
+				);
+		}
+	
+		const auto tPublishSnapshotDone =
+			Clock::now();
+	
+		scatterDetail.publishSnapshotMs +=
+			ms(tPublishSnapshotStart, tPublishSnapshotDone);
+	
+		const auto tPublishLockStart =
+			Clock::now();
+	
+		{
+			std::scoped_lock lock(bufferMutex_);
+			this->buffer_ =
+				std::move(publishedBuffers);
+		}
+	
+		const auto tPublishLockDone =
+			Clock::now();
+	
+		scatterDetail.publishLockMs +=
+			ms(tPublishLockStart, tPublishLockDone);
+	
+		const auto tPublishDone =
+			Clock::now();
+	
+		if constexpr (kWriteBuffersToFile) {
+			if (!this->BufferToFile()) {
+				std::cerr << "[RunFrameLoop] BufferToFile failed\n";
+	
+				++rxStats_.rxFail;
+				MaybePrintRxSummary();
+	
+				return false;
+			}
+		}
+	
+		const auto tBufferFileDone =
+			Clock::now();
+	
+		if constexpr (kVerboseRunFrameLoopTiming) {
+			static std::mutex timingMutex;
+	
+			struct TimingStats {
+				std::uint64_t frames = 0;
+	
+				double epollInitMs = 0.0;
+				double receiveMs = 0.0;
+				double epollFinalizeMs = 0.0;
+				double unpackMs = 0.0;
+				double scatterMs = 0.0;
+				double publishMs = 0.0;
+				double bufferFileMs = 0.0;
+				double totalMs = 0.0;
+	
+				double sphereMapSnapshotMs = 0.0;
+				double scatterRegionCheckMs = 0.0;
+				double scatterDstAssignMs = 0.0;
+				double scatterScratchResizeMs = 0.0;
+				double scatterTouchedReserveMs = 0.0;
+				double scatterAccumulateMs = 0.0;
+				double scatterFinalizeMs = 0.0;
+				double scatterResetScratchMs = 0.0;
+				double publishSnapshotMs = 0.0;
+				double publishLockMs = 0.0;
+	
+				std::uint64_t scatterValidSamples = 0;
+				std::uint64_t scatterTouchedSlots = 0;
+				std::uint64_t scatterOutputElems = 0;
+	
+				Clock::time_point lastPrint =
+					Clock::now();
+			};
+	
+			static std::map<const void*, TimingStats> statsByPeer;
+	
+			std::lock_guard<std::mutex> lock(timingMutex);
+	
+			auto& s =
+				statsByPeer[this];
+	
+			++s.frames;
+	
+			s.epollInitMs +=
+				ms(tStart, tEpollInitDone);
+	
+			s.receiveMs +=
+				ms(tEpollInitDone, tReceiveDone);
+	
+			s.epollFinalizeMs +=
+				ms(tReceiveDone, tEpollFinalizeDone);
+	
+			s.unpackMs +=
+				ms(tEpollFinalizeDone, tUnpackDone);
+	
+			s.scatterMs +=
+				ms(tUnpackDone, tScatterDone);
+	
+			s.publishMs +=
+				ms(tScatterDone, tPublishDone);
+	
+			s.bufferFileMs +=
+				ms(tPublishDone, tBufferFileDone);
+	
+			s.totalMs +=
+				ms(tStart, tBufferFileDone);
+	
+			s.sphereMapSnapshotMs +=
+				scatterDetail.sphereMapSnapshotMs;
+	
+			s.scatterRegionCheckMs +=
+				scatterDetail.regionCheckMs;
+	
+			s.scatterDstAssignMs +=
+				scatterDetail.dstAssignMs;
+	
+			s.scatterScratchResizeMs +=
+				scatterDetail.scratchResizeMs;
+	
+			s.scatterTouchedReserveMs +=
+				scatterDetail.touchedReserveMs;
+	
+			s.scatterAccumulateMs +=
+				scatterDetail.accumulateMs;
+	
+			s.scatterFinalizeMs +=
+				scatterDetail.finalizeMs;
+	
+			s.scatterResetScratchMs +=
+				scatterDetail.resetScratchMs;
+	
+			s.publishSnapshotMs +=
+				scatterDetail.publishSnapshotMs;
+	
+			s.publishLockMs +=
+				scatterDetail.publishLockMs;
+	
+			s.scatterValidSamples +=
+				scatterDetail.validSamples;
+	
+			s.scatterTouchedSlots +=
+				scatterDetail.touchedSlots;
+	
+			s.scatterOutputElems +=
+				scatterDetail.outputElems;
+	
+			const auto now =
+				Clock::now();
+	
+			const double elapsed =
+				std::chrono::duration<double>(
+					now - s.lastPrint
+				).count();
+	
+			if (elapsed >= 1.0) {
+				std::cout << "[RunFrameLoop timing] " << peerLabel_
+						  << " frames=" << s.frames
+						  << " epoll_init_ms="
+						  << s.epollInitMs / s.frames
+						  << " receive_ms="
+						  << s.receiveMs / s.frames
+						  << " epoll_finalize_ms="
+						  << s.epollFinalizeMs / s.frames
+						  << " unpack_ms="
+						  << s.unpackMs / s.frames
+						  << " scatter_ms="
+						  << s.scatterMs / s.frames
+						  << " publish_ms="
+						  << s.publishMs / s.frames
+						  << " scatter_map_ms="
+						  << s.sphereMapSnapshotMs / s.frames
+						  << " scatter_check_ms="
+						  << s.scatterRegionCheckMs / s.frames
+						  << " scatter_zero_ms="
+						  << s.scatterDstAssignMs / s.frames
+						  << " scatter_scratch_resize_ms="
+						  << s.scatterScratchResizeMs / s.frames
+						  << " scatter_reserve_ms="
+						  << s.scatterTouchedReserveMs / s.frames
+						  << " scatter_accum_ms="
+						  << s.scatterAccumulateMs / s.frames
+						  << " scatter_finalize_ms="
+						  << s.scatterFinalizeMs / s.frames
+						  << " scatter_reset_ms="
+						  << s.scatterResetScratchMs / s.frames
+						  << " publish_snapshot_ms="
+						  << s.publishSnapshotMs / s.frames
+						  << " publish_lock_ms="
+						  << s.publishLockMs / s.frames
+						  << " scatter_valid_samples="
+						  << s.scatterValidSamples / s.frames
+						  << " scatter_touched_slots="
+						  << s.scatterTouchedSlots / s.frames
+						  << " scatter_output_elems="
+						  << s.scatterOutputElems / s.frames
+						  << " buffer_file_ms="
+						  << s.bufferFileMs / s.frames
+						  << " total_ms="
+						  << s.totalMs / s.frames
+						  << '\n';
+	
+				s.frames = 0;
+	
+				s.epollInitMs = 0.0;
+				s.receiveMs = 0.0;
+				s.epollFinalizeMs = 0.0;
+				s.unpackMs = 0.0;
+				s.scatterMs = 0.0;
+				s.publishMs = 0.0;
+				s.bufferFileMs = 0.0;
+				s.totalMs = 0.0;
+	
+				s.sphereMapSnapshotMs = 0.0;
+				s.scatterRegionCheckMs = 0.0;
+				s.scatterDstAssignMs = 0.0;
+				s.scatterScratchResizeMs = 0.0;
+				s.scatterTouchedReserveMs = 0.0;
+				s.scatterAccumulateMs = 0.0;
+				s.scatterFinalizeMs = 0.0;
+				s.scatterResetScratchMs = 0.0;
+				s.publishSnapshotMs = 0.0;
+				s.publishLockMs = 0.0;
+	
+				s.scatterValidSamples = 0;
+				s.scatterTouchedSlots = 0;
+				s.scatterOutputElems = 0;
+	
+				s.lastPrint =
+					now;
+			}
+		}
+	
+		return true;
 	}
-
-    const auto tPublishDone = Clock::now();
-
-    if constexpr (kWriteBuffersToFile) {
-        if (!this->BufferToFile()) {
-            std::cerr << "[RunFrameLoop] BufferToFile failed\n";
-            ++rxStats_.rxFail;
-            MaybePrintRxSummary();
-            return false;
-        }
-    }
-
-    const auto tBufferFileDone = Clock::now();
-
-    if constexpr (kVerboseRunFrameLoopTiming) {
-        static std::mutex timingMutex;
-
-        struct TimingStats {
-            uint64_t frames = 0;
-
-            double epollInitMs = 0.0;
-            double receiveMs = 0.0;
-            double epollFinalizeMs = 0.0;
-            double unpackMs = 0.0;
-            double scatterMs = 0.0;
-            double publishMs = 0.0;
-            double bufferFileMs = 0.0;
-            double totalMs = 0.0;
-
-            Clock::time_point lastPrint = Clock::now();
-        };
-
-        static std::map<const void*, TimingStats> statsByPeer;
-
-        std::lock_guard<std::mutex> lock(timingMutex);
-
-        auto& s = statsByPeer[this];
-
-        ++s.frames;
-
-        s.epollInitMs += ms(tStart, tEpollInitDone);
-        s.receiveMs += ms(tEpollInitDone, tReceiveDone);
-        s.epollFinalizeMs += ms(tReceiveDone, tEpollFinalizeDone);
-        s.unpackMs += ms(tEpollFinalizeDone, tUnpackDone);
-        s.scatterMs += ms(tUnpackDone, tScatterDone);
-        s.publishMs += ms(tScatterDone, tPublishDone);
-        s.bufferFileMs += ms(tPublishDone, tBufferFileDone);
-        s.totalMs += ms(tStart, tBufferFileDone);
-
-        const auto now = Clock::now();
-        const double elapsed =
-            std::chrono::duration<double>(now - s.lastPrint).count();
-
-        if (elapsed >= 1.0) {
-            std::cout << "[RunFrameLoop timing] " << peerLabel_
-                      << " frames=" << s.frames
-                      << " epoll_init_ms=" << s.epollInitMs / s.frames
-                      << " receive_ms=" << s.receiveMs / s.frames
-                      << " epoll_finalize_ms="
-                      << s.epollFinalizeMs / s.frames
-                      << " unpack_ms=" << s.unpackMs / s.frames
-                      << " scatter_ms=" << s.scatterMs / s.frames
-                      << " publish_ms=" << s.publishMs / s.frames
-                      << " buffer_file_ms="
-                      << s.bufferFileMs / s.frames
-                      << " total_ms=" << s.totalMs / s.frames
-                      << '\n';
-
-            s.frames = 0;
-
-            s.epollInitMs = 0.0;
-            s.receiveMs = 0.0;
-            s.epollFinalizeMs = 0.0;
-            s.unpackMs = 0.0;
-            s.scatterMs = 0.0;
-            s.publishMs = 0.0;
-            s.bufferFileMs = 0.0;
-            s.totalMs = 0.0;
-
-            s.lastPrint = now;
-        }
-    }
-
-    return true;
-}
 	
 	template<unsigned int FacetIndex>
 	bool AperturePeer<FacetIndex>::BufferToFile()

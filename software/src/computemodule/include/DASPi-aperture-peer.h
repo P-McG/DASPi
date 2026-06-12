@@ -48,6 +48,17 @@ class AperturePeer : public AperturePeerBase
         std::shared_ptr<const std::vector<uint16_t>>,
         verticesPerFaceN_ + 1
     > buffer_;
+
+    struct ScatterBufferState {
+        std::vector<uint16_t> data;
+        std::vector<std::size_t> previousTouchedSlots;
+    };
+    
+    std::array<
+        std::vector<std::shared_ptr<ScatterBufferState>>,
+        verticesPerFaceN_ + 1
+    > scatterBufferPool_;
+    
     std::array<std::unique_ptr<std::ofstream>, verticesPerFaceN_ + 1> files_;
 
     tpgy_t tpgy_;
