@@ -13,7 +13,7 @@ struct RxFrameAssembly
     size_t totalBytesExpected{0};
     size_t totalBytesReceived{0};
 
-    std::vector<uint16_t> payload;
+    std::vector<uint8_t> payload;
     std::vector<uint8_t> chunkSeen;
 };
 }//namespace DASPi

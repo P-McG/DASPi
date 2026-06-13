@@ -26,7 +26,7 @@
 #include "DASPi-rx-frame-assembly.h"
 #include "DASPi-udp-chunk-header.h"
 #include "DASPi-wire-utils.h"
-
+#include "DASPi-raw10-pack.h"
 
 #define VERBATIUM_COUT
 
@@ -790,56 +790,122 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         if (assembly.headerSeen) {
             return true;
         }
-
+    
         if (wire.chunkId_ != 0) {
             ++timing.ignoredMissingHeader;
             return false;
         }
-
+    
         assembly.frameHeader = FromWireFrameHeader(wire.frameHeader_);
-
+    
         if (assembly.frameHeader.magic_ != MAGIC_NUMBER) {
             dropFrame(wire.frameId_, "frameHeader magic mismatch");
             return false;
         }
-
+    
         if (assembly.frameHeader.payloadSize_ == 0 ||
-            assembly.frameHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_ ||
-            (assembly.frameHeader.payloadSize_ % sizeof(uint16_t)) != 0) {
+            assembly.frameHeader.payloadSize_ > FramePacket::MAX_ALLOWED_FRAME_SIZE_) {
             std::ostringstream oss;
             oss << "invalid frameHeader payloadSize="
                 << assembly.frameHeader.payloadSize_;
             dropFrame(wire.frameId_, oss.str());
             return false;
         }
-
-        size_t totalElems = 0;
-
-        for (const auto regionSize : assembly.frameHeader.regionSizes_) {
-            totalElems += regionSize;
-        }
-
-        if (totalElems > std::numeric_limits<size_t>::max() / sizeof(uint16_t)) {
-            dropFrame(wire.frameId_, "regionSizes byte count overflow");
-            return false;
-        }
-
-        const size_t totalBytesFromRegions = totalElems * sizeof(uint16_t);
-
-        if (totalBytesFromRegions != assembly.frameHeader.payloadSize_) {
+    
+        const WirePixelFormat wirePixelFormat =
+            ToWirePixelFormat(assembly.frameHeader.wirePixelFormat_);
+    
+        if (wirePixelFormat != WirePixelFormat::Uint16LE &&
+            wirePixelFormat != WirePixelFormat::BayerRaw10Packed) {
             std::ostringstream oss;
-            oss << "regionSizes mismatch totalElems=" << totalElems
-                << " totalBytes=" << totalBytesFromRegions
-                << " payloadSize=" << assembly.frameHeader.payloadSize_;
+            oss << "unsupported wirePixelFormat="
+                << assembly.frameHeader.wirePixelFormat_;
             dropFrame(wire.frameId_, oss.str());
             return false;
         }
-
+    
+        size_t totalPixels = 0;
+        size_t totalPayloadBytesFromRegions = 0;
+    
+        for (size_t region = 0; region < NUM_REGIONS; ++region) {
+            const size_t pixelCount =
+                static_cast<size_t>(assembly.frameHeader.regionSizes_[region]);
+    
+            const size_t regionPayloadBytes =
+                static_cast<size_t>(assembly.frameHeader.regionPayloadBytes_[region]);
+    
+            if (pixelCount > std::numeric_limits<size_t>::max() - totalPixels) {
+                dropFrame(wire.frameId_, "regionSizes pixel count overflow");
+                return false;
+            }
+    
+            totalPixels += pixelCount;
+    
+            if (regionPayloadBytes >
+                std::numeric_limits<size_t>::max() - totalPayloadBytesFromRegions) {
+                dropFrame(wire.frameId_, "regionPayloadBytes sum overflow");
+                return false;
+            }
+    
+            totalPayloadBytesFromRegions += regionPayloadBytes;
+    
+            size_t expectedRegionPayloadBytes = 0;
+    
+            if (wirePixelFormat == WirePixelFormat::Uint16LE) {
+                if (pixelCount >
+                    std::numeric_limits<size_t>::max() / sizeof(uint16_t)) {
+                    dropFrame(wire.frameId_, "Uint16LE region byte count overflow");
+                    return false;
+                }
+    
+                expectedRegionPayloadBytes =
+                    pixelCount * sizeof(uint16_t);
+            } else {
+                expectedRegionPayloadBytes =
+                    Raw10PackedByteCount(pixelCount);
+            }
+    
+            if (regionPayloadBytes != expectedRegionPayloadBytes) {
+                std::ostringstream oss;
+                oss << "region payload byte mismatch"
+                    << " region=" << region
+                    << " wirePixelFormat=" << assembly.frameHeader.wirePixelFormat_
+                    << " pixelCount=" << pixelCount
+                    << " regionPayloadBytes=" << regionPayloadBytes
+                    << " expectedRegionPayloadBytes=" << expectedRegionPayloadBytes;
+    
+                dropFrame(wire.frameId_, oss.str());
+                return false;
+            }
+        }
+    
+        if (totalPayloadBytesFromRegions != assembly.frameHeader.payloadSize_) {
+            std::ostringstream oss;
+            oss << "regionPayloadBytes mismatch"
+                << " totalPixels=" << totalPixels
+                << " totalPayloadBytesFromRegions=" << totalPayloadBytesFromRegions
+                << " payloadSize=" << assembly.frameHeader.payloadSize_;
+    
+            dropFrame(wire.frameId_, oss.str());
+            return false;
+        }
+    
         assembly.totalBytesExpected = assembly.frameHeader.payloadSize_;
         assembly.totalBytesReceived = 0;
-        assembly.payload.assign(assembly.totalBytesExpected / sizeof(uint16_t), 0);
+    
+        /*
+         * Store the encoded wire payload bytes.
+         *
+         * For Uint16LE:
+         *   payload bytes are copied as raw uint16_t bytes and decoded later.
+         *
+         * For BayerRaw10Packed:
+         *   payload bytes are copied as packed RAW10 and unpacked later.
+         */
+        assembly.payload.assign(assembly.totalBytesExpected, 0);
+    
         assembly.headerSeen = true;
-
+    
         return true;
     };
 
@@ -875,9 +941,7 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
             return false;
         }
 
-        auto dstBytes = std::as_writable_bytes(std::span(assembly.payload));
-
-        std::memcpy(dstBytes.data() + dstOffset,
+        std::memcpy(assembly.payload.data() + dstOffset,
                     packet.data() + sizeof(UdpChunkHeader),
                     wire.payloadBytes_);
 
@@ -896,7 +960,9 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         timing.payloadComplete = Clock::now();
 
         const auto usedBytes =
-            std::as_bytes(std::span(assembly.payload)).first(assembly.totalBytesExpected);
+            std::as_bytes(std::span(assembly.payload)).first(
+                assembly.totalBytesExpected
+            );
 
         timing.checksumStart = Clock::now();
         const uint32_t computed = SimpleChecksum(usedBytes);
@@ -913,10 +979,74 @@ bool UDPClnt::ReceiveAndReassembleFramePacket(std::vector<uint16_t>& outPayload,
         logTiming(wire.frameId_, assembly);
 
         outHeader = assembly.frameHeader;
-        outPayload = std::move(assembly.payload);
-
+        outPayload.clear();
+        
+        const WirePixelFormat wirePixelFormat =
+            ToWirePixelFormat(assembly.frameHeader.wirePixelFormat_);
+        
+        std::size_t totalPixels = 0;
+        for (const auto count : assembly.frameHeader.regionSizes_) {
+            totalPixels += count;
+        }
+        
+        if (wirePixelFormat == WirePixelFormat::Uint16LE) {
+            if ((assembly.payload.size() % sizeof(std::uint16_t)) != 0) {
+                dropFrame(wire.frameId_, "Uint16LE payload not u16 aligned");
+                return FinishResult::Corrupt;
+            }
+        
+            outPayload.resize(assembly.payload.size() / sizeof(std::uint16_t));
+        
+            if (!assembly.payload.empty()) {
+                std::memcpy(outPayload.data(),
+                            assembly.payload.data(),
+                            assembly.payload.size());
+            }
+        } else if (wirePixelFormat == WirePixelFormat::BayerRaw10Packed) {
+            outPayload.reserve(totalPixels);
+        
+            std::size_t srcOffset = 0;
+        
+            for (std::size_t region = 0; region < NUM_REGIONS; ++region) {
+                const std::size_t pixels =
+                    assembly.frameHeader.regionSizes_[region];
+        
+                const std::size_t bytes =
+                    assembly.frameHeader.regionPayloadBytes_[region];
+        
+                if (srcOffset + bytes > assembly.payload.size()) {
+                    dropFrame(wire.frameId_, "RAW10 region read overflow");
+                    return FinishResult::Corrupt;
+                }
+        
+                const bool ok =
+                    AppendRaw10UnpackedExpanded16(
+                        std::span<const std::uint8_t>(
+                            assembly.payload.data() + srcOffset,
+                            bytes
+                        ),
+                        pixels,
+                        outPayload
+                    );
+        
+                if (!ok) {
+                    dropFrame(wire.frameId_, "RAW10 unpack failed");
+                    return FinishResult::Corrupt;
+                }
+        
+                srcOffset += bytes;
+            }
+        } else {
+            dropFrame(wire.frameId_, "unsupported wire pixel format at finish");
+            return FinishResult::Corrupt;
+        }
+        
+        if (outPayload.size() != totalPixels) {
+            dropFrame(wire.frameId_, "decoded pixel count mismatch");
+            return FinishResult::Corrupt;
+        }
+        
         rxAssemblies_.erase(wire.frameId_);
-
         return FinishResult::Complete;
     };
 

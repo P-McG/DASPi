@@ -14,6 +14,7 @@
 #include "DASPi-logger.h"
 #include "DASPi-udp-srv.h"
 #include "DASPi-udp-chunk-header.h"
+#include "DASPi-raw10-pack.h"
 
 #define VERBATIUM_COUT
 
@@ -438,12 +439,6 @@ bool UDPSrv::TrySendFramesInOrder()
 
 void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
 {
-    const auto* payloadPtr =
-        reinterpret_cast<const uint8_t*>(framePacket.payload_.data());
-
-    const size_t totalBytes =
-        framePacket.payload_.size() * sizeof(uint16_t);
-
     if (maxUdpPayloadBytes_ <= sizeof(UdpChunkHeader)) {
         std::cerr << "maxUdpPayloadBytes_ too small\n";
         return;
@@ -452,28 +447,20 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
     const size_t maxChunkPayload =
         maxUdpPayloadBytes_ - sizeof(UdpChunkHeader);
 
-    const size_t chunkCount =
-        (totalBytes + maxChunkPayload - 1) / maxChunkPayload;
-
-    if (chunkCount > std::numeric_limits<uint16_t>::max()) {
-        std::cerr << "[SendFramePacketToClient] chunkCount too large: "
-                  << chunkCount << '\n';
+    if (maxChunkPayload > std::numeric_limits<uint16_t>::max()) {
+        std::cerr << "[SendFramePacketToClient] maxChunkPayload too large: "
+                  << maxChunkPayload << '\n';
         return;
     }
 
-    static std::atomic<uint32_t> nextFrameId{1};
-
-    const uint32_t frameId =
-        nextFrameId.fetch_add(1, std::memory_order_relaxed);
-
     FrameHeader fh{};
     fh.magic_ = MAGIC_NUMBER;
+    fh.headerVersion_ = 2;
     fh.gainMsg_ = framePacket.header_.gainMsg_;
-    fh.payloadSize_ = static_cast<uint32_t>(totalBytes);
     fh.regionSizes_ = framePacket.header_.regionSizes_;
-    fh.checksum_ = SimpleChecksum(std::as_bytes(std::span(framePacket.payload_)));
 
     size_t totalElems = 0;
+
     for (const auto regionSize : fh.regionSizes_) {
         totalElems += regionSize;
     }
@@ -486,7 +473,128 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
         return;
     }
 
+    const bool shouldPackRaw10 =
+        fh.gainMsg_.header.type == MessageType::Frame;
+
+    std::vector<uint8_t> wirePayload;
+
+    if (shouldPackRaw10) {
+        fh.wirePixelFormat_ =
+            ToWirePixelFormatValue(WirePixelFormat::BayerRaw10Packed);
+
+        size_t srcOffset = 0;
+
+        for (size_t region = 0; region < NUM_REGIONS; ++region) {
+            const size_t pixelCount = fh.regionSizes_[region];
+
+            const size_t beforeBytes = wirePayload.size();
+
+            AppendRaw10Packed(
+                std::span<const uint16_t>(
+                    framePacket.payload_.data() + srcOffset,
+                    pixelCount
+                ),
+                wirePayload
+            );
+
+            const size_t packedBytes =
+                wirePayload.size() - beforeBytes;
+
+            const size_t expectedPackedBytes =
+                Raw10PackedByteCount(pixelCount);
+
+            if (packedBytes != expectedPackedBytes) {
+                std::cerr << "[TX-HDR] RAW10 packed byte mismatch for region "
+                          << region
+                          << ": packedBytes=" << packedBytes
+                          << " expectedPackedBytes=" << expectedPackedBytes
+                          << '\n';
+                return;
+            }
+
+            if (packedBytes > std::numeric_limits<uint32_t>::max()) {
+                std::cerr << "[TX-HDR] RAW10 region payload too large for region "
+                          << region << ": " << packedBytes << '\n';
+                return;
+            }
+
+            fh.regionPayloadBytes_[region] =
+                static_cast<uint32_t>(packedBytes);
+
+            srcOffset += pixelCount;
+        }
+    } else {
+        fh.wirePixelFormat_ =
+            ToWirePixelFormatValue(WirePixelFormat::Uint16LE);
+
+        const size_t byteCount =
+            framePacket.payload_.size() * sizeof(uint16_t);
+
+        wirePayload.resize(byteCount);
+
+        if (byteCount != 0) {
+            std::memcpy(
+                wirePayload.data(),
+                framePacket.payload_.data(),
+                byteCount
+            );
+        }
+
+        for (size_t region = 0; region < NUM_REGIONS; ++region) {
+            const size_t regionBytes =
+                static_cast<size_t>(fh.regionSizes_[region]) *
+                sizeof(uint16_t);
+
+            if (regionBytes > std::numeric_limits<uint32_t>::max()) {
+                std::cerr << "[TX-HDR] Uint16LE region payload too large for region "
+                          << region << ": " << regionBytes << '\n';
+                return;
+            }
+
+            fh.regionPayloadBytes_[region] =
+                static_cast<uint32_t>(regionBytes);
+        }
+    }
+
+    if (wirePayload.size() > std::numeric_limits<uint32_t>::max()) {
+        std::cerr << "[SendFramePacketToClient] payload too large: "
+                  << wirePayload.size() << '\n';
+        return;
+    }
+
+    fh.payloadSize_ =
+        static_cast<uint32_t>(wirePayload.size());
+
+    fh.checksum_ =
+        SimpleChecksum(
+            std::as_bytes(
+                std::span<const uint8_t>(
+                    wirePayload.data(),
+                    wirePayload.size()
+                )
+            )
+        );
+
+    const size_t totalBytes = wirePayload.size();
+
+    const size_t chunkCount =
+        totalBytes == 0
+            ? 1
+            : (totalBytes + maxChunkPayload - 1) / maxChunkPayload;
+
+    if (chunkCount > std::numeric_limits<uint16_t>::max()) {
+        std::cerr << "[SendFramePacketToClient] chunkCount too large: "
+                  << chunkCount << '\n';
+        return;
+    }
+
+    static std::atomic<uint32_t> nextFrameId{1};
+
+    const uint32_t frameId =
+        nextFrameId.fetch_add(1, std::memory_order_relaxed);
+
     sockaddr_in dst{};
+
     {
         std::lock_guard<std::mutex> lock(cliaddrMtx_);
         dst = cliaddr_;
@@ -495,8 +603,17 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
     size_t offset = 0;
 
     for (size_t chunkId = 0; chunkId < chunkCount; ++chunkId) {
+        const size_t remainingBytes =
+            totalBytes - offset;
+
         const size_t payloadBytes =
-            std::min(maxChunkPayload, totalBytes - offset);
+            std::min(maxChunkPayload, remainingBytes);
+
+        if (payloadBytes > std::numeric_limits<uint16_t>::max()) {
+            std::cerr << "[SendFramePacketToClient] chunk payload too large: "
+                      << payloadBytes << '\n';
+            return;
+        }
 
         UdpChunkHeader hdr{};
         hdr.magic_        = htonl(MAGIC_NUMBER);
@@ -515,7 +632,11 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
         iov[0].iov_base = &hdr;
         iov[0].iov_len = sizeof(UdpChunkHeader);
 
-        iov[1].iov_base = const_cast<uint8_t*>(payloadPtr + offset);
+        iov[1].iov_base =
+            payloadBytes == 0
+                ? nullptr
+                : const_cast<uint8_t*>(wirePayload.data() + offset);
+
         iov[1].iov_len = payloadBytes;
 
         msghdr msg{};
@@ -536,7 +657,9 @@ void UDPSrv::SendFramePacketToClient(const FramePacket& framePacket)
 
         if (static_cast<size_t>(sent) != expected) {
             std::cerr << "[SendFramePacketToClient] partial datagram send: sent="
-                      << sent << " expected=" << expected << '\n';
+                      << sent
+                      << " expected=" << expected
+                      << '\n';
             return;
         }
 

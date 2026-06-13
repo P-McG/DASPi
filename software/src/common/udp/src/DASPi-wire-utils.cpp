@@ -75,9 +75,15 @@ GainMsg FromWireGainMsg(GainMsg g)
 
 FrameHeader ToWireFrameHeader(FrameHeader h)
 {
+    h.headerVersion_ = htons(h.headerVersion_);
+    h.wirePixelFormat_ = htons(h.wirePixelFormat_);
     h.magic_ = htonl(h.magic_);
     h.gainMsg_ = ToWireGainMsg(h.gainMsg_);
     h.payloadSize_ = htonl(h.payloadSize_);
+    
+    for (auto& s : h.regionPayloadBytes_) {
+        s = htonl(s);
+    }
 
     for (auto& s : h.regionSizes_) {
         s = htonl(s);
@@ -89,10 +95,16 @@ FrameHeader ToWireFrameHeader(FrameHeader h)
 
 FrameHeader FromWireFrameHeader(FrameHeader h)
 {
+    h.headerVersion_ = ntohs(h.headerVersion_);
+    h.wirePixelFormat_ = ntohs(h.wirePixelFormat_);
     h.magic_ = ntohl(h.magic_);
     h.gainMsg_ = FromWireGainMsg(h.gainMsg_);
     h.payloadSize_ = ntohl(h.payloadSize_);
 
+    for (auto& s : h.regionPayloadBytes_) {
+        s = ntohl(s);
+    }
+    
     for (auto& s : h.regionSizes_) {
         s = ntohl(s);
     }
