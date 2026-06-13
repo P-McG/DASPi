@@ -125,30 +125,64 @@ sockaddr_in UDPClnt::FillingClientInformation(const in_addr_t clntAddr, const in
     
     return clntAddr_;
 };
-	
+
+namespace {
+
+void ConfigureUdpReceiveBuffer(int sockfd, int requestedBytes)
+{
+    if (setsockopt(sockfd,
+                   SOL_SOCKET,
+                   SO_RCVBUF,
+                   &requestedBytes,
+                   sizeof(requestedBytes)) < 0) {
+        std::cerr << "[UDPClnt] SO_RCVBUF failed requested="
+                  << requestedBytes
+                  << " errno=" << errno
+                  << " " << std::strerror(errno)
+                  << '\n';
+        return;
+    }
+
+    int actualBytes = 0;
+    socklen_t actualLen = sizeof(actualBytes);
+
+    if (getsockopt(sockfd,
+                   SOL_SOCKET,
+                   SO_RCVBUF,
+                   &actualBytes,
+                   &actualLen) < 0) {
+        std::cerr << "[UDPClnt] SO_RCVBUF getsockopt failed errno="
+                  << errno
+                  << " " << std::strerror(errno)
+                  << '\n';
+        return;
+    }
+
+    std::cout << "[UDPClnt] SO_RCVBUF requested="
+              << requestedBytes
+              << " actual="
+              << actualBytes
+              << '\n';
+}
+
+} // namespace	
+
 int UDPClnt::CreatingSocketFileDescriptor()
 {
     sockfd_ = socket(AF_INET, SOCK_DGRAM, 0);
+
     if (sockfd_ < 0) {
         perror("socket creation failed");
         std::exit(EXIT_FAILURE);
     }
 
-    const int rcvbuf = 64 * 1024 * 1024;
-    if (setsockopt(sockfd_, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf)) < 0) {
-        std::cerr << "[UDPClnt] SO_RCVBUF failed errno="
-                  << errno << " " << std::strerror(errno) << std::endl;
-    }
-
-    int actual = 0;
-    socklen_t actualLen = sizeof(actual);
-    if (getsockopt(sockfd_, SOL_SOCKET, SO_RCVBUF, &actual, &actualLen) == 0) {
-        std::cout << "[UDPClnt] SO_RCVBUF requested=" << rcvbuf
-                  << " actual=" << actual << std::endl;
-    }
+    constexpr int requestedReceiveBufferBytes = 64 * 1024 * 1024;
+    ConfigureUdpReceiveBuffer(sockfd_, requestedReceiveBufferBytes);
 
     return 0;
 }
+
+
 
 // Filling server information
 /*
