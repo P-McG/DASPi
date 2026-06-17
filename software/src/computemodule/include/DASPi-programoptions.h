@@ -11,6 +11,10 @@ struct ProgramOptions {
     int framePort{0};
     bool reverseModuleOrder{false};
     std::vector<std::string> serverIps;
+
+    // Optional text file:
+    //   <moduleIndex> <yawDeg> <pitchDeg> <rollDeg>
+    std::string cameraCalibrationPath;
 };
 
 }//DASPi

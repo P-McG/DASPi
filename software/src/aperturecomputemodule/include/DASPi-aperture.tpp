@@ -1584,6 +1584,150 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
     }
 
     const auto tMapCopyDone = std::chrono::steady_clock::now();
+    
+    /*
+     * ChArUco calibration observation capture.
+     *
+     * This must run here, before FrameBufferTransformation(), because this is
+     * still the native sensor image. Once the image is masked/projected into the
+     * spherical topology, the original camera pixel geometry is no longer valid
+     * for calibration.
+     *
+     * Output:
+     *   /tmp/daspi-charuco-observations-module<N>.csv
+     *
+     * CSV columns:
+     *   frame,module,facet,corner_id,x,y
+     */
+    constexpr bool kEnableCharucoObservationCapture = true;
+    constexpr std::uint64_t kCharucoDetectPeriodFrames = 10;
+    
+    if constexpr (kEnableCharucoObservationCapture) {
+        if ((frameNumber % kCharucoDetectPeriodFrames) == 0) {
+            cv::Mat raw16(
+                static_cast<int>(activeHeight),
+                static_cast<int>(activeWidth),
+                CV_16UC1,
+                activeFrame.data()
+            );
+    
+            cv::Mat bgr16;
+            cv::Mat bgr8;
+            cv::Mat gray8;
+    
+            /*
+             * The IMX296 stream is BGGR Bayer. Demosaic before marker detection so
+             * the detector sees a normal grayscale image rather than Bayer mosaic
+             * structure.
+             */
+            cv::cvtColor(raw16, bgr16, cv::COLOR_BayerBG2BGR);
+            bgr16.convertTo(bgr8, CV_8UC3, 1.0 / 256.0);
+            cv::cvtColor(bgr8, gray8, cv::COLOR_BGR2GRAY);
+    
+            /*
+             * Board definition.
+             *
+             * Start with:
+             *   7 x 5 squares
+             *   40 mm square length
+             *   20 mm marker length
+             *
+             * The actual unit does not matter for corner observation capture, but
+             * the same values must be used later by the solver.
+             */
+            const cv::aruco::Dictionary dictionary =
+                cv::aruco::getPredefinedDictionary(
+                    cv::aruco::DICT_4X4_50
+                );
+    
+            cv::aruco::CharucoBoard charucoBoard(
+                cv::Size(7, 5),
+                0.040f,
+                0.020f,
+                dictionary
+            );
+    
+            cv::aruco::CharucoParameters charucoParams;
+            cv::aruco::DetectorParameters detectorParams;
+    
+            cv::aruco::CharucoDetector charucoDetector(
+                charucoBoard,
+                charucoParams,
+                detectorParams
+            );
+    
+            std::vector<cv::Point2f> charucoCorners;
+            std::vector<int> charucoIds;
+            std::vector<std::vector<cv::Point2f>> markerCorners;
+            std::vector<int> markerIds;
+    
+            charucoDetector.detectBoard(
+                gray8,
+                charucoCorners,
+                charucoIds,
+                markerCorners,
+                markerIds
+            );
+    
+            if (charucoIds.size() >= 4) {
+                static std::ofstream charucoCsv;
+                static bool wroteHeader = false;
+    
+                if (!charucoCsv.is_open()) {
+                    const std::string path =
+                        "/tmp/daspi-charuco-observations-module" +
+                        std::to_string(moduleIndex_) +
+                        ".csv";
+    
+                    charucoCsv.open(path, std::ios::out | std::ios::app);
+    
+                    if (!charucoCsv) {
+                        std::cerr << "[charuco] failed to open " << path << '\n';
+                    } else {
+                        std::cout << "[charuco] writing observations to "
+                                  << path << '\n';
+                    }
+                }
+    
+                if (charucoCsv) {
+                    if (!wroteHeader) {
+                        charucoCsv
+                            << "# DASPi ChArUco observations\n"
+                            << "# board_squares_x=7\n"
+                            << "# board_squares_y=5\n"
+                            << "# square_length_m=0.040\n"
+                            << "# marker_length_m=0.020\n"
+                            << "# dictionary=DICT_4X4_50\n"
+                            << "frame,module,facet,corner_id,x,y\n";
+    
+                        wroteHeader = true;
+                    }
+    
+                    for (std::size_t i = 0; i < charucoIds.size(); ++i) {
+                        charucoCsv
+                            << frameNumber << ','
+                            << moduleIndex_ << ','
+                            << facetIndex_ << ','
+                            << charucoIds[i] << ','
+                            << charucoCorners[i].x << ','
+                            << charucoCorners[i].y << '\n';
+                    }
+    
+                    charucoCsv.flush();
+                }
+    
+                if ((frameNumber % 60) == 0) {
+                    std::cout << "[charuco]"
+                              << " frame=" << frameNumber
+                              << " module=" << moduleIndex_
+                              << " facet=" << facetIndex_
+                              << " markers=" << markerIds.size()
+                              << " corners=" << charucoIds.size()
+                              << '\n';
+                }
+            }
+        }
+    }
 
     if constexpr (kWriteBayerDebugImages) {
         cv::Mat raw16(static_cast<int>(activeHeight),

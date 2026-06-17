@@ -19,6 +19,12 @@
 #include <condition_variable>
 #include <thread>
 
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/objdetect/aruco_detector.hpp>
+#include <opencv2/objdetect/charuco_detector.hpp>
+
 #include <libcamera/libcamera.h>
 #include <libcamera/camera_manager.h>
 #include <libcamera/camera.h>

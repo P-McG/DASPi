@@ -1,0 +1,15 @@
+# DASPi camera calibration correction file
+#
+# Format:
+#   module_index yaw_deg pitch_deg roll_deg
+#
+# Corrections are applied in the camera's local axes:
+#   yaw   -> local +Y
+#   pitch -> local +X
+#   roll  -> local +Z
+#
+# These are small physical mounting offsets applied after the nominal
+# compile-time topology pose.
+
+0 0.0 0.0 0.0
+1 0.0 0.0 0.0

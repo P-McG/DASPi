@@ -21,6 +21,11 @@ struct CameraConfig {
     
     // Extra local-axis roll correction around camera +Z.
     double localRollDeg{0.0};
+    
+    // Runtime/generated physical mounting correction, in camera-local axes.
+    double calibrationYawDeg{0.0};
+    double calibrationPitchDeg{0.0};
+    double calibrationRollDeg{0.0};
 
     // Which physical module produced this logical stream.
     int moduleIndex{-1};

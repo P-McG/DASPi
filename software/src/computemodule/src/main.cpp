@@ -23,6 +23,7 @@
 #include "DASPi-logger.h"
 #include "DASPi-aperture-peer.h"
 #include "DASPi-camera-config.h"
+#include "DASPi-camera-calibration.h"
 #include "DASPi-fisheye-camera-model.h"
 #include "DASPi-fisheye-params.h"
 #include "DASPi-image-rotation.h"
@@ -323,6 +324,7 @@ void PrintUsage(const char* programName)
         << " --usbBaseIp=<client_ip>"
         << " --port=<frame_port>"
         << " [--serverIps=<ip0,ip1,...>]"
+        << " [--cameraCalibration=<path>]"
         << " [--reverseModuleOrder]\n"
         << "Example: " << programName
         << " --nApertureComputeModules=2 --usbBaseIp=10.0.2.1 --port=5000\n";
@@ -385,6 +387,12 @@ ProgramOptions ParseArgs(int argc, char* argv[])
             }
             continue;
         }
+        
+        const std::string prefix4 = "--cameraCalibration=";
+        if (arg.rfind(prefix4, 0) == 0) {
+            options.cameraCalibrationPath = arg.substr(prefix4.size());
+            continue;
+        }
 
         PrintUsage(argv[0]);
         throw std::runtime_error("Unknown argument: " + arg);
@@ -413,6 +421,7 @@ void PrintProgramOptions(const ProgramOptions& options)
               << " usbBaseIp='" << options.usbBaseIp
               << "' baseFramePort=" << options.framePort
               << " reverseModuleOrder=" << (options.reverseModuleOrder ? "true" : "false")
+              << " cameraCalibrationPath='" << options.cameraCalibrationPath << "'"
               << '\n';
 
     if (!options.serverIps.empty()) {
@@ -4906,9 +4915,20 @@ int main(int argc, char* argv[])
          */
         CameraSetup<n> cameraSetup =
             makeCameraConfigs<n, SphereSpaceType>();
-
-        const std::vector<CameraConfig>& configs =
+        
+        std::vector<CameraConfig>& configs =
             cameraSetup.configs;
+        
+        const auto cameraCalibrationCorrections =
+            LoadCameraCalibrationCorrections(
+                options.cameraCalibrationPath,
+                kModuleCount
+            );
+        
+        ApplyCameraCalibrationCorrections(
+            configs,
+            cameraCalibrationCorrections
+        );
 
         const RigData<n>& rig =
             cameraSetup.rig;
