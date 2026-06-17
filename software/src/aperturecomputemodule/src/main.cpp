@@ -34,7 +34,10 @@
 using namespace DASPi;
 
 template<std::size_t FaceIndex, std::size_t ModuleIndex>
-int RunApertureForFace(const std::string& clientIp, int port)
+int RunApertureForFace(
+    const std::string& clientIp,
+    int port,
+    const std::string& cameraCalibrationPath)
 {
     std::cout << "ModuleIndex: " << ModuleIndex
               << " -> Global FaceIndex: " << FaceIndex
@@ -45,7 +48,8 @@ int RunApertureForFace(const std::string& clientIp, int port)
         ModuleIndex
     > aperture(
         clientIp,
-        static_cast<std::size_t>(port)
+        static_cast<std::size_t>(port),
+        cameraCalibrationPath
     );
 
     aperture.ContinuousCapture(0);
@@ -53,7 +57,10 @@ int RunApertureForFace(const std::string& clientIp, int port)
 }
 
 template<class SphereSpaceType, std::size_t ModuleIndex>
-int RunApertureForModule(const std::string& clientIp, int port)
+int RunApertureForModule(
+    const std::string& clientIp,
+    int port,
+    const std::string& cameraCalibrationPath)
 {
     static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
     static_assert(ModuleIndex < SphereSpaceType::moduleFacesN_);
@@ -65,7 +72,11 @@ int RunApertureForModule(const std::string& clientIp, int port)
               << " -> Global FaceIndex: " << FaceIndex
               << std::endl;
 
-    return RunApertureForFace<FaceIndex, ModuleIndex>(clientIp, port);
+    return RunApertureForFace<FaceIndex, ModuleIndex>(
+        clientIp,
+        port,
+        cameraCalibrationPath
+    );
 }
 
 template<class SphereSpaceType, std::size_t... ModuleIndices>
@@ -73,9 +84,10 @@ int RunApertureForModuleIndexImpl(
     std::size_t requestedModuleIndex,
     const std::string& clientIp,
     int port,
+    const std::string& cameraCalibrationPath,
     std::index_sequence<ModuleIndices...>)
 {
-    using RunFunction = int (*)(const std::string&, int);
+    using RunFunction = int (*)(const std::string&, int, const std::string&);
 
     static constexpr std::array<
         std::pair<std::size_t, RunFunction>,
@@ -89,7 +101,7 @@ int RunApertureForModuleIndexImpl(
 
     for (const auto& [moduleIndex, run] : dispatchTable) {
         if (requestedModuleIndex == moduleIndex) {
-            return run(clientIp, port);
+            return run(clientIp, port, cameraCalibrationPath);
         }
     }
 
@@ -106,7 +118,8 @@ int RunApertureForModuleIndexImpl(
 int RunApertureForModuleIndex(
     std::size_t requestedModuleIndex,
     const std::string& clientIp,
-    int port)
+    int port,
+    const std::string& cameraCalibrationPath)
 {
     using SphereSpaceType = typename DASPi::tpgy_t::Space_t;
 
@@ -114,6 +127,7 @@ int RunApertureForModuleIndex(
         requestedModuleIndex,
         clientIp,
         port,
+        cameraCalibrationPath,
         std::make_index_sequence<SphereSpaceType::moduleFacesN_>{}
     );
 }
@@ -185,6 +199,8 @@ int main(int argc, char* argv[])
     std::string clientIp;
     int port{5000};
     
+    std::string cameraCalibrationPath;
+    
     std::size_t moduleIndex{};
     bool hasModuleIndex{false};
 
@@ -218,10 +234,15 @@ int main(int argc, char* argv[])
                 return 1;
             }
         }
+        else if (arg.rfind("--cameraCalibration=", 0) == 0) {
+            cameraCalibrationPath =
+                arg.substr(std::string("--cameraCalibration=").size());
+        }
         else {
             std::cerr << "Unknown argument: " << arg << std::endl;
             std::cerr << "Usage: " << argv[0]
-                      << " [--verbose] --clientIp=<clientIp> --port=<port> --moduleFaceIndex=<0-19>\n";
+                      << " [--verbose] --clientIp=<clientIp> --port=<port> "
+                        << "--moduleIndex=<module> [--cameraCalibration=<path>]\n";
             return 1;
         }
     }
@@ -244,7 +265,15 @@ int main(int argc, char* argv[])
     std::cout << "Client Ip: " << clientIp << std::endl;
     std::cout << "Port: " << port << std::endl;
     std::cout << "ModuleIndex: " << moduleIndex << std::endl;
+    std::cout << "CameraCalibration: "
+          << (cameraCalibrationPath.empty() ? "<none>" : cameraCalibrationPath)
+          << std::endl;
 
-    return RunApertureForModuleIndex(moduleIndex, clientIp, port);
+    return RunApertureForModuleIndex(
+        moduleIndex,
+        clientIp,
+        port,
+        cameraCalibrationPath
+    );
 }
 

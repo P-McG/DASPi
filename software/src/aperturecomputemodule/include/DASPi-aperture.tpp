@@ -13,6 +13,7 @@
 #include <arm_neon.h>
 #include <iomanip>
 #include <algorithm>
+#include <sstream>
 
 #include <libcamera/controls.h>
 #include <libcamera/control_ids.h>  // Required for controls::FrameDurationLimits
@@ -37,11 +38,194 @@ inline constexpr bool kApertureTxLogQueue = false;
 inline constexpr bool kApertureTxLogRequest = false;
 inline constexpr bool kApertureTxLogUdpFrame = false;
 
+struct ApertureCameraCalibrationCorrection {
+    double yawDeg{0.0};
+    double pitchDeg{0.0};
+    double rollDeg{0.0};
+};
+
+inline double ApertureDegToRad(double deg)
+{
+    return deg * std::numbers::pi / 180.0;
+}
+
+inline Eigen::Matrix3d MakeApertureCameraCalibrationDeltaLocal(
+    const ApertureCameraCalibrationCorrection& c)
+{
+    const Eigen::Matrix3d Ryaw =
+        Eigen::AngleAxisd(
+            ApertureDegToRad(c.yawDeg),
+            Eigen::Vector3d::UnitY()
+        ).toRotationMatrix();
+
+    const Eigen::Matrix3d Rpitch =
+        Eigen::AngleAxisd(
+            ApertureDegToRad(c.pitchDeg),
+            Eigen::Vector3d::UnitX()
+        ).toRotationMatrix();
+
+    const Eigen::Matrix3d Rroll =
+        Eigen::AngleAxisd(
+            ApertureDegToRad(c.rollDeg),
+            Eigen::Vector3d::UnitZ()
+        ).toRotationMatrix();
+
+    return Ryaw * Rpitch * Rroll;
+}
+
+inline std::string ExpandApertureUserPath(const std::string& path)
+{
+    if (path.empty()) {
+        return path;
+    }
+
+    if (path == "~") {
+        const char* home = std::getenv("HOME");
+        if (home == nullptr || std::string(home).empty()) {
+            throw std::runtime_error("Cannot expand '~': HOME is not set");
+        }
+
+        return std::string(home);
+    }
+
+    if (path.rfind("~/", 0) == 0) {
+        const char* home = std::getenv("HOME");
+        if (home == nullptr || std::string(home).empty()) {
+            throw std::runtime_error("Cannot expand '~/': HOME is not set");
+        }
+
+        return std::string(home) + path.substr(1);
+    }
+
+    return path;
+}
+
+inline ApertureCameraCalibrationCorrection
+LoadApertureCameraCalibrationCorrectionForModule(
+    const std::string& path,
+    std::size_t moduleIndex,
+    std::size_t moduleCount)
+{
+    ApertureCameraCalibrationCorrection result{};
+
+    if (path.empty()) {
+        std::cout << "[aperture calibration] no calibration file supplied; "
+                  << "using zero correction for module "
+                  << moduleIndex
+                  << '\n';
+
+        return result;
+    }
+
+    const std::string expandedPath =
+        ExpandApertureUserPath(path);
+
+    std::ifstream in(expandedPath);
+
+    if (!in) {
+        throw std::runtime_error(
+            "Failed to open aperture camera calibration file: " +
+            expandedPath
+        );
+    }
+
+    std::string line;
+    std::size_t lineNumber = 0;
+    bool found = false;
+
+    while (std::getline(in, line)) {
+        ++lineNumber;
+
+        const std::size_t hash = line.find('#');
+        if (hash != std::string::npos) {
+            line.erase(hash);
+        }
+
+        std::istringstream ss(line);
+
+        std::size_t fileModuleIndex = 0;
+        ApertureCameraCalibrationCorrection c{};
+
+        if (!(ss >> fileModuleIndex >> c.yawDeg >> c.pitchDeg >> c.rollDeg)) {
+            continue;
+        }
+
+        if (fileModuleIndex >= moduleCount) {
+            throw std::runtime_error(
+                "Aperture calibration module index out of range on line " +
+                std::to_string(lineNumber) +
+                ": " + std::to_string(fileModuleIndex)
+            );
+        }
+
+        if (fileModuleIndex == moduleIndex) {
+            result = c;
+            found = true;
+        }
+    }
+
+    if (!found) {
+        std::cout << "[aperture calibration] no entry for module "
+                  << moduleIndex
+                  << " in "
+                  << expandedPath
+                  << "; using zero correction\n";
+    } else {
+        std::cout << "[aperture calibration]"
+                  << " module=" << moduleIndex
+                  << " file=" << expandedPath
+                  << " yaw_deg=" << result.yawDeg
+                  << " pitch_deg=" << result.pitchDeg
+                  << " roll_deg=" << result.rollDeg
+                  << '\n';
+    }
+
+    return result;
+}
+
+template<unsigned int FacetIndex, std::size_t ModuleIndex>
+void Aperture<FacetIndex, ModuleIndex>::ApplyCameraCalibrationBeforeSphereMap()
+{
+    constexpr std::size_t moduleCount =
+        SphereSpaceType::moduleFacesN_;
+
+    const ApertureCameraCalibrationCorrection correction =
+        LoadApertureCameraCalibrationCorrectionForModule(
+            cameraCalibrationPath_,
+            ModuleIndex,
+            moduleCount
+        );
+
+    const Eigen::Matrix3d RcwNominal =
+        MakeModuleCameraRcw<
+            SphereSpaceType,
+            ModuleIndex,
+            FacetIndex
+        >();
+
+    const Eigen::Matrix3d Rdelta =
+        MakeApertureCameraCalibrationDeltaLocal(correction);
+
+    const Eigen::Matrix3d RcwCorrected =
+        RcwNominal * Rdelta;
+
+    sphericalMap_.RebuildWithCameraRcw(
+        OverlapTopologyRef(),
+        RcwCorrected
+    );
+
+    std::cout << "[aperture calibration] rebuilt spherical map"
+              << " module=" << ModuleIndex
+              << " facet=" << FacetIndex
+              << '\n';
+}
+
 // Constructor
 template<unsigned int FacetIndex, std::size_t ModuleIndex>
 Aperture<FacetIndex, ModuleIndex>::Aperture(
     const std::string clientIp,
-    const size_t port
+    const size_t port,
+    const std::string cameraCalibrationPath
 )
     : tpgy_(),
       tpgydp_( static_cast<const OverlapTopologyType&>( static_cast<const FacetTopologyType&>(tpgy_))),
@@ -50,7 +234,8 @@ Aperture<FacetIndex, ModuleIndex>::Aperture(
       controlClnt_{INADDR_ANY,
                    static_cast<int>(port + 1),
                    inet_addr(clientIp.c_str()),
-                   static_cast<int>(port + 1)}
+                   static_cast<int>(port + 1)},
+      cameraCalibrationPath_(cameraCalibrationPath)
 {
     std::cout << "[TX sizeof]\n";
     std::cout << "sizeof(MessageHeader)=" << sizeof(MessageHeader) << '\n';
@@ -63,6 +248,7 @@ Aperture<FacetIndex, ModuleIndex>::Aperture(
     CreateCameraManager();
     AquireCamera();
     Stream();
+    ApplyCameraCalibrationBeforeSphereMap();
     
     //todo Better later: resend until Compute replies with a small SphereMapAck.
     for (int i = 0; i < 5; ++i) {

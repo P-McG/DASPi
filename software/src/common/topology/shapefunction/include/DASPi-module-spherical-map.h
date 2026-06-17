@@ -91,6 +91,18 @@ public:
     {      
         Build(topology);
     }
+    
+    template<class OverlapTopologyType>
+    void RebuildWithCameraRcw(
+        const OverlapTopologyType& topology,
+        const Eigen::Matrix3d& Rcw)
+    {
+        for (auto& region : regionGlobalIndices_) {
+            region.clear();
+        }
+    
+        BuildWithCameraRcw(topology, Rcw);
+    }
 
     constexpr std::uint32_t OutputWidth() const noexcept
     {
@@ -122,33 +134,41 @@ private:
                 ModuleIndex,
                 FacetIndex
             >();
-
+    
+        BuildWithCameraRcw(topology, Rcw);
+    }
+    
+    template<class OverlapTopologyType>
+    void BuildWithCameraRcw(
+        const OverlapTopologyType& topology,
+        const Eigen::Matrix3d& Rcw)
+    {
         const auto& nonOverlapTopology =
             static_cast<
                 const typename OverlapTopologyType::NonOverlapFacetTopology_t&
             >(topology);
-
+    
         if constexpr (debugSphericalEdgeError_) {
             DebugPrintFaceEdgeProjectionError(
                 nonOverlapTopology,
                 Rcw
             );
         }
-
+    
         AppendFromIndexLinear(
             0,
             *nonOverlapTopology.indexLinearMax_,
             nonOverlapTopology.size(),
             Rcw
         );
-
+    
         for (std::size_t regionIndex = 1;
              regionIndex < regionCount_;
              ++regionIndex) {
-
+    
             const std::size_t overlapIndex =
                 regionIndex - 1;
-
+    
             AppendFromIndexLinear(
                 regionIndex,
                 *topology.indexLinearMaxs_[overlapIndex],

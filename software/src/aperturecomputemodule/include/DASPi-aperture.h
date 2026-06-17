@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <array>
 #include <vector>
-
+#include <cstdlib>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
@@ -143,7 +143,11 @@ namespace DASPi{
         FPSCounter fpsSent_{"aperturecomputemodule sent"};
     
     public:
-        Aperture(const std::string clientIp, const size_t port);
+        Aperture(
+            const std::string clientIp,
+            const size_t port,
+            const std::string cameraCalibrationPath = {}
+        );
         ~Aperture();
 
         auto OverlapTopologyRef() -> OverlapTopologyType&;
@@ -207,14 +211,17 @@ namespace DASPi{
 
     private:
         std::thread controlThread_;
-        
+        std::string cameraCalibrationPath_;    
+            
         mutable std::mutex gainMutex_;
         float latestBrightnessGainApply_{1.0f};
         float latestRGainApply_{1.0f};
         float latestBGainApply_{1.0f};
         uint32_t latestGainFrameId_{0};
         bool gainValid_{false};
+
         
+        void ApplyCameraCalibrationBeforeSphereMap();
         void BuildBlendWeightMapsQ12();
         void ApplyBlendWeightsQ12(tpgydp_t& output);        
         bool ReceiveGainReply();
