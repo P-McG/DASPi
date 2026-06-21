@@ -22,3 +22,11 @@ executable(
   dependencies : compute_deps,
   cpp_args : ['-Ddebug'],
 )
+
+executable(
+  'daspi-calibrate-charuco',
+  files('src/daspi-calibrate-charuco.cpp'),
+  include_directories : [common_inc, compute_inc],
+  dependencies : compute_deps,
+  cpp_args : ['-Ddebug'],
+)

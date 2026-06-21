@@ -1814,22 +1814,22 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
              * Board definition.
              *
              * Start with:
-             *   7 x 5 squares
-             *   40 mm square length
-             *   20 mm marker length
+             *   15 x 15 squares
+             *   30 mm square length
+             *   23 mm marker length
              *
              * The actual unit does not matter for corner observation capture, but
              * the same values must be used later by the solver.
              */
             const cv::aruco::Dictionary dictionary =
                 cv::aruco::getPredefinedDictionary(
-                    cv::aruco::DICT_4X4_50
+                    cv::aruco::DICT_4X4_250
                 );
     
             cv::aruco::CharucoBoard charucoBoard(
-                cv::Size(7, 5),
-                0.040f,
-                0.020f,
+                cv::Size(15, 15),
+                0.030f,
+                0.023f,
                 dictionary
             );
     
@@ -1865,7 +1865,7 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
                         std::to_string(moduleIndex_) +
                         ".csv";
     
-                    charucoCsv.open(path, std::ios::out | std::ios::app);
+                    charucoCsv.open(path, std::ios::out | std::ios::trunc);
     
                     if (!charucoCsv) {
                         std::cerr << "[charuco] failed to open " << path << '\n';
@@ -2291,7 +2291,7 @@ inline void Aperture<FacetIndex, ModuleIndex>::ApplyWhiteBalanceToMosaic_BGGR(
 	std::span<uint16_t> data,
 	const GainMsg& gainMsg
 ){
-	log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_BGGR]");
+	//log_verbose("[Aperture::ApplyWhiteBalanceToMosaic_BGGR]");
 	
 	// Validate sizes (elements == pixels)
     const auto& overlapTopology =
