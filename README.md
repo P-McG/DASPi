@@ -36,6 +36,7 @@ System starts automatically via systemd
 - [UDP Protocol](docs/udp.md)
 - [PXE's node first time bring up checklist](docs/pxe_node_first_time_bring_up_checklist.md)
 - [Aperture rigs](docs/rigs.md)
+- [Calibrations](docs/calibration.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## Quick Debug
