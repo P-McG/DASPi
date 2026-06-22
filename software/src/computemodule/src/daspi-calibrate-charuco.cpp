@@ -21,6 +21,8 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 
+#include "DASPi-runtime-camera-model.h"
+
 //#include "DASPi-shape-config.h"
 //#include "DASPi-overlapspace.h"
 //#include "DASPi-icosahedronspherespace.h"
@@ -47,10 +49,10 @@ struct Options {
     float markerLength{0.023f};
     std::string dictionaryName{"DICT_4X4_250"};
 
-    double fx{600.0};
-    double fy{600.0};
-    double cx{728.0};
-    double cy{544.0};
+    double fx{DASPi::RuntimeCameraIntrinsics::fx};
+    double fy{DASPi::RuntimeCameraIntrinsics::fy};
+    double cx{DASPi::RuntimeCameraIntrinsics::cx};
+    double cy{DASPi::RuntimeCameraIntrinsics::cy};
 
     int minCorners{6};
 };
@@ -183,10 +185,10 @@ void PrintUsage(const char* program)
         << "[--poseCsv=charuco-pose-report.csv] "
         << "[--relativePoseCsv=relative-camera-pose-report.csv] "
         << "[--writeCalibration=camera-calibration.txt] "
-        << "[--squaresX=7] [--squaresY=5] "
-        << "[--squareLength=0.040] [--markerLength=0.020] "
-        << "[--dictionary=DICT_5X5_250] "
-        << "[--fx=600] [--fy=600] [--cx=728] [--cy=544] "
+        << "[--squaresX=15] [--squaresY=15] "
+        << "[--squareLength=0.030] [--markerLength=0.023] "
+        << "[--dictionary=DICT_4X4_250] "
+        << "[--fx=<runtime>] [--fy=<runtime>] [--cx=<runtime>] [--cy=<runtime>] "
         << "[--calibrateIntrinsics] "
         << "[--imageWidth=1456] [--imageHeight=1088] "
         << "[--intrinsicsPrefix=camera-intrinsics] "
@@ -1069,13 +1071,27 @@ int main(int argc, char* argv[])
                   << " note=dictionary_is_only_used_by_aperture_detector"
                   << '\n';
 
-        std::cout << "[camera initial guess]"
-                  << " fx=" << options.fx
-                  << " fy=" << options.fy
-                  << " cx=" << options.cx
-                  << " cy=" << options.cy
-                  << " distortion=calibrated_if_requested"
-                  << '\n';
+        if (options.calibrateIntrinsics) {
+            std::cout
+                << "[camera model]"
+                << " solve=calibrated_intrinsics"
+                << " initial_fx=" << options.fx
+                << " initial_fy=" << options.fy
+                << " initial_cx=" << options.cx
+                << " initial_cy=" << options.cy
+                << " note=runtime_ModuleSphericalMap_does_not_yet_use_these_intrinsics"
+                << '\n';
+        } else {
+            std::cout
+                << "[camera model]"
+                << " solve=runtime_gnomonic"
+                << " fx=" << options.fx
+                << " fy=" << options.fy
+                << " cx=" << options.cx
+                << " cy=" << options.cy
+                << " distortion=zero"
+                << '\n';
+        }
 
         std::map<FrameKey, FrameObservations> observations;
 
@@ -1171,7 +1187,13 @@ int main(int argc, char* argv[])
                         flags
                     );
         
-                cameraModels[module] =
+                /*
+                 * Keep solvePnP on the DASPi runtime gnomonic model.
+                 *
+                 * The calibrated intrinsics are written for diagnostics only. If we use them
+                 * here, the calibration solve no longer matches ModuleSphericalMap.
+                 */
+                 cameraModels[module] =
                     CameraModel{
                         .cameraMatrix = cameraMatrix.clone(),
                         .distCoeffs = distCoeffs.clone(),

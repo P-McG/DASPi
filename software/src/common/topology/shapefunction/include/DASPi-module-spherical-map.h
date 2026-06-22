@@ -20,6 +20,7 @@
 #include "DASPi-icosahedronspherespace.h"
 #include "DASPi-module-spherical-basis.h"
 #include "DASPi-sphere-map-wire.h"
+#include "DASPi-runtime-camera-model.h"
 
 namespace DASPi {
 
@@ -73,7 +74,7 @@ public:
      * It is the current bridge from sensor pixel offsets to angular offsets.
      */
     static constexpr double cameraFocalPx_ =
-        DASPi::detail::IcosahedronTables::cameraFocalPx_;
+        DASPi::RuntimeCameraIntrinsics{}.fx;
         
     static constexpr bool debugSphericalEdgeError_{false};
     static constexpr int debugEdgeSampleCount_{8};
@@ -335,56 +336,12 @@ private:
     
     static Eigen::Vector3d SensorPointToCameraRay_Gnomonic(double x, double y)
     {
-        const double cx =
-            static_cast<double>(sensorWidthValue_) * 0.5;
-    
-        const double cy =
-            static_cast<double>(sensorHeightValue_) * 0.5;
-    
-        constexpr double flatTriangleRadiusPx =
-            0.75 *
-            static_cast<double>(sensorHeightValue_) *
-            std::numbers::sqrt3 / 3.0;
-    
-        constexpr double faceCenterToVertexAngleRad =
-            0.6523581397843682;
-    
-        constexpr double cameraFocalPx =
-            flatTriangleRadiusPx /
-            std::tan(faceCenterToVertexAngleRad);
-    
-        const double nx =
-            (x - cx) / cameraFocalPx;
-    
-        const double ny =
-            (y - cy) / cameraFocalPx;
-    
-        return Eigen::Vector3d(
-            nx,
-            ny,
-            1.0
-        ).normalized();
+        return DASPi::RuntimePixelToCameraRay(x, y);
     }
     
     static Eigen::Vector3d SensorPointToCameraRay(double x, double y)
     {
-        const double cx =
-            static_cast<double>(sensorWidthValue_) * 0.5;
-    
-        const double cy =
-            static_cast<double>(sensorHeightValue_) * 0.5;
-    
-        const double nx =
-            (x - cx) / cameraFocalPx_;
-    
-        const double ny =
-            (y - cy) / cameraFocalPx_;
-    
-        return Eigen::Vector3d(
-            nx,
-            ny,
-            1.0
-        ).normalized();
+        return DASPi::RuntimePixelToCameraRay(x, y);
     }
     
     //static Eigen::Vector3d SensorPointToCameraRay(double x, double y)
