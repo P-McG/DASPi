@@ -1079,7 +1079,7 @@ int main(int argc, char* argv[])
                 << " initial_fy=" << options.fy
                 << " initial_cx=" << options.cx
                 << " initial_cy=" << options.cy
-                << " note=runtime_ModuleSphericalMap_does_not_yet_use_these_intrinsics"
+                << " note=runtime_ModuleSphericalMap_should_load_matching_camera_intrinsics_module_yml"
                 << '\n';
         } else {
             std::cout
