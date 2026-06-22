@@ -46,7 +46,29 @@ int RunApertureForFace(
               << " -> Global FaceIndex: " << FaceIndex
               << std::endl;
 
-    DASPi::Aperture<FacetIndex, ModuleIndex> aperture(
+    DASPi::Aperture<FaceIndex, ModuleIndex> aperture(
+        clientIp,
+        static_cast<std::size_t>(port),
+        cameraCalibrationPath,
+        cameraIntrinsicsPrefix
+    );
+
+    aperture.ContinuousCapture(0);
+    return 0;
+}
+
+template<std::size_t FaceIndex, std::size_t ModuleIndex>
+int RunApertureForFace(
+    const std::string& clientIp,
+    int port,
+    const std::string& cameraCalibrationPath,
+    const std::string& cameraIntrinsicsPrefix)
+{
+    std::cout << "ModuleIndex: " << ModuleIndex
+              << " -> Global FaceIndex: " << FaceIndex
+              << std::endl;
+
+    DASPi::Aperture<FaceIndex, ModuleIndex> aperture(
         clientIp,
         static_cast<std::size_t>(port),
         cameraCalibrationPath,
@@ -59,7 +81,6 @@ int RunApertureForFace(
 
 template<class SphereSpaceType, std::size_t ModuleIndex>
 int RunApertureForModule(
-    std::size_t moduleIndex,
     const std::string& clientIp,
     int port,
     const std::string& cameraCalibrationPath,
@@ -71,13 +92,7 @@ int RunApertureForModule(
     constexpr std::size_t FaceIndex =
         SphereSpaceType::template ModuleFaceIndex<ModuleIndex>();
 
-    std::cout << "ModuleIndex: " << ModuleIndex
-              << " -> Global FaceIndex: " << FaceIndex
-              << std::endl;
-
-    return RunApertureForFace(
-        moduleIndex,
-        /* faceIndex */ 0,
+    return RunApertureForFace<FaceIndex, ModuleIndex>(
         clientIp,
         port,
         cameraCalibrationPath,
@@ -91,9 +106,16 @@ int RunApertureForModuleIndexImpl(
     const std::string& clientIp,
     int port,
     const std::string& cameraCalibrationPath,
+    const std::string& cameraIntrinsicsPrefix,
     std::index_sequence<ModuleIndices...>)
 {
-    using RunFunction = int (*)(const std::string&, int, const std::string&);
+    using RunFunction =
+        int (*)(
+            const std::string&,
+            int,
+            const std::string&,
+            const std::string&
+        );
 
     static constexpr std::array<
         std::pair<std::size_t, RunFunction>,
@@ -107,7 +129,12 @@ int RunApertureForModuleIndexImpl(
 
     for (const auto& [moduleIndex, run] : dispatchTable) {
         if (requestedModuleIndex == moduleIndex) {
-            return run(clientIp, port, cameraCalibrationPath);
+            return run(
+                clientIp,
+                port,
+                cameraCalibrationPath,
+                cameraIntrinsicsPrefix
+            );
         }
     }
 
@@ -130,12 +157,16 @@ int RunApertureForModuleIndex(
 {
     using SphereSpaceType = typename DASPi::tpgy_t::Space_t;
 
-    return RunApertureForModule(
+    using ModuleIndexSequence =
+        std::make_index_sequence<SphereSpaceType::moduleFacesN_>;
+
+    return RunApertureForModuleIndexImpl<SphereSpaceType>(
         moduleIndex,
         clientIp,
         port,
         cameraCalibrationPath,
-        cameraIntrinsicsPrefix
+        cameraIntrinsicsPrefix,
+        ModuleIndexSequence{}
     );
 }
 
