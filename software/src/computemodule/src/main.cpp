@@ -12,12 +12,14 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <iomanip>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
 #include <opencv2/opencv.hpp>
 #include <Eigen/Dense>
+#include <Eigen/Geometry>
 
 #include "DASPi-config.h"
 #include "DASPi-logger.h"
@@ -4812,6 +4814,80 @@ cv::Mat BuildFaceMaskForCamera(const ICameraModel& model,
     //return bgr;
 //}
 
+const CameraConfig* FindMainModuleCameraConfig(
+    const std::vector<CameraConfig>& configs,
+    int moduleIndex)
+{
+    for (const CameraConfig& cfg : configs) {
+        if (cfg.moduleIndex == moduleIndex &&
+            cfg.localStreamIndex == 0) {
+            return &cfg;
+        }
+    }
+
+    return nullptr;
+}
+
+void PrintNominalModule0ToModule1RvecDeg(
+    const std::vector<CameraConfig>& configs)
+{
+    const CameraConfig* module0 =
+        FindMainModuleCameraConfig(configs, 0);
+
+    const CameraConfig* module1 =
+        FindMainModuleCameraConfig(configs, 1);
+
+    if (module0 == nullptr || module1 == nullptr) {
+        std::cerr
+            << "[nominal relative] unable to find module 0/1 main camera configs\n";
+        return;
+    }
+
+    /*
+     * Rcw is camera -> world.
+     *
+     * Camera0 -> camera1:
+     *
+     *   X_world = Rcw0 * X_cam0
+     *   X_cam1  = Rcw1^T * X_world
+     *
+     * Therefore:
+     *
+     *   R10 = Rcw1^T * Rcw0
+     */
+    const Eigen::Matrix3d R10 =
+        module1->Rcw.transpose() * module0->Rcw;
+
+    Eigen::AngleAxisd aa(R10);
+
+    if (aa.angle() < 0.0) {
+        aa.angle() = -aa.angle();
+        aa.axis() = -aa.axis();
+    }
+
+    const double pi =
+        3.141592653589793238462643383279502884;
+
+    const Eigen::Vector3d rvecDeg =
+        aa.axis() * aa.angle() * 180.0 / pi;
+
+    std::cout
+        << std::fixed << std::setprecision(9)
+        << "[nominal relative]"
+        << " module0_to_module1_rvec_deg="
+        << rvecDeg.x() << ','
+        << rvecDeg.y() << ','
+        << rvecDeg.z()
+        << '\n';
+
+    std::cout
+        << "[nominal relative]"
+        << " module0_config="
+        << module0->name
+        << " module1_config="
+        << module1->name
+        << '\n';
+}
 
 } // namespace
 
@@ -4918,6 +4994,8 @@ int main(int argc, char* argv[])
         
         std::vector<CameraConfig>& configs =
             cameraSetup.configs;
+            
+        PrintNominalModule0ToModule1RvecDeg(configs);
         
         const auto cameraCalibrationCorrections =
             LoadCameraCalibrationCorrections(

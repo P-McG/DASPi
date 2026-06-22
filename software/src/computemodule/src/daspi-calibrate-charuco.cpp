@@ -13,9 +13,18 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <array>
+#include <iomanip>
 
+#include <Eigen/Dense>
+#include <Eigen/Geometry>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
+
+//#include "DASPi-shape-config.h"
+//#include "DASPi-overlapspace.h"
+//#include "DASPi-icosahedronspherespace.h"
+//#include "DASPi-module-spherical-basis.h"
 
 namespace {
 
@@ -23,6 +32,9 @@ struct Options {
     std::vector<std::string> observationCsvPaths;
 
     std::string poseCsvPath{"charuco-pose-report.csv"};
+    std::string relativePoseCsvPath{"relative-camera-pose-report.csv"};
+    std::string calibrationOutputPath;
+    std::string nominalRelativeRvecDegCsv;
 
     bool calibrateIntrinsics{false};
     int imageWidth{1456};
@@ -44,11 +56,21 @@ struct Options {
 };
 
 struct FrameKey {
+    std::string sessionId{"default"};
+    int poseId{0};
     int module{-1};
     std::uint64_t frame{0};
 
     bool operator<(const FrameKey& other) const
     {
+        if (sessionId != other.sessionId) {
+            return sessionId < other.sessionId;
+        }
+
+        if (poseId != other.poseId) {
+            return poseId < other.poseId;
+        }
+
         if (module != other.module) {
             return module < other.module;
         }
@@ -59,6 +81,7 @@ struct FrameKey {
 
 struct FrameObservations {
     int facet{-1};
+    std::int64_t timestampNs{0};
     std::map<int, cv::Point2f> cornersById;
 };
 
@@ -69,7 +92,34 @@ struct CameraModel {
     double calibrationRms{0.0};
 };
 
+struct SolvedPose {
+    std::string sessionId{"default"};
+    int poseId{0};
+    int module{-1};
+    int facet{-1};
+    std::uint64_t frame{0};
+    std::int64_t timestampNs{0};
+    int corners{0};
+    double rmsPx{0.0};
 
+    cv::Mat rvec;
+    cv::Mat tvec;
+    cv::Mat Rcb;   // board -> camera rotation
+};
+
+struct SharedPoseKey {
+    std::string sessionId{"default"};
+    int poseId{0};
+
+    bool operator<(const SharedPoseKey& other) const
+    {
+        if (sessionId != other.sessionId) {
+            return sessionId < other.sessionId;
+        }
+
+        return poseId < other.poseId;
+    }
+};
 
 std::string Trim(std::string s)
 {
@@ -131,6 +181,8 @@ void PrintUsage(const char* program)
         << "  " << program << " "
         << "--observations=<csv0,csv1,...> "
         << "[--poseCsv=charuco-pose-report.csv] "
+        << "[--relativePoseCsv=relative-camera-pose-report.csv] "
+        << "[--writeCalibration=camera-calibration.txt] "
         << "[--squaresX=7] [--squaresY=5] "
         << "[--squareLength=0.040] [--markerLength=0.020] "
         << "[--dictionary=DICT_5X5_250] "
@@ -138,6 +190,7 @@ void PrintUsage(const char* program)
         << "[--calibrateIntrinsics] "
         << "[--imageWidth=1456] [--imageHeight=1088] "
         << "[--intrinsicsPrefix=camera-intrinsics] "
+        << "[--nominalRelativeRvecDeg=rx,ry,rz] "
         << "[--minCorners=6]\n";
 }
 
@@ -195,6 +248,15 @@ Options ParseArgs(int argc, char* argv[])
         } else if (StartsWith(arg, "--intrinsicsPrefix=")) {
             options.intrinsicsPrefix =
                 arg.substr(std::string("--intrinsicsPrefix=").size());
+        } else if (StartsWith(arg, "--relativePoseCsv=")) {
+            options.relativePoseCsvPath =
+                arg.substr(std::string("--relativePoseCsv=").size());
+        } else if (StartsWith(arg, "--writeCalibration=")) {
+            options.calibrationOutputPath =
+                arg.substr(std::string("--writeCalibration=").size());
+        } else if (StartsWith(arg, "--nominalRelativeRvecDeg=")) {
+            options.nominalRelativeRvecDegCsv =
+                arg.substr(std::string("--nominalRelativeRvecDeg=").size());
         } else if (arg == "--help" || arg == "-h") {
             PrintUsage(argv[0]);
             std::exit(EXIT_SUCCESS);
@@ -379,48 +441,72 @@ void LoadObservationCsv(
             continue;
         }
 
-        if (StartsWith(line, "frame,")) {
+        if (StartsWith(line, "frame,") ||
+            StartsWith(line, "session_id,")) {
             continue;
         }
 
         const std::vector<std::string> fields =
             Split(line, ',');
-
-        if (fields.size() < 6) {
+        
+        std::string sessionId{"default"};
+        int poseId = 0;
+        std::int64_t timestampNs = 0;
+        std::uint64_t frame = 0;
+        int module = -1;
+        int facet = -1;
+        int cornerId = -1;
+        float x = 0.0f;
+        float y = 0.0f;
+        
+        if (fields.size() >= 9) {
+            /*
+             * New format:
+             *   session_id,pose_id,timestamp_ns,frame,module,facet,corner_id,x,y
+             */
+            sessionId = fields[0];
+            poseId = std::stoi(fields[1]);
+            timestampNs = static_cast<std::int64_t>(std::stoll(fields[2]));
+            frame = static_cast<std::uint64_t>(std::stoull(fields[3]));
+            module = std::stoi(fields[4]);
+            facet = std::stoi(fields[5]);
+            cornerId = std::stoi(fields[6]);
+            x = std::stof(fields[7]);
+            y = std::stof(fields[8]);
+        } else if (fields.size() >= 6) {
+            /*
+             * Old format:
+             *   frame,module,facet,corner_id,x,y
+             */
+            frame = static_cast<std::uint64_t>(std::stoull(fields[0]));
+            module = std::stoi(fields[1]);
+            facet = std::stoi(fields[2]);
+            cornerId = std::stoi(fields[3]);
+            x = std::stof(fields[4]);
+            y = std::stof(fields[5]);
+        } else {
             throw std::runtime_error(
                 "Invalid CSV line " + std::to_string(lineNumber) +
                 " in " + path +
-                ". Expected: frame,module,facet,corner_id,x,y"
+                ". Expected either old format "
+                "frame,module,facet,corner_id,x,y "
+                "or new format "
+                "session_id,pose_id,timestamp_ns,frame,module,facet,corner_id,x,y"
             );
         }
-
-        const std::uint64_t frame =
-            static_cast<std::uint64_t>(std::stoull(fields[0]));
-
-        const int module =
-            std::stoi(fields[1]);
-
-        const int facet =
-            std::stoi(fields[2]);
-
-        const int cornerId =
-            std::stoi(fields[3]);
-
-        const float x =
-            std::stof(fields[4]);
-
-        const float y =
-            std::stof(fields[5]);
-
+        
         FrameKey key{
+            .sessionId = sessionId,
+            .poseId = poseId,
             .module = module,
             .frame = frame
         };
-
+        
         FrameObservations& frameObs =
             observations[key];
-
+        
         frameObs.facet = facet;
+        frameObs.timestampNs = timestampNs;
 
         /*
          * If the same corner appears twice for the same module/frame,
@@ -485,6 +571,476 @@ double Mean(const std::vector<double>& values)
 
     return sum / static_cast<double>(values.size());
 }
+
+void WriteRelativePoseReport(
+    const std::vector<SolvedPose>& solvedPoses,
+    const std::string& path)
+{
+    std::map<SharedPoseKey, std::map<int, SolvedPose>> bestPoseBySharedPose;
+
+    for (const SolvedPose& pose : solvedPoses) {
+        SharedPoseKey key{
+            .sessionId = pose.sessionId,
+            .poseId = pose.poseId
+        };
+
+        auto& moduleMap =
+            bestPoseBySharedPose[key];
+
+        auto it =
+            moduleMap.find(pose.module);
+
+        if (it == moduleMap.end() ||
+            pose.rmsPx < it->second.rmsPx) {
+            moduleMap[pose.module] = pose;
+        }
+    }
+
+    std::ofstream out(path);
+
+    if (!out) {
+        throw std::runtime_error(
+            "Failed to open relative pose CSV: " + path
+        );
+    }
+
+    out
+        << "session_id,pose_id,"
+        << "module0_frame,module1_frame,"
+        << "module0_rms_px,module1_rms_px,"
+        << "relative_angle_deg,"
+        << "relative_rvec_x,relative_rvec_y,relative_rvec_z,"
+        << "relative_t_x,relative_t_y,relative_t_z\n";
+
+    std::size_t sharedPoseCount = 0;
+    std::vector<double> relativeAnglesDeg;
+
+    constexpr double kRadToDeg =
+        180.0 / 3.141592653589793238462643383279502884;
+
+    for (const auto& [sharedKey, moduleMap] : bestPoseBySharedPose) {
+        const auto module0It = moduleMap.find(0);
+        const auto module1It = moduleMap.find(1);
+
+        if (module0It == moduleMap.end() ||
+            module1It == moduleMap.end()) {
+            continue;
+        }
+
+        const SolvedPose& p0 =
+            module0It->second;
+
+        const SolvedPose& p1 =
+            module1It->second;
+
+        /*
+         * solvePnP gives:
+         *
+         *   X_cam = R_cam_board * X_board + t_cam_board
+         *
+         * For the same physical board pose:
+         *
+         *   R_cam1_cam0 = R_cam1_board * inverse(R_cam0_board)
+         *               = R1 * R0^T
+         *
+         *   t_cam1_cam0 = t1 - R_cam1_cam0 * t0
+         */
+        const cv::Mat R10 =
+            p1.Rcb * p0.Rcb.t();
+
+        const cv::Mat t10 =
+            p1.tvec - R10 * p0.tvec;
+
+        cv::Mat rvec10;
+        cv::Rodrigues(R10, rvec10);
+
+        const double angleRad =
+            cv::norm(rvec10);
+
+        const double angleDeg =
+            angleRad * kRadToDeg;
+
+        relativeAnglesDeg.push_back(angleDeg);
+        ++sharedPoseCount;
+
+        out
+            << sharedKey.sessionId << ','
+            << sharedKey.poseId << ','
+            << p0.frame << ','
+            << p1.frame << ','
+            << std::fixed << std::setprecision(6)
+            << p0.rmsPx << ','
+            << p1.rmsPx << ','
+            << angleDeg << ','
+            << rvec10.at<double>(0, 0) << ','
+            << rvec10.at<double>(1, 0) << ','
+            << rvec10.at<double>(2, 0) << ','
+            << t10.at<double>(0, 0) << ','
+            << t10.at<double>(1, 0) << ','
+            << t10.at<double>(2, 0) << '\n';
+    }
+
+    std::cout << "[relative pose]"
+              << " shared_poses=" << sharedPoseCount
+              << " output=" << path
+              << '\n';
+
+    if (!relativeAnglesDeg.empty()) {
+        std::cout << "[relative pose]"
+                  << " mean_relative_angle_deg="
+                  << Mean(relativeAnglesDeg)
+                  << '\n';
+    }
+}
+
+struct RelativeAverage {
+    bool valid{false};
+    Eigen::Matrix3d R10Observed{Eigen::Matrix3d::Identity()};
+    Eigen::Vector3d t10Observed{Eigen::Vector3d::Zero()};
+    std::size_t sharedPoseCount{0};
+};
+
+Eigen::Matrix3d CvMat3x3ToEigen(const cv::Mat& m)
+{
+    Eigen::Matrix3d out;
+
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            out(r, c) = m.at<double>(r, c);
+        }
+    }
+
+    return out;
+}
+
+Eigen::Vector3d CvVec3ToEigen(const cv::Mat& v)
+{
+    return Eigen::Vector3d(
+        v.at<double>(0, 0),
+        v.at<double>(1, 0),
+        v.at<double>(2, 0)
+    );
+}
+
+double Clamp(double x, double lo, double hi)
+{
+    return std::max(lo, std::min(hi, x));
+}
+
+double RadToDeg(double rad)
+{
+    return rad * 180.0 / 3.141592653589793238462643383279502884;
+}
+
+struct LocalYawPitchRollDeg {
+    double yawDeg{0.0};
+    double pitchDeg{0.0};
+    double rollDeg{0.0};
+};
+
+/*
+ * Inverse of:
+ *
+ *   Rdelta = Ryaw(local +Y) * Rpitch(local +X) * Rroll(local +Z)
+ */
+LocalYawPitchRollDeg DecomposeLocalYawPitchRollDeg(
+    const Eigen::Matrix3d& R)
+{
+    const double pitchRad =
+        std::asin(Clamp(-R(1, 2), -1.0, 1.0));
+
+    const double cosPitch =
+        std::cos(pitchRad);
+
+    double yawRad = 0.0;
+    double rollRad = 0.0;
+
+    if (std::abs(cosPitch) > 1.0e-9) {
+        yawRad =
+            std::atan2(R(0, 2), R(2, 2));
+
+        rollRad =
+            std::atan2(R(1, 0), R(1, 1));
+    } else {
+        /*
+         * Gimbal-lock fallback. This should not happen for small physical
+         * mounting corrections, but keep the result finite.
+         */
+        yawRad =
+            std::atan2(-R(2, 0), R(0, 0));
+
+        rollRad = 0.0;
+    }
+
+    return LocalYawPitchRollDeg{
+        .yawDeg = RadToDeg(yawRad),
+        .pitchDeg = RadToDeg(pitchRad),
+        .rollDeg = RadToDeg(rollRad)
+    };
+}
+
+RelativeAverage ComputeAverageObservedRelativeTransform(
+    const std::vector<SolvedPose>& solvedPoses)
+{
+    std::map<SharedPoseKey, std::map<int, SolvedPose>> bestPoseBySharedPose;
+
+    for (const SolvedPose& pose : solvedPoses) {
+        SharedPoseKey key{
+            .sessionId = pose.sessionId,
+            .poseId = pose.poseId
+        };
+
+        auto& moduleMap =
+            bestPoseBySharedPose[key];
+
+        auto it =
+            moduleMap.find(pose.module);
+
+        if (it == moduleMap.end() ||
+            pose.rmsPx < it->second.rmsPx) {
+            moduleMap[pose.module] = pose;
+        }
+    }
+
+    bool haveReferenceQuaternion = false;
+    Eigen::Quaterniond qReference;
+    Eigen::Vector4d qAccum =
+        Eigen::Vector4d::Zero();
+
+    Eigen::Vector3d tAccum =
+        Eigen::Vector3d::Zero();
+
+    double weightAccum = 0.0;
+    std::size_t sharedPoseCount = 0;
+
+    for (const auto& [sharedKey, moduleMap] : bestPoseBySharedPose) {
+        const auto module0It = moduleMap.find(0);
+        const auto module1It = moduleMap.find(1);
+
+        if (module0It == moduleMap.end() ||
+            module1It == moduleMap.end()) {
+            continue;
+        }
+
+        const SolvedPose& p0 =
+            module0It->second;
+
+        const SolvedPose& p1 =
+            module1It->second;
+
+        const Eigen::Matrix3d R0 =
+            CvMat3x3ToEigen(p0.Rcb);
+
+        const Eigen::Matrix3d R1 =
+            CvMat3x3ToEigen(p1.Rcb);
+
+        const Eigen::Vector3d t0 =
+            CvVec3ToEigen(p0.tvec);
+
+        const Eigen::Vector3d t1 =
+            CvVec3ToEigen(p1.tvec);
+
+        /*
+         * solvePnP gives board -> camera:
+         *
+         *   X_cam = R_cam_board * X_board + t_cam_board
+         *
+         * Same physical board pose observed by module 0 and module 1:
+         *
+         *   R_cam1_cam0 = R1 * R0^T
+         *   t_cam1_cam0 = t1 - R_cam1_cam0 * t0
+         */
+        const Eigen::Matrix3d R10 =
+            R1 * R0.transpose();
+
+        const Eigen::Vector3d t10 =
+            t1 - R10 * t0;
+
+        Eigen::Quaterniond q(R10);
+        q.normalize();
+
+        if (!haveReferenceQuaternion) {
+            qReference = q;
+            haveReferenceQuaternion = true;
+        }
+
+        if (qReference.coeffs().dot(q.coeffs()) < 0.0) {
+            q.coeffs() *= -1.0;
+        }
+
+        const double weight =
+            1.0 / std::max(1.0e-6, p0.rmsPx + p1.rmsPx);
+
+        qAccum += weight * q.coeffs();
+        tAccum += weight * t10;
+        weightAccum += weight;
+
+        ++sharedPoseCount;
+    }
+
+    if (sharedPoseCount == 0 || weightAccum <= 0.0) {
+        return RelativeAverage{};
+    }
+
+    qAccum /= weightAccum;
+
+    Eigen::Quaterniond qAvg(
+        qAccum(3),
+        qAccum(0),
+        qAccum(1),
+        qAccum(2)
+    );
+
+    qAvg.normalize();
+
+    RelativeAverage out;
+    out.valid = true;
+    out.R10Observed = qAvg.toRotationMatrix();
+    out.t10Observed = tAccum / weightAccum;
+    out.sharedPoseCount = sharedPoseCount;
+
+    return out;
+}
+
+double DegToRad(double deg)
+{
+    return deg * 3.141592653589793238462643383279502884 / 180.0;
+}
+
+std::array<double, 3> ParseTripleCsv(const std::string& csv)
+{
+    const std::vector<std::string> parts =
+        Split(csv, ',');
+
+    if (parts.size() != 3) {
+        throw std::runtime_error(
+            "Expected comma-separated triple: rx,ry,rz"
+        );
+    }
+
+    return std::array<double, 3>{
+        std::stod(parts[0]),
+        std::stod(parts[1]),
+        std::stod(parts[2])
+    };
+}
+
+Eigen::Matrix3d RotationFromRvecDegCsv(const std::string& csv)
+{
+    const auto rvecDeg =
+        ParseTripleCsv(csv);
+
+    const Eigen::Vector3d rvecRad(
+        DegToRad(rvecDeg[0]),
+        DegToRad(rvecDeg[1]),
+        DegToRad(rvecDeg[2])
+    );
+
+    const double angle =
+        rvecRad.norm();
+
+    if (angle < 1.0e-12) {
+        return Eigen::Matrix3d::Identity();
+    }
+
+    return Eigen::AngleAxisd(
+        angle,
+        rvecRad / angle
+    ).toRotationMatrix();
+}
+
+void WriteCalibrationCorrectionFile(
+    const std::vector<SolvedPose>& solvedPoses,
+    const std::string& path,
+    const std::string& nominalRelativeRvecDegCsv)
+{
+    if (nominalRelativeRvecDegCsv.empty()) {
+        std::cerr
+            << "[calibration output] --writeCalibration was requested, "
+            << "but --nominalRelativeRvecDeg=rx,ry,rz was not supplied. "
+            << "Not writing " << path << '\n';
+
+        std::cerr
+            << "[calibration output] This is intentional: writing a "
+            << "camera-calibration.txt requires comparing observed relative "
+            << "pose against the nominal DASPi relative pose.\n";
+
+        return;
+    }
+
+    const RelativeAverage avg =
+        ComputeAverageObservedRelativeTransform(solvedPoses);
+
+    if (!avg.valid) {
+        std::cerr << "[calibration output] no shared poses; not writing "
+                  << path << '\n';
+        return;
+    }
+
+    const Eigen::Matrix3d R10Nominal =
+        RotationFromRvecDegCsv(nominalRelativeRvecDegCsv);
+
+    /*
+     * Module 0 is the reference:
+     *
+     *   Rcw0_corrected = Rcw0_nominal
+     *
+     * Module 1 receives local correction:
+     *
+     *   Rcw1_corrected = Rcw1_nominal * D1
+     *
+     * Relative camera0 -> camera1:
+     *
+     *   R10 = Rcw1^T * Rcw0
+     *
+     * So:
+     *
+     *   D1 = R10_nominal * R10_observed^T
+     */
+    const Eigen::Matrix3d D1 =
+        R10Nominal * avg.R10Observed.transpose();
+
+    const LocalYawPitchRollDeg module1Correction =
+        DecomposeLocalYawPitchRollDeg(D1);
+
+    std::ofstream out(path);
+
+    if (!out) {
+        throw std::runtime_error(
+            "Failed to open calibration output file: " + path
+        );
+    }
+
+    out << "# DASPi generated camera calibration correction\n";
+    out << "# module_index yaw_deg pitch_deg roll_deg\n";
+    out << "# module 0 is kept as reference\n";
+    out << "# shared_poses=" << avg.sharedPoseCount << '\n';
+    out << "# nominal_relative_rvec_deg=" << nominalRelativeRvecDegCsv << '\n';
+    out << "# observed_t10_m "
+        << avg.t10Observed.x() << ' '
+        << avg.t10Observed.y() << ' '
+        << avg.t10Observed.z() << '\n';
+
+    out << std::fixed << std::setprecision(9);
+    out << "0 0.0 0.0 0.0\n";
+    out << "1 "
+        << module1Correction.yawDeg << ' '
+        << module1Correction.pitchDeg << ' '
+        << module1Correction.rollDeg << '\n';
+
+    std::cout << "[calibration output]"
+              << " shared_poses=" << avg.sharedPoseCount
+              << " output=" << path
+              << '\n';
+
+    std::cout << "[calibration output]"
+              << " module1 yaw_deg=" << module1Correction.yawDeg
+              << " pitch_deg=" << module1Correction.pitchDeg
+              << " roll_deg=" << module1Correction.rollDeg
+              << '\n';
+}
+
+
 
 } // namespace
 
@@ -680,7 +1236,7 @@ int main(int argc, char* argv[])
         }
 
         poseCsv
-            << "module,frame,facet,corners,rms_px,"
+            << "session_id,pose_id,module,frame,facet,timestamp_ns,corners,rms_px,"
             << "rvec_x,rvec_y,rvec_z,"
             << "tvec_x,tvec_y,tvec_z\n";
 
@@ -692,6 +1248,8 @@ int main(int argc, char* argv[])
         std::size_t skippedBadId = 0;
         std::size_t skippedCollinear = 0;
         std::size_t failedPnP = 0;
+        
+        std::vector<SolvedPose> solvedPoses;
 
         for (const auto& [key, frameObs] : observations) {
             ++attemptedFrames;
@@ -767,14 +1325,37 @@ int main(int argc, char* argv[])
                     rvec,
                     tvec
                 );
+                
+            cv::Mat Rcb;
+            cv::Rodrigues(rvec, Rcb);
+            
+            solvedPoses.push_back(
+                SolvedPose{
+                    .sessionId = key.sessionId,
+                    .poseId = key.poseId,
+                    .module = key.module,
+                    .facet = frameObs.facet,
+                    .frame = key.frame,
+                    .timestampNs = frameObs.timestampNs,
+                    .corners = static_cast<int>(objectPoints.size()),
+                    .rmsPx = rms,
+                    .rvec = rvec.clone(),
+                    .tvec = tvec.clone(),
+                    .Rcb = Rcb.clone()
+                }
+            );  
+                
 
             rmsByModule[key.module].push_back(rms);
             ++solvedFrames;
 
             poseCsv
+                << key.sessionId << ','
+                << key.poseId << ','
                 << key.module << ','
                 << key.frame << ','
                 << frameObs.facet << ','
+                << frameObs.timestampNs << ','
                 << objectPoints.size() << ','
                 << std::fixed << std::setprecision(6)
                 << rms << ','
@@ -803,13 +1384,28 @@ int main(int argc, char* argv[])
                       << " mean_rms_px=" << Mean(rmsValues)
                       << '\n';
         }
-
+        
+        WriteRelativePoseReport(
+            solvedPoses,
+            options.relativePoseCsvPath
+        );
+        
+        if (!options.calibrationOutputPath.empty()) {
+            WriteCalibrationCorrectionFile(
+                solvedPoses,
+                options.calibrationOutputPath,
+                options.nominalRelativeRvecDegCsv
+            );
+        }
+        
         std::cout << "[output] wrote " << options.poseCsvPath << '\n';
 
         std::cout
             << "[next] This validates ChArUco observations and PnP quality.\n"
             << "[next] To generate yaw/pitch/roll, add either a known board-to-rig fixture pose\n"
             << "[next] or collect shared/multi-camera observations for bundle adjustment.\n";
+            
+
 
         return EXIT_SUCCESS;
     }

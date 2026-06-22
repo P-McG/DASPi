@@ -486,3 +486,268 @@ git push
 -[ ] generate an equirectangular sphere map by inverse mapping
 -[ ] use non-overlap masks for hard ownership
 -[ ] use overlap masks for feathered blending
+
+
+0. Stop using the generated correction for now
+
+Your previous file was generated with the physical/logical mapping reversed, so reset calibration to zero before collecting new data.
+
+On the laptop:
+
+cat > ~/DASPi/software/config/camera-calibration.txt <<'EOF'
+# module_index yaw_deg pitch_deg roll_deg
+0 0.0 0.0 0.0
+1 0.0 0.0 0.0
+EOF
+
+Deploy the zero file to both aperture nodes:
+
+scp ~/DASPi/software/config/camera-calibration.txt daspi@10.0.2.4:/tmp/camera-calibration.txt
+scp ~/DASPi/software/config/camera-calibration.txt daspi@10.0.2.5:/tmp/camera-calibration.txt
+
+ssh daspi@10.0.2.4 'sudo mkdir -p /opt/daspi/config && sudo cp /tmp/camera-calibration.txt /opt/daspi/config/camera-calibration.txt && sudo chown daspi:daspi /opt/daspi/config/camera-calibration.txt'
+ssh daspi@10.0.2.5 'sudo mkdir -p /opt/daspi/config && sudo cp /tmp/camera-calibration.txt /opt/daspi/config/camera-calibration.txt && sudo chown daspi:daspi /opt/daspi/config/camera-calibration.txt'
+1. Stop old aperture processes
+ssh daspi@10.0.2.4 'sudo systemctl stop aperturecomputemodule 2>/dev/null || true; pkill -f aperturecomputemodule || true'
+ssh daspi@10.0.2.5 'sudo systemctl stop aperturecomputemodule 2>/dev/null || true; pkill -f aperturecomputemodule || true'
+2. Clear old calibration captures
+
+Do not mix the old reversed-module captures with the new captures.
+
+mkdir -p ~/DASPi/software/config/charuco-captures-old
+
+mv ~/DASPi/software/config/charuco-captures/*.csv \
+   ~/DASPi/software/config/charuco-captures-old/ 2>/dev/null || true
+
+mv ~/DASPi/software/config/charuco-captures/*.log \
+   ~/DASPi/software/config/charuco-captures-old/ 2>/dev/null || true
+
+rm -f ~/DASPi/software/config/daspi-charuco-observations-module0.csv
+rm -f ~/DASPi/software/config/daspi-charuco-observations-module1.csv
+rm -f ~/DASPi/software/config/charuco-pose-report-calibrated.csv
+rm -f ~/DASPi/software/config/relative-camera-pose-report.csv
+rm -f ~/DASPi/software/config/camera-calibration-generated.txt
+
+Also clear remote temporary CSVs:
+
+ssh daspi@10.0.2.4 'rm -f /tmp/daspi-charuco-observations-module*.csv'
+ssh daspi@10.0.2.5 'rm -f /tmp/daspi-charuco-observations-module*.csv'
+3. Fix the capture script mapping
+
+Open the script:
+
+nano ~/DASPi/software/scripts/seam_image_collection_calibration.sh
+
+Set the AP mapping to this:
+
+AP0="${AP0:-10.0.2.5}"   # logical module 0
+AP1="${AP1:-10.0.2.4}"   # logical module 1
+
+Make sure the AP0 launch block uses:
+
+--moduleIndex=0
+
+and the AP1 launch block uses:
+
+--moduleIndex=1
+
+So the intended launch mapping is:
+
+10.0.2.5 -> --moduleIndex=0
+10.0.2.4 -> --moduleIndex=1
+
+Also keep your calibration file path as:
+
+CAL="${CAL:-/opt/daspi/config/camera-calibration.txt}"
+4. Verify the mapping before capture
+
+Run one quick check:
+
+ssh daspi@10.0.2.4 'hostname; cat /opt/daspi/config/camera-calibration.txt'
+ssh daspi@10.0.2.5 'hostname; cat /opt/daspi/config/camera-calibration.txt'
+
+Expected conceptually:
+
+10.0.2.4 / ApertureComputeModule000 -> physical module 1, zero calibration
+10.0.2.5 / ApertureComputeModule001 -> physical module 0, zero calibration
+5. Capture a new ChArUco dataset
+
+Use a new session name so it is easy to distinguish:
+
+SESSION=calib_swapped_001 \
+POSES=12 \
+SECONDS_PER_POSE=45 \
+~/DASPi/software/scripts/seam_image_collection_calibration.sh
+
+When capturing, hold the board still for each pose. Try to get both cameras seeing the board at the same time. Module 0 had fewer solved frames before, so favor positions where the 10.0.2.5 camera sees the board clearly.
+
+6. Verify the recombined CSV module columns
+
+After the script finishes:
+
+echo "module column inside module0.csv:"
+awk -F, 'NR>1 && $1!="session_id" {print $5}' \
+  ~/DASPi/software/config/daspi-charuco-observations-module0.csv \
+  | sort -n | uniq -c
+
+echo "module column inside module1.csv:"
+awk -F, 'NR>1 && $1!="session_id" {print $5}' \
+  ~/DASPi/software/config/daspi-charuco-observations-module1.csv \
+  | sort -n | uniq -c
+
+Expected:
+
+module0.csv -> only 0
+module1.csv -> only 1
+
+Also check shared pose IDs:
+
+comm -12 \
+  <(awk -F, 'NR>1 {print $1","$2}' ~/DASPi/software/config/daspi-charuco-observations-module0.csv | sort -u) \
+  <(awk -F, 'NR>1 {print $1","$2}' ~/DASPi/software/config/daspi-charuco-observations-module1.csv | sort -u)
+
+You want several shared poses, ideally 6 or more.
+
+7. Run the calibrator with zero correction data
+
+Use --minCorners=20, since that worked well for your dataset:
+
+~/DASPi/software/build/computemodule-native/computemodule/daspi-calibrate-charuco \
+  --observations=$HOME/DASPi/software/config/daspi-charuco-observations-module0.csv,$HOME/DASPi/software/config/daspi-charuco-observations-module1.csv \
+  --poseCsv=$HOME/DASPi/software/config/charuco-pose-report-calibrated.csv \
+  --relativePoseCsv=$HOME/DASPi/software/config/relative-camera-pose-report.csv \
+  --squaresX=15 \
+  --squaresY=15 \
+  --squareLength=0.030 \
+  --markerLength=0.023 \
+  --dictionary=DICT_4X4_250 \
+  --fx=600 \
+  --fy=600 \
+  --cx=728 \
+  --cy=544 \
+  --minCorners=20 \
+  --calibrateIntrinsics \
+  --imageWidth=1456 \
+  --imageHeight=1088 \
+  --intrinsicsPrefix=$HOME/DASPi/software/config/camera-intrinsics
+
+Check:
+
+cat ~/DASPi/software/config/relative-camera-pose-report.csv
+
+Look for:
+
+[relative pose] shared_poses=...
+
+You want several rows. If you only get 1–2 rows, recapture with more poses or longer hold time.
+
+8. Set the nominal relative transform
+
+Your previous nominal value was:
+
+64.227976159,0.000000000,-168.151024613
+
+That is the logical module0→module1 nominal transform. Since the logical topology did not change, you can reuse it:
+
+NOMINAL_RVEC_DEG="64.227976159,0.000000000,-168.151024613"
+
+If you want to reprint it from compute for confirmation:
+
+timeout 5s ~/DASPi/software/build/computemodule-native/computemodule/computemodule \
+  --nApertureComputeModules=2 \
+  --usbBaseIp=10.0.2.1 \
+  --port=5000 \
+  2>&1 | grep "nominal relative"
+9. Generate the new correction file
+~/DASPi/software/build/computemodule-native/computemodule/daspi-calibrate-charuco \
+  --observations=$HOME/DASPi/software/config/daspi-charuco-observations-module0.csv,$HOME/DASPi/software/config/daspi-charuco-observations-module1.csv \
+  --poseCsv=$HOME/DASPi/software/config/charuco-pose-report-calibrated.csv \
+  --relativePoseCsv=$HOME/DASPi/software/config/relative-camera-pose-report.csv \
+  --writeCalibration=$HOME/DASPi/software/config/camera-calibration-generated.txt \
+  --nominalRelativeRvecDeg="$NOMINAL_RVEC_DEG" \
+  --squaresX=15 \
+  --squaresY=15 \
+  --squareLength=0.030 \
+  --markerLength=0.023 \
+  --dictionary=DICT_4X4_250 \
+  --fx=600 \
+  --fy=600 \
+  --cx=728 \
+  --cy=544 \
+  --minCorners=20 \
+  --calibrateIntrinsics \
+  --imageWidth=1456 \
+  --imageHeight=1088 \
+  --intrinsicsPrefix=$HOME/DASPi/software/config/camera-intrinsics
+
+Inspect:
+
+cat ~/DASPi/software/config/camera-calibration-generated.txt
+
+Expected format:
+
+0 0.0 0.0 0.0
+1 <yaw> <pitch> <roll>
+
+Because module 1 is now physically 10.0.2.4, the row for module 1 applies to 10.0.2.4.
+
+10. Sanity-check the correction
+
+A reasonable correction should be small, probably a few degrees or less.
+
+Good:
+
+1 -3.0 0.5 -1.0
+
+Suspicious:
+
+1 80 -20 150
+
+If it is huge, do not deploy it. That means the mapping or transform direction still needs to be corrected.
+
+11. Deploy the new correction
+
+If it looks reasonable:
+
+cp ~/DASPi/software/config/camera-calibration-generated.txt \
+   ~/DASPi/software/config/camera-calibration.txt
+
+Deploy to both aperture nodes:
+
+scp ~/DASPi/software/config/camera-calibration.txt daspi@10.0.2.4:/tmp/camera-calibration.txt
+scp ~/DASPi/software/config/camera-calibration.txt daspi@10.0.2.5:/tmp/camera-calibration.txt
+
+ssh daspi@10.0.2.4 'sudo cp /tmp/camera-calibration.txt /opt/daspi/config/camera-calibration.txt && sudo chown daspi:daspi /opt/daspi/config/camera-calibration.txt'
+ssh daspi@10.0.2.5 'sudo cp /tmp/camera-calibration.txt /opt/daspi/config/camera-calibration.txt && sudo chown daspi:daspi /opt/daspi/config/camera-calibration.txt'
+
+Verify:
+
+ssh daspi@10.0.2.4 'cat /opt/daspi/config/camera-calibration.txt'
+ssh daspi@10.0.2.5 'cat /opt/daspi/config/camera-calibration.txt'
+12. Start runtime with corrected module mapping
+
+For the aperture nodes, the runtime launch must be:
+
+10.0.2.5 -> --moduleIndex=0 --cameraCalibration=/opt/daspi/config/camera-calibration.txt
+10.0.2.4 -> --moduleIndex=1 --cameraCalibration=/opt/daspi/config/camera-calibration.txt
+
+If your systemd launch script maps by hostname, update that too:
+
+ApertureComputeModule001 / 10.0.2.5 -> moduleIndex=0
+ApertureComputeModule000 / 10.0.2.4 -> moduleIndex=1
+
+Then restart services or manually launch.
+
+13. Validate
+
+First validate without collecting a new correction:
+
+ssh daspi@10.0.2.4 'grep -i "aperture calibration\|module=" /var/log/aperturecomputemodule/aperturecomputemodule.log | tail -30'
+ssh daspi@10.0.2.5 'grep -i "aperture calibration\|module=" /var/log/aperturecomputemodule/aperturecomputemodule.log | tail -30'
+
+Expected:
+
+10.0.2.5 logs module=0
+10.0.2.4 logs module=1
+
+Then view the stitched output. The gross overlap should be improved once the module mapping is correct. The fine calibration correction should improve seams after that.

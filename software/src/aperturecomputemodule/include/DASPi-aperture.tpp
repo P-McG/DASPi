@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <sstream>
+#include <cstdlib>
 
 #include <libcamera/controls.h>
 #include <libcamera/control_ids.h>  // Required for controls::FrameDurationLimits
@@ -1879,18 +1880,42 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
                     if (!wroteHeader) {
                         charucoCsv
                             << "# DASPi ChArUco observations\n"
-                            << "# board_squares_x=7\n"
-                            << "# board_squares_y=5\n"
-                            << "# square_length_m=0.040\n"
-                            << "# marker_length_m=0.020\n"
-                            << "# dictionary=DICT_4X4_50\n"
-                            << "frame,module,facet,corner_id,x,y\n";
+                            << "# board_squares_x=15\n"
+                            << "# board_squares_y=15\n"
+                            << "# square_length_m=0.030\n"
+                            << "# marker_length_m=0.023\n"
+                            << "# dictionary=DICT_4X4_250\n"
+                            << "session_id,pose_id,timestamp_ns,frame,module,facet,corner_id,x,y\n";
     
                         wroteHeader = true;
                     }
+                    
+                    const char* sessionEnv =
+                        std::getenv("DASPI_CHARUCO_SESSION_ID");
+                    
+                    const char* poseEnv =
+                        std::getenv("DASPI_CHARUCO_POSE_ID");
+                    
+                    const std::string sessionId =
+                        (sessionEnv != nullptr && std::string(sessionEnv).size() > 0)
+                            ? std::string(sessionEnv)
+                            : std::string("default");
+                    
+                    const int poseId =
+                        (poseEnv != nullptr && std::string(poseEnv).size() > 0)
+                            ? std::stoi(std::string(poseEnv))
+                            : 0;
+                    
+                    const auto timestampNs =
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch()
+                        ).count();
     
                     for (std::size_t i = 0; i < charucoIds.size(); ++i) {
                         charucoCsv
+                            << sessionId << ','
+                            << poseId << ','
+                            << timestampNs << ','
                             << frameNumber << ','
                             << moduleIndex_ << ','
                             << facetIndex_ << ','

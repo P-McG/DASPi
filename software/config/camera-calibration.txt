@@ -1,0 +1,8 @@
+# DASPi generated camera calibration correction
+# module_index yaw_deg pitch_deg roll_deg
+# module 0 is kept as reference
+# shared_poses=10
+# nominal_relative_rvec_deg=64.227976159,0.000000000,-168.151024613
+# observed_t10_m -0.0698156 0.00322124 -0.0311458
+0 0.0 0.0 0.0
+1 -2.313730882 -0.024358031 -0.689936012
