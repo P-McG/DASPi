@@ -35,21 +35,22 @@ using namespace DASPi;
 
 template<std::size_t FaceIndex, std::size_t ModuleIndex>
 int RunApertureForFace(
+    std::size_t moduleIndex,
+    std::size_t faceIndex,
     const std::string& clientIp,
     int port,
-    const std::string& cameraCalibrationPath)
+    const std::string& cameraCalibrationPath,
+    const std::string& cameraIntrinsicsPrefix)
 {
     std::cout << "ModuleIndex: " << ModuleIndex
               << " -> Global FaceIndex: " << FaceIndex
               << std::endl;
 
-    DASPi::Aperture<
-        static_cast<unsigned int>(FaceIndex),
-        ModuleIndex
-    > aperture(
+    DASPi::Aperture<FacetIndex, ModuleIndex> aperture(
         clientIp,
         static_cast<std::size_t>(port),
-        cameraCalibrationPath
+        cameraCalibrationPath,
+        cameraIntrinsicsPrefix
     );
 
     aperture.ContinuousCapture(0);
@@ -58,9 +59,11 @@ int RunApertureForFace(
 
 template<class SphereSpaceType, std::size_t ModuleIndex>
 int RunApertureForModule(
+    std::size_t moduleIndex,
     const std::string& clientIp,
     int port,
-    const std::string& cameraCalibrationPath)
+    const std::string& cameraCalibrationPath,
+    const std::string& cameraIntrinsicsPrefix)
 {
     static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
     static_assert(ModuleIndex < SphereSpaceType::moduleFacesN_);
@@ -72,10 +75,13 @@ int RunApertureForModule(
               << " -> Global FaceIndex: " << FaceIndex
               << std::endl;
 
-    return RunApertureForFace<FaceIndex, ModuleIndex>(
+    return RunApertureForFace(
+        moduleIndex,
+        /* faceIndex */ 0,
         clientIp,
         port,
-        cameraCalibrationPath
+        cameraCalibrationPath,
+        cameraIntrinsicsPrefix
     );
 }
 
@@ -116,19 +122,20 @@ int RunApertureForModuleIndexImpl(
 }
 
 int RunApertureForModuleIndex(
-    std::size_t requestedModuleIndex,
+    std::size_t moduleIndex,
     const std::string& clientIp,
     int port,
-    const std::string& cameraCalibrationPath)
+    const std::string& cameraCalibrationPath,
+    const std::string& cameraIntrinsicsPrefix)
 {
     using SphereSpaceType = typename DASPi::tpgy_t::Space_t;
 
-    return RunApertureForModuleIndexImpl<SphereSpaceType>(
-        requestedModuleIndex,
+    return RunApertureForModule(
+        moduleIndex,
         clientIp,
         port,
         cameraCalibrationPath,
-        std::make_index_sequence<SphereSpaceType::moduleFacesN_>{}
+        cameraIntrinsicsPrefix
     );
 }
 
@@ -200,6 +207,7 @@ int main(int argc, char* argv[])
     int port{5000};
     
     std::string cameraCalibrationPath;
+    std::string cameraIntrinsicsPrefix;
     
     std::size_t moduleIndex{};
     bool hasModuleIndex{false};
@@ -238,11 +246,15 @@ int main(int argc, char* argv[])
             cameraCalibrationPath =
                 arg.substr(std::string("--cameraCalibration=").size());
         }
+        else if (arg.rfind("--cameraIntrinsicsPrefix=", 0) == 0) {
+            cameraIntrinsicsPrefix =
+                arg.substr(std::string("--cameraIntrinsicsPrefix=").size());
+        }
         else {
             std::cerr << "Unknown argument: " << arg << std::endl;
             std::cerr << "Usage: " << argv[0]
                       << " [--verbose] --clientIp=<clientIp> --port=<port> "
-                        << "--moduleIndex=<module> [--cameraCalibration=<path>]\n";
+                        << "--moduleIndex=<module> [--cameraCalibration=<path>][--cameraIntrinsicsPrefix=<prefix>]\n";
             return 1;
         }
     }
@@ -268,12 +280,16 @@ int main(int argc, char* argv[])
     std::cout << "CameraCalibration: "
           << (cameraCalibrationPath.empty() ? "<none>" : cameraCalibrationPath)
           << std::endl;
+    std::cout << "CameraIntrinsicsPrefix: "
+          << (cameraIntrinsicsPrefix.empty() ? "<none>" : cameraIntrinsicsPrefix)
+          << std::endl;
 
     return RunApertureForModuleIndex(
         moduleIndex,
         clientIp,
         port,
-        cameraCalibrationPath
+        cameraCalibrationPath,
+        cameraIntrinsicsPrefix
     );
 }
 

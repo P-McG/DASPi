@@ -74,7 +74,7 @@ public:
      * It is the current bridge from sensor pixel offsets to angular offsets.
      */
     static constexpr double cameraFocalPx_ =
-        DASPi::RuntimeCameraIntrinsics{}.fx;
+        DASPi::RuntimeCameraIntrinsics::defaultFx;
         
     static constexpr bool debugSphericalEdgeError_{false};
     static constexpr int debugEdgeSampleCount_{8};
@@ -86,10 +86,14 @@ public:
         std::array<RegionMap, regionCount_>;
 
     RegionMaps regionGlobalIndices_{};
+    RuntimeCameraIntrinsics cameraIntrinsics_{};
 
     template<class OverlapTopologyType>
-    explicit ModuleSphericalMap(const OverlapTopologyType& topology)
-    {      
+    explicit ModuleSphericalMap(
+        const OverlapTopologyType& topology,
+        const RuntimeCameraIntrinsics& cameraIntrinsics = RuntimeCameraIntrinsics{})
+        : cameraIntrinsics_(cameraIntrinsics)
+    {
         Build(topology);
     }
     
@@ -98,6 +102,21 @@ public:
         const OverlapTopologyType& topology,
         const Eigen::Matrix3d& Rcw)
     {
+        for (auto& region : regionGlobalIndices_) {
+            region.clear();
+        }
+    
+        BuildWithCameraRcw(topology, Rcw);
+    }
+    
+    template<class OverlapTopologyType>
+    void RebuildWithCameraRcwAndIntrinsics(
+        const OverlapTopologyType& topology,
+        const Eigen::Matrix3d& Rcw,
+        const RuntimeCameraIntrinsics& cameraIntrinsics)
+    {
+        cameraIntrinsics_ = cameraIntrinsics;
+    
         for (auto& region : regionGlobalIndices_) {
             region.clear();
         }
@@ -339,21 +358,16 @@ private:
         return DASPi::RuntimePixelToCameraRay(x, y);
     }
     
-    static Eigen::Vector3d SensorPointToCameraRay(double x, double y)
+    Eigen::Vector3d SensorPointToCameraRay(double x, double y) const
     {
-        return DASPi::RuntimePixelToCameraRay(x, y);
+        return DASPi::RuntimePixelToCameraRay(
+            x,
+            y,
+            cameraIntrinsics_
+        );
     }
     
-    //static Eigen::Vector3d SensorPointToCameraRay(double x, double y)
-    //{
-        //if constexpr (useGnomonicProjection_) {
-            //return SensorPointToCameraRay_Gnomonic(x, y);
-        //} else {
-            //return SensorPointToCameraRay_Equidistant(x, y);
-        //}
-    //}
-
-    static Eigen::Vector3d SensorIndexToCameraRay(std::uint32_t sensorIndex)
+    Eigen::Vector3d SensorIndexToCameraRay(std::uint32_t sensorIndex) const
     {
         const std::uint32_t x =
             sensorIndex % static_cast<std::uint32_t>(sensorWidthValue_);
@@ -372,74 +386,19 @@ private:
             static_cast<double>(y) + 0.5
         );
     }
-
-    //static Eigen::Vector3d SensorIndexToCameraRay(std::uint32_t sensorIndex)
-    //{
-        //const std::uint32_t x =
-            //sensorIndex % static_cast<std::uint32_t>(sensorWidthValue_);
-
-        //const std::uint32_t y =
-            //sensorIndex / static_cast<std::uint32_t>(sensorWidthValue_);
-
-        //if (y >= static_cast<std::uint32_t>(sensorHeightValue_)) {
-            //throw std::out_of_range(
-                //"ModuleSphericalMap: sensor index outside sensor frame"
-            //);
-        //}
-
-        //const double cx =
-            //static_cast<double>(sensorWidthValue_) * 0.5;
-
-        //const double cy =
-            //static_cast<double>(sensorHeightValue_) * 0.5;
-
-        ///*
-         //* Positive camera Y follows the existing camera model convention:
-         //*
-         //*   uv.y > cy -> ray.y > 0
-         //*
-         //* If the output appears vertically flipped, this is the single place
-         //* to change by negating dy.
-         //*/
-        //const double dx =
-            //(static_cast<double>(x) + 0.5 - cx) / cameraFocalPx_;
-
-        //const double dy =
-            //(static_cast<double>(y) + 0.5 - cy) / cameraFocalPx_;
-
-        //const double radius =
-            //std::sqrt(dx * dx + dy * dy);
-
-        //if (radius < 1.0e-12) {
-            //return Eigen::Vector3d(0.0, 0.0, 1.0);
-        //}
-
-        ///*
-         //* Equidistant angular model:
-         //*
-         //*   radius in normalized pixel space is theta in radians.
-         //*
-         //* This is intentionally simple for the first global spherical-map
-         //* patch and uses the topology's pixels-per-radian scale.
-         //*/
-        //const double theta =
-            //radius;
-
-        //const double sinTheta =
-            //std::sin(theta);
-
-        //const double cosTheta =
-            //std::cos(theta);
-
-        //const double scale =
-            //sinTheta / radius;
-
-        //return Eigen::Vector3d(
-            //dx * scale,
-            //dy * scale,
-            //cosTheta
-        //).normalized();
-    //}
+    
+    std::uint32_t SensorIndexToOutputIndex(
+        std::uint32_t sensorIndex,
+        const Eigen::Matrix3d& Rcw) const
+    {
+        const Eigen::Vector3d rayCamera =
+            SensorIndexToCameraRay(sensorIndex);
+    
+        const Eigen::Vector3d rayWorld =
+            (Rcw * rayCamera).normalized();
+    
+        return WorldRayToEquirectIndex(rayWorld);
+    }
 
     static std::uint32_t WorldRayToEquirectIndex(
         const Eigen::Vector3d& rayWorld)
@@ -746,18 +705,18 @@ private:
         std::cout << std::endl;
     }
 
-    static std::uint32_t SensorIndexToOutputIndex(
-        std::uint32_t sensorIndex,
-        const Eigen::Matrix3d& Rcw)
-    {
-        const Eigen::Vector3d rayCamera =
-            SensorIndexToCameraRay(sensorIndex);
+    //static std::uint32_t SensorIndexToOutputIndex(
+        //std::uint32_t sensorIndex,
+        //const Eigen::Matrix3d& Rcw)
+    //{
+        //const Eigen::Vector3d rayCamera =
+            //SensorIndexToCameraRay(sensorIndex);
 
-        const Eigen::Vector3d rayWorld =
-            (Rcw * rayCamera).normalized();
+        //const Eigen::Vector3d rayWorld =
+            //(Rcw * rayCamera).normalized();
 
-        return WorldRayToEquirectIndex(rayWorld);
-    }
+        //return WorldRayToEquirectIndex(rayWorld);
+    //}
     
     static SphereMapBayerChannel SensorIndexToBayerChannel(
         std::uint32_t sensorIndex)

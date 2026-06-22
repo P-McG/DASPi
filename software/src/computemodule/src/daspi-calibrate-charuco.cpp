@@ -49,10 +49,10 @@ struct Options {
     float markerLength{0.023f};
     std::string dictionaryName{"DICT_4X4_250"};
 
-    double fx{DASPi::RuntimeCameraIntrinsics::fx};
-    double fy{DASPi::RuntimeCameraIntrinsics::fy};
-    double cx{DASPi::RuntimeCameraIntrinsics::cx};
-    double cy{DASPi::RuntimeCameraIntrinsics::cy};
+    double fx{DASPi::RuntimeCameraIntrinsics::defaultFx};
+    double fy{DASPi::RuntimeCameraIntrinsics::defaultFy};
+    double cx{DASPi::RuntimeCameraIntrinsics::defaultCx};
+    double cy{DASPi::RuntimeCameraIntrinsics::defaultCy};
 
     int minCorners{6};
 };
@@ -1187,12 +1187,6 @@ int main(int argc, char* argv[])
                         flags
                     );
         
-                /*
-                 * Keep solvePnP on the DASPi runtime gnomonic model.
-                 *
-                 * The calibrated intrinsics are written for diagnostics only. If we use them
-                 * here, the calibration solve no longer matches ModuleSphericalMap.
-                 */
                  cameraModels[module] =
                     CameraModel{
                         .cameraMatrix = cameraMatrix.clone(),

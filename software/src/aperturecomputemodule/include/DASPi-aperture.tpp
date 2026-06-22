@@ -20,6 +20,7 @@
 #include <libcamera/control_ids.h>  // Required for controls::FrameDurationLimits
 
 #include <opencv2/imgproc.hpp>
+#include <opencv2/core/persistence.hpp>
 
 #include "DASPi-framepacket.h"
 #include "DASPi-udp-srv.h"
@@ -184,6 +185,109 @@ LoadApertureCameraCalibrationCorrectionForModule(
     return result;
 }
 
+inline RuntimeCameraIntrinsics LoadApertureRuntimeCameraIntrinsicsForModule(
+    const std::string& prefix,
+    std::size_t moduleIndex)
+{
+    RuntimeCameraIntrinsics intrinsics{};
+
+    if (prefix.empty()) {
+        std::cout << "[aperture intrinsics] no intrinsics prefix supplied; "
+                  << "using default runtime intrinsics for module "
+                  << moduleIndex
+                  << '\n';
+        return intrinsics;
+    }
+
+    const std::string expandedPrefix =
+        ExpandApertureUserPath(prefix);
+
+    const std::string path =
+        expandedPrefix +
+        "-module" +
+        std::to_string(moduleIndex) +
+        ".yml";
+
+    cv::FileStorage fs(path, cv::FileStorage::READ);
+
+    if (!fs.isOpened()) {
+        throw std::runtime_error(
+            "Failed to open aperture camera intrinsics file: " + path
+        );
+    }
+
+    cv::Mat cameraMatrix;
+    cv::Mat distCoeffs;
+
+    fs["camera_matrix"] >> cameraMatrix;
+    fs["dist_coeffs"] >> distCoeffs;
+
+    if (cameraMatrix.empty() ||
+        cameraMatrix.rows != 3 ||
+        cameraMatrix.cols != 3) {
+        throw std::runtime_error(
+            "Invalid camera_matrix in " + path
+        );
+    }
+
+    cv::Mat K64;
+    cameraMatrix.convertTo(K64, CV_64F);
+
+    intrinsics.fx = K64.at<double>(0, 0);
+    intrinsics.fy = K64.at<double>(1, 1);
+    intrinsics.cx = K64.at<double>(0, 2);
+    intrinsics.cy = K64.at<double>(1, 2);
+
+    if (!fs["image_width"].empty()) {
+        int width = 0;
+        fs["image_width"] >> width;
+        if (width > 0) {
+            intrinsics.width = static_cast<std::uint32_t>(width);
+        }
+    }
+
+    if (!fs["image_height"].empty()) {
+        int height = 0;
+        fs["image_height"] >> height;
+        if (height > 0) {
+            intrinsics.height = static_cast<std::uint32_t>(height);
+        }
+    }
+
+    if (!distCoeffs.empty()) {
+        cv::Mat D64;
+        distCoeffs.reshape(1, 1).convertTo(D64, CV_64F);
+
+        const int count =
+            std::min<int>(
+                5,
+                static_cast<int>(D64.total())
+            );
+
+        for (int i = 0; i < count; ++i) {
+            intrinsics.dist[static_cast<std::size_t>(i)] =
+                D64.at<double>(0, i);
+        }
+    }
+
+    std::cout << "[aperture intrinsics]"
+              << " module=" << moduleIndex
+              << " file=" << path
+              << " fx=" << intrinsics.fx
+              << " fy=" << intrinsics.fy
+              << " cx=" << intrinsics.cx
+              << " cy=" << intrinsics.cy
+              << " dist=["
+              << intrinsics.dist[0] << ','
+              << intrinsics.dist[1] << ','
+              << intrinsics.dist[2] << ','
+              << intrinsics.dist[3] << ','
+              << intrinsics.dist[4] << ']'
+              << '\n';
+
+    return intrinsics;
+}
+
 template<unsigned int FacetIndex, std::size_t ModuleIndex>
 void Aperture<FacetIndex, ModuleIndex>::ApplyCameraCalibrationBeforeSphereMap()
 {
@@ -210,9 +314,16 @@ void Aperture<FacetIndex, ModuleIndex>::ApplyCameraCalibrationBeforeSphereMap()
     const Eigen::Matrix3d RcwCorrected =
         RcwNominal * Rdelta;
 
-    sphericalMap_.RebuildWithCameraRcw(
+    const RuntimeCameraIntrinsics intrinsics =
+        LoadApertureRuntimeCameraIntrinsicsForModule(
+            cameraIntrinsicsPrefix_,
+            ModuleIndex
+        );
+    
+    sphericalMap_.RebuildWithCameraRcwAndIntrinsics(
         OverlapTopologyRef(),
-        RcwCorrected
+        RcwCorrected,
+        intrinsics
     );
 
     std::cout << "[aperture calibration] rebuilt spherical map"
@@ -226,7 +337,8 @@ template<unsigned int FacetIndex, std::size_t ModuleIndex>
 Aperture<FacetIndex, ModuleIndex>::Aperture(
     const std::string clientIp,
     const size_t port,
-    const std::string cameraCalibrationPath
+    const std::string cameraCalibrationPath,
+    const std::string cameraIntrinsicsPrefix
 )
     : tpgy_(),
       tpgydp_( static_cast<const OverlapTopologyType&>( static_cast<const FacetTopologyType&>(tpgy_))),
@@ -236,7 +348,8 @@ Aperture<FacetIndex, ModuleIndex>::Aperture(
                    static_cast<int>(port + 1),
                    inet_addr(clientIp.c_str()),
                    static_cast<int>(port + 1)},
-      cameraCalibrationPath_(cameraCalibrationPath)
+      cameraCalibrationPath_(cameraCalibrationPath),
+      cameraIntrinsicsPrefix_(cameraIntrinsicsPrefix)
 {
     std::cout << "[TX sizeof]\n";
     std::cout << "sizeof(MessageHeader)=" << sizeof(MessageHeader) << '\n';

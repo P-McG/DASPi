@@ -146,7 +146,8 @@ namespace DASPi{
         Aperture(
             const std::string clientIp,
             const size_t port,
-            const std::string cameraCalibrationPath = {}
+            const std::string cameraCalibrationPath = {},
+            const std::string cameraIntrinsicsPrefix = {}
         );
         ~Aperture();
 
@@ -212,6 +213,7 @@ namespace DASPi{
     private:
         std::thread controlThread_;
         std::string cameraCalibrationPath_;    
+        std::string cameraIntrinsicsPrefix_;
             
         mutable std::mutex gainMutex_;
         float latestBrightnessGainApply_{1.0f};
