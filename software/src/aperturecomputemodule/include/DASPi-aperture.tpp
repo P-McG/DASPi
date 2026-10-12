@@ -1784,33 +1784,6 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
 
     std::vector<uint16_t> activeFrame(expectedElems);
     
-
-
-    using CoverageTopology =
-        typename OverlapTopologyType::CoverageTopology_t;
-
-    const auto& coverage =
-        static_cast<const CoverageTopology&>(
-            OverlapTopologyRef()
-        );
-
-    drawTriangle(
-        coverage.shapeDefiningPoints_,
-        cv::Scalar(0, 0, 255) // Red outer mask
-    );
-
-    drawTriangle(
-        NonOverlapTopologyRef().shapeDefiningPoints_,
-        cv::Scalar(0, 255, 0) // Green inner mask
-    );
-
-    cv::imwrite(
-        "/tmp/daspi-mask-overlay-module" +
-        std::to_string(ModuleIndex) + ".png",
-        preview
-    );
-}
-
     if (isBGGR16) {
         if ((strideBytes % sizeof(uint16_t)) != 0) {
             std::cerr << "Stride is not 16-bit aligned for SBGGR16: strideBytes="
@@ -1912,49 +1885,78 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
 
     const auto tMapCopyDone = std::chrono::steady_clock::now();
     
-        if (frameNumber == 30) {
-        cv::Mat raw16(
-            activeHeight, activeWidth,
-            CV_16UC1, activeFrame.data()
-        );
+    if (frameNumber == 30) {
+    cv::Mat raw16(
+        activeHeight, activeWidth,
+        CV_16UC1, activeFrame.data()
+    );
+
+    cv::Mat bgr16, preview;
     
-        cv::Mat bgr16, preview;
-        
-        double minValue = 0.0;
-        double maxValue = 0.0;
-        
-        cv::minMaxLoc(raw16, &minValue, &maxValue);
-        
-        std::cout
-            << "[mask overlay] module=" << ModuleIndex
-            << " facet=" << FacetIndex
-            << " rawMin=" << minValue
-            << " rawMax=" << maxValue
-            << std::endl;
-        
-        cv::cvtColor(raw16, bgr16, cv::COLOR_BayerBG2BGR);
-        cv::normalize(
-            bgr16, preview, 0, 255,
-            cv::NORM_MINMAX, CV_8UC3
-        );
+    double minValue = 0.0;
+    double maxValue = 0.0;
     
-        auto drawTriangle = [&](const auto& points,
-                                const cv::Scalar& color) {
-            std::vector<cv::Point> vertices;
+    cv::minMaxLoc(raw16, &minValue, &maxValue);
     
-            for (const auto& p : points) {
-                vertices.emplace_back(
-                    static_cast<int>(p.x()),
-                    static_cast<int>(p.y())
-                );
-            }
+    std::cout
+        << "[mask overlay] module=" << ModuleIndex
+        << " facet=" << FacetIndex
+        << " rawMin=" << minValue
+        << " rawMax=" << maxValue
+        << std::endl;
     
-            cv::polylines(
-                preview,
-                std::vector<std::vector<cv::Point>>{vertices},
-                true, color, 2, cv::LINE_AA
+    cv::cvtColor(raw16, bgr16, cv::COLOR_BayerBG2BGR);
+    cv::normalize(
+        bgr16, preview, 0, 255,
+        cv::NORM_MINMAX, CV_8UC3
+    );
+
+    auto drawTriangle = [&](const auto& points,
+                            const cv::Scalar& color) {
+        std::vector<cv::Point> vertices;
+
+        for (const auto& p : points) {
+            vertices.emplace_back(
+                static_cast<int>(p.x()),
+                static_cast<int>(p.y())
             );
-        };
+        }
+
+        cv::polylines(
+            preview,
+            std::vector<std::vector<cv::Point>>{vertices},
+            true, color, 2, cv::LINE_AA
+        );
+    };
+    
+    using CoverageTopology =
+        typename OverlapTopologyType::CoverageTopology_t;
+
+    const auto& coverage =
+        static_cast<const CoverageTopology&>(
+            OverlapTopologyRef()
+        );
+
+    drawTriangle(
+        coverage.shapeDefiningPoints_,
+        cv::Scalar(0, 0, 255)
+    );
+
+    drawTriangle(
+        NonOverlapTopologyRef().shapeDefiningPoints_,
+        cv::Scalar(0, 255, 0)
+    );
+
+    const std::string filename =
+        "/tmp/daspi-mask-overlay-module" +
+        std::to_string(ModuleIndex) + ".png";
+
+    if (!cv::imwrite(filename, preview)) {
+        std::cerr
+            << "[mask overlay] Failed to save "
+            << filename << '\n';
+    }
+} // End if (frameNumber == 30)
         
     /*
      * ChArUco calibration observation capture.
