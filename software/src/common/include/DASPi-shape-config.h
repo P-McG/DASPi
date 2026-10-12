@@ -14,7 +14,7 @@
 namespace DASPi {
 
 using ConfiguredSphereSpace =
-    IcosahedronModuleSphereSpace<9, 19, 2, 18>;
+    IcosahedronModuleSphereSpace<9, 2, 19, 18>;
 
 using tpgy_t =
     IcosahedronSphereTopology<ConfiguredSphereSpace>;
