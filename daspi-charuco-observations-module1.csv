@@ -1,0 +1,12 @@
+# DASPi ChArUco observations
+# board_squares_x=15
+# board_squares_y=15
+# square_length_m=0.030
+# marker_length_m=0.023
+# dictionary=DICT_4X4_250
+session_id,pose_id,timestamp_ns,frame,module,facet,corner_id,x,y
+default,0,1791826523228632754,5300,1,2,164,851.152,332.163
+default,0,1791826523228632754,5300,1,2,178,819.407,305.454
+default,0,1791826523228632754,5300,1,2,179,794.828,345.964
+default,0,1791826523228632754,5300,1,2,180,769.307,387.394
+default,0,1791826523228632754,5300,1,2,181,743.9,429.551

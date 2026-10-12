@@ -325,6 +325,58 @@ void Aperture<FacetIndex, ModuleIndex>::ApplyCameraCalibrationBeforeSphereMap()
         RcwCorrected,
         intrinsics
     );
+    
+    // Diagnostic: spherical coverage for M0 and M1
+    if constexpr (ModuleIndex == 0 || ModuleIndex == 1) {
+    
+        const int width =
+            static_cast<int>(sphericalMap_.OutputWidth());
+    
+        const int height =
+            static_cast<int>(sphericalMap_.OutputHeight());
+    
+        cv::Mat coverage =
+            cv::Mat::zeros(height, width, CV_8UC1);
+    
+        for (std::size_t region = 0;
+             region < regionCount_;
+             ++region) {
+    
+            for (const std::uint32_t packedEntry :
+                 sphericalMap_.Region(region)) {
+    
+                const std::uint32_t index =
+                    UnpackSphereMapOutputIndex(packedEntry);
+    
+                if (index >= sphericalMap_.OutputSize()) {
+                    continue;
+                }
+    
+                const int y =
+                    static_cast<int>(index / width);
+    
+                const int x =
+                    static_cast<int>(index % width);
+    
+                coverage.at<uint8_t>(y, x) = 255;
+            }
+        }
+    
+        const std::string filename =
+            "/tmp/daspi-sphere-coverage-module" +
+            std::to_string(ModuleIndex) + ".png";
+    
+        const bool saved = cv::imwrite(filename, coverage);
+    
+        std::cout
+            << "[SphereCoverage]"
+            << " module=" << ModuleIndex
+            << " face=" << FacetIndex
+            << " coveredPixels=" << cv::countNonZero(coverage)
+            << " saved=" << saved
+            << " filename=" << filename
+            << std::endl;
+    }
 
     std::cout << "[aperture calibration] rebuilt spherical map"
               << " module=" << ModuleIndex
