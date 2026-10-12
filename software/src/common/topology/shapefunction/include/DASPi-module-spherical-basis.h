@@ -514,10 +514,10 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
 	 * The current M0 triangle is sideways in the output image.
 	 * Start with -90 deg so the base becomes horizontal.
 	 */
-	//const Eigen::Matrix3d RanchorRoll =
-	    //CameraRollDeg(80.96325-60.0+180);
+	const Eigen::Matrix3d RanchorRoll =
+	    CameraRollDeg(180);
 	
-	const Eigen::Matrix3d Rrig = /*RanchorRoll **/ Ranchor;
+	const Eigen::Matrix3d Rrig = RanchorRoll * Ranchor;
 
     const Eigen::Matrix3d Ralign =
         Eigen::Matrix3d::Identity();
