@@ -297,7 +297,7 @@ template<std::size_t ModuleIndex>
 inline constexpr double CameraLocalRollDegForModule()
 {
     if constexpr (ModuleIndex == 0) {
-        return 0.0;
+        return 180.0;
     } else if constexpr (ModuleIndex == 1) {
         return 0.0;
     } else if constexpr (ModuleIndex == 2) {
