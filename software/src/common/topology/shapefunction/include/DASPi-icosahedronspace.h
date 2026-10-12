@@ -111,7 +111,7 @@ struct IcosahedronTables {
     maskOrientations_{{
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face0
         MaskOrientationData{maskRadius, +cos0Pi, +sin0Pi},//face1
-        MaskOrientationData{maskRadius, +cos0Pi, +sin0Pi},//face2
+        MaskOrientationData{maskRadius, 0.5, -std::numbers::sqrt3/2.0},//face2
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face3
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face4
 
@@ -119,7 +119,7 @@ struct IcosahedronTables {
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face6
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face7
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face8
-        MaskOrientationData{maskRadius, +cos0Pi, +sin0Pi},//face9
+        MaskOrientationData{maskRadius, +0.5, -std::numbers::sqrt3/2.0},//face9
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face10
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face11
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face12
@@ -135,28 +135,28 @@ struct IcosahedronTables {
 
     static inline constexpr std::array<SensorOrientationData, facetsN_>
     sensorOrientations_{{
-        SensorOrientationData{cos0Pi, sin0Pi},
-        SensorOrientationData{cos0Pi, sin0Pi},
-        SensorOrientationData{cos0Pi, sin0Pi},
-        SensorOrientationData{cos0Pi, sin0Pi},
-        SensorOrientationData{cos0Pi, sin0Pi},
+        SensorOrientationData{cos0Pi, sin0Pi},//face0
+        SensorOrientationData{cos0Pi, sin0Pi},//face1
+        SensorOrientationData{cos0Pi, sin0Pi},//face2
+        SensorOrientationData{cos0Pi, sin0Pi},//face3
+        SensorOrientationData{cos0Pi, sin0Pi},//face4
 
-        SensorOrientationData{cos1Pi, sin1Pi},
-        SensorOrientationData{cos1Pi, sin1Pi},
-        SensorOrientationData{cos1Pi, sin1Pi},
-        SensorOrientationData{cos1Pi, sin1Pi},
-        SensorOrientationData{cos1Pi, sin1Pi},
-        SensorOrientationData{cos1Pi, sin1Pi},
-        SensorOrientationData{cos1Pi, sin1Pi},
-        SensorOrientationData{cos1Pi, sin1Pi},
-        SensorOrientationData{cos1Pi, sin1Pi},
-        SensorOrientationData{cos1Pi, sin1Pi},
+        SensorOrientationData{cos1Pi, sin1Pi},//face5
+        SensorOrientationData{cos1Pi, sin1Pi},//face6
+        SensorOrientationData{cos1Pi, sin1Pi},//face7
+        SensorOrientationData{cos1Pi, sin1Pi},//face8
+        SensorOrientationData{cos0Pi, sin0Pi},//face9
+        SensorOrientationData{cos1Pi, sin1Pi},//face10
+        SensorOrientationData{cos1Pi, sin1Pi},//face11
+        SensorOrientationData{cos1Pi, sin1Pi},//face12
+        SensorOrientationData{cos1Pi, sin1Pi},//face13
+        SensorOrientationData{cos1Pi, sin1Pi},//face14
 
-        SensorOrientationData{cos0Pi, sin0Pi},
-        SensorOrientationData{cos0Pi, sin0Pi},
-        SensorOrientationData{cos0Pi, sin0Pi},
-        SensorOrientationData{cos0Pi, sin0Pi},
-        SensorOrientationData{cos0Pi, sin0Pi},
+        SensorOrientationData{cos0Pi, sin0Pi},//face15
+        SensorOrientationData{cos0Pi, sin0Pi},//face16
+        SensorOrientationData{cos0Pi, sin0Pi},//face17
+        SensorOrientationData{cos0Pi, sin0Pi},//face18
+        SensorOrientationData{cos0Pi, sin0Pi},//face19
     }};
 
     static inline constexpr std::array<
