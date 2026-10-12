@@ -1,0 +1,9 @@
+DASPi trigger distributor Rev E — copper check
+
+Different-net overlaps: 0
+PASS: no different-net copper overlap.
+Minimum different-net clearance: 0.700 mm (CH1_POST vs GND)
+JST PLI pin-pad edge clearance: 0.700 mm
+Minimum mounting-hole clearance: 2.428 mm
+Upper connector body gap: 1.000 mm
+Lower connector body gap: 1.000 mm

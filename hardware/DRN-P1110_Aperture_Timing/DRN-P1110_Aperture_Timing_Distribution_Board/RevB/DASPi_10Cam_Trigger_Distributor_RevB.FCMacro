@@ -1,0 +1,204 @@
+# DASPi 10-Camera Global-Shutter Trigger Distributor — Rev B FINAL
+# Copper-tape / 3D-printed carrier
+#
+# Rev B corrections:
+# - no 1.8 V / GND overlap
+# - dedicated center GND routing gap
+# - isolated mounting holes
+# - wider XTR/GND output-pad spacing
+# - IC bodies shown on component side
+# - decoupling capacitors solder directly across pins 20(VCC) and 19(GND/OE)
+#
+# IMPORTANT:
+# V18_IN is a regulated 1.8 V source.
+# Two insulated jumper wires go from V18_IN to U1/U2 pin20.
+# Pin1 DIR is tied to pin20 VCC locally in copper.
+#
+# Run in FreeCAD, then export Carrier_Print and Press_Tool.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+DOC_NAME="DASPi_10Cam_Trigger_Distributor_RevB"
+try:
+    App.closeDocument(DOC_NAME)
+except Exception:
+    pass
+doc=App.newDocument(DOC_NAME)
+
+BOARD_W=130.0; BOARD_H=88.0; BOARD_T=2.4
+GROOVE_D=0.35
+TRACE_W=2.4; NECK_W=1.0; GROUND_W=3.2
+PAD_D=4.6; CHIP_PAD_D=1.7
+HOLE_D=1.05; WIRE_HOLE_D=1.35; MOUNT_D=3.2
+PRESS_T=2.0; PRESS_RIB_H=0.28; PRESS_CLEARANCE=0.25
+DIP_ROW=7.62; DIP_PITCH=2.54
+
+U_X=36.0; U1_CY=61.0; U2_CY=27.0
+TRIG_BUS_X=14.0
+GND_BUS_X=121.0; GND_CENTER_Y=46.0; GND_BOTTOM_Y=10.0; GND_TOP_Y=80.0
+RES_X1=80.0; RES_X2=94.0
+CAM_SIG_X=108.0; CAM_GND_X=115.0
+OUT_Y=[74.0, 68.5, 63.0, 57.5, 52.0, 40.0, 34.5, 29.0, 23.5, 18.0]
+TRIG_IN=(6.0, 46.0); V18_IN=(7.0, 78.0); GND_IN=(7.0, 10.0)
+MOUNTS=[(4.0, 84.0), (126.0, 84.0), (4.0, 4.0), (126.0, 4.0)]
+
+def feat(name,shape,color=None,transparency=0):
+    o=doc.addObject("Part::Feature",name)
+    o.Shape=shape
+    if color: o.ViewObject.ShapeColor=color
+    o.ViewObject.Transparency=transparency
+    return o
+
+def dip(cx,cy):
+    xl=cx-DIP_ROW/2; xr=cx+DIP_ROW/2
+    top=cy+9*DIP_PITCH/2; bottom=cy-9*DIP_PITCH/2
+    d={}
+    for p in range(1,11): d[p]=(xl,top-(p-1)*DIP_PITCH)
+    for p in range(11,21): d[p]=(xr,bottom+(p-11)*DIP_PITCH)
+    return d
+U1,U2=dip(U_X,U1_CY),dip(U_X,U2_CY)
+
+segments=[]; pads=[]; holes=[]
+def add_seg(a,b,w): segments.append((a[0],a[1],b[0],b[1],w))
+def add_pad(p,d,h=None):
+    pads.append((p[0],p[1],d))
+    if h: holes.append((p[0],p[1],h))
+
+def groove_segment(x1,y1,x2,y2,w):
+    dx=x2-x1; dy=y2-y1; L=math.hypot(dx,dy)
+    a=math.degrees(math.atan2(dy,dx))
+    s=Part.makeBox(L,w,GROOVE_D,App.Vector(0,-w/2,BOARD_T-GROOVE_D))
+    s.rotate(App.Vector(),App.Vector(0,0,1),a)
+    s.translate(App.Vector(x1,y1,0))
+    return s
+
+def groove_pad(x,y,d):
+    return Part.makeCylinder(d/2,GROOVE_D,App.Vector(x,y,BOARD_T-GROOVE_D))
+
+def press_segment(x1,y1,x2,y2,w):
+    rw=max(0.55,w-PRESS_CLEARANCE)
+    dx=x2-x1; dy=y2-y1; L=math.hypot(dx,dy)
+    a=math.degrees(math.atan2(dy,dx))
+    s=Part.makeBox(L,rw,PRESS_RIB_H,App.Vector(0,-rw/2,PRESS_T))
+    s.rotate(App.Vector(),App.Vector(0,0,1),a)
+    s.translate(App.Vector(x1,y1,0))
+    return s
+
+def press_pad(x,y,d):
+    rd=max(0.8,d-PRESS_CLEARANCE)
+    return Part.makeCylinder(rd/2,PRESS_RIB_H,App.Vector(x,y,PRESS_T))
+
+# DIP pads/holes
+for t in (U1,U2):
+    for p in t.values(): add_pad(p,CHIP_PAD_D,HOLE_D)
+
+# Trigger
+add_pad(TRIG_IN,PAD_D,WIRE_HOLE_D)
+add_seg(TRIG_IN,(TRIG_BUS_X,TRIG_IN[1]),TRACE_W)
+add_seg((TRIG_BUS_X,16.0),(TRIG_BUS_X,73.0),TRACE_W)
+for t in (U1,U2):
+    for pin in range(2,10):
+        add_seg((TRIG_BUS_X,t[pin][1]),t[pin],NECK_W)
+
+# 1.8 V landing and local DIR/VCC ties
+add_pad(V18_IN,PAD_D,WIRE_HOLE_D)
+for t in (U1,U2):
+    add_seg(t[1],t[20],NECK_W)
+
+# Ground
+add_pad(GND_IN,PAD_D,WIRE_HOLE_D)
+add_seg(GND_IN,(GND_BUS_X,GND_BOTTOM_Y),GROUND_W)
+add_seg((GND_BUS_X,GND_BOTTOM_Y),(GND_BUS_X,GND_TOP_Y),GROUND_W)
+
+add_seg(U1[10],(U1[10][0],GND_CENTER_Y),NECK_W)
+add_seg((U1[10][0],GND_CENTER_Y),(GND_BUS_X,GND_CENTER_Y),GROUND_W)
+
+add_seg(U2[10],(U2[10][0],GND_BOTTOM_Y),NECK_W)
+
+add_seg(U1[19],(46.0,U1[19][1]),NECK_W)
+add_seg((46.0,U1[19][1]),(46.0,GND_TOP_Y),NECK_W)
+add_seg((46.0,GND_TOP_Y),(GND_BUS_X,GND_TOP_Y),GROUND_W)
+
+add_seg(U2[19],(46.0,U2[19][1]),NECK_W)
+add_seg((46.0,U2[19][1]),(46.0,GND_CENTER_Y),NECK_W)
+
+# Outputs
+b_pins=[18,17,16,15,14]
+ch=0
+for t in (U1,U2):
+    for pin in b_pins:
+        src=t[pin]; ty=OUT_Y[ch]
+        neck=(48.0,src[1]); fan=(59.0,ty)
+        add_seg(src,neck,NECK_W)
+        add_seg(neck,fan,NECK_W)
+        add_seg(fan,(RES_X1,ty),TRACE_W)
+        add_pad((RES_X1,ty),PAD_D,HOLE_D)
+
+        add_pad((RES_X2,ty),PAD_D,HOLE_D)
+        add_seg((RES_X2,ty),(CAM_SIG_X,ty),TRACE_W)
+        add_pad((CAM_SIG_X,ty),PAD_D,WIRE_HOLE_D)
+
+        add_pad((CAM_GND_X,ty),PAD_D,WIRE_HOLE_D)
+        add_seg((CAM_GND_X,ty),(GND_BUS_X,ty),GROUND_W)
+        ch+=1
+
+for m in MOUNTS:
+    holes.append((m[0],m[1],MOUNT_D))
+
+carrier=Part.makeBox(BOARD_W,BOARD_H,BOARD_T)
+for x,y,d in holes:
+    carrier=carrier.cut(Part.makeCylinder(d/2,BOARD_T+1,App.Vector(x,y,-0.5)))
+for x1,y1,x2,y2,w in segments:
+    carrier=carrier.cut(groove_segment(x1,y1,x2,y2,w))
+for x,y,d in pads:
+    carrier=carrier.cut(groove_pad(x,y,d))
+
+c=feat("Carrier_Print",carrier,(0.84,0.84,0.86))
+c.Label="PRINT - Rev B Trigger Distributor Carrier"
+
+guide=None
+for x1,y1,x2,y2,w in segments:
+    g=groove_segment(x1,y1,x2,y2,w)
+    guide=g if guide is None else guide.fuse(g)
+for x,y,d in pads:
+    g=groove_pad(x,y,d)
+    guide=g if guide is None else guide.fuse(g)
+g=feat("Copper_Trace_Guide",guide,(0.72,0.36,0.08),10)
+g.Label="REFERENCE ONLY - Copper tape"
+
+press=Part.makeBox(BOARD_W,BOARD_H,PRESS_T)
+for x1,y1,x2,y2,w in segments:
+    press=press.fuse(press_segment(x1,y1,x2,y2,w))
+for x,y,d in pads:
+    press=press.fuse(press_pad(x,y,d))
+press.translate(App.Vector(BOARD_W+12,0,0))
+p=feat("Press_Tool",press,(0.55,0.65,0.80))
+p.Label="PRINT - Rev B Copper Forming Press"
+
+# Component-side IC bodies, opposite the copper face
+def body(cx,cy):
+    return Part.makeBox(10.3,26.0,4.0,App.Vector(cx-5.15,cy-13.0,-4.4))
+feat("U1_74LVC245_REF",body(U_X,U1_CY),(0.15,0.15,0.18),25)
+feat("U2_74LVC245_REF",body(U_X,U2_CY),(0.15,0.15,0.18),25)
+
+# Insulated 1.8 V jumper references
+def wire(p1,p2,z=BOARD_T+4,d=0.8):
+    v=App.Vector(p2[0]-p1[0],p2[1]-p1[1],0); L=v.Length
+    return Part.makeCylinder(d/2,L,App.Vector(p1[0],p1[1],z),App.Vector(v.x/L,v.y/L,0))
+feat("Jumper_1V8_U1_REF",wire(V18_IN,U1[20]),(0.9,0.1,0.1))
+feat("Jumper_1V8_U2_REF",wire(V18_IN,U2[20]),(0.9,0.1,0.1))
+
+c.addProperty("App::PropertyString","Revision","Design"); c.Revision="Rev B FINAL"
+c.addProperty("App::PropertyString","Decoupling","Electrical")
+c.Decoupling="Solder 0.1uF ceramic directly across pins 20(VCC) and 19(GND/OE) on each IC."
+c.addProperty("App::PropertyString","Power","Electrical")
+c.Power="V18_IN = regulated 1.8V; insulated jumpers to U1/U2 pin20; DIR pin1 tied locally to VCC."
+c.addProperty("App::PropertyString","Material","Fabrication")
+c.Material="Plain electrically insulating PC/ASA/PETG; do not use PCCF."
+
+doc.recompute()
+Gui.activeDocument().activeView().viewAxonometric()
+Gui.activeDocument().activeView().fitAll()

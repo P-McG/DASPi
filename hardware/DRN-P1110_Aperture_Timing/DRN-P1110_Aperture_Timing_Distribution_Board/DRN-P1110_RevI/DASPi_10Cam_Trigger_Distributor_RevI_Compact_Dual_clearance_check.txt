@@ -1,0 +1,11 @@
+DASPi Rev I Compact Dual — final clearance check
+
+Correction: C3 and C6 V18 capacitor pads positively connected to their respective VCC rails.
+
+Different-net overlaps: 0
+PASS: no different-net copper overlap.
+Minimum different-net clearance: 0.700 mm (B_GND vs CH10_POST)
+Minimum A-to-B separation: 7.000 mm
+Minimum mounting-hole clearance: 1.200 mm
+C3 V18 route continuity: PASS
+C6 V18 route continuity: PASS

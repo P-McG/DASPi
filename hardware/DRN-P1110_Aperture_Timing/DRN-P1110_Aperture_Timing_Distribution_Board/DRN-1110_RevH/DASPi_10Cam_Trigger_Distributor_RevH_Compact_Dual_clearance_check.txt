@@ -1,0 +1,12 @@
+DASPi Rev H Compact Dual FINAL — capacitor corrected
+
+Capacitor footprints: 6
+Lead pitch: 2.54 mm
+Capacitor hole diameter: 0.90 mm
+Capacitor copper land diameter: 1.80 mm
+
+Different-net overlaps: 0
+PASS: no different-net overlap.
+Minimum different-net clearance: 0.700 mm (B_GND vs CH10_POST)
+Minimum A-to-B separation: 7.000 mm
+Minimum mounting-hole clearance: 1.200 mm

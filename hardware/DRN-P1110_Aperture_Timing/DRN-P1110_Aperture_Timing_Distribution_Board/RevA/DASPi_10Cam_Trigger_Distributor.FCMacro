@@ -1,0 +1,374 @@
+# DASPi 10-Camera IMX296 / Global Shutter Trigger Distributor
+# FreeCAD macro - parametric printed carrier + copper-forming press
+#
+# Electrical intent:
+#   Pico 3.3 V trigger -> A1..A5 of two SN74LVC245A devices
+#   SN74LVC245A VCC = 1.8 V, DIR = 1.8 V, OE = GND
+#   B1..B5 -> 68 ohm series resistor -> camera XTR
+#   Each camera gets its own GND return pad
+#
+# Construction intent:
+#   Single-sided recessed copper tape on an insulating 3D-printed carrier.
+#   Two insulated jumper wires distribute 1.8 V to the two ICs so the
+#   single-sided copper routing does not require trace crossings.
+#
+# IMPORTANT:
+# - This macro creates mechanical geometry and routing guides.
+# - Verify your exact parts and electrical requirements before flight hardware.
+# - Supply the 1.8 V input from a REGULATED 1.8 V source, not a resistor divider.
+#
+# Run in FreeCAD: Macro -> Macros -> Execute
+# Export "Carrier_Print" and "Press_Tool" separately as STL/3MF.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+DOC_NAME = "DASPi_10Cam_Trigger_Distributor"
+
+try:
+    App.closeDocument(DOC_NAME)
+except Exception:
+    pass
+doc = App.newDocument(DOC_NAME)
+
+# -------------------------
+# Parameters (mm)
+# -------------------------
+BOARD_W = 118.0
+BOARD_H = 76.0
+BOARD_T = 2.4
+
+GROOVE_D = 0.35
+TRACE_W = 2.4
+NECK_W = 1.20
+GROUND_W = 3.2
+
+PAD_D = 4.6
+CHIP_PAD_D = 1.80
+HOLE_D = 1.05
+WIRE_HOLE_D = 1.35
+MOUNT_D = 3.20
+
+PRESS_T = 2.0
+PRESS_RIB_H = 0.28
+PRESS_CLEARANCE = 0.25
+
+DIP_ROW = 7.62
+DIP_PITCH = 2.54
+
+# Board coordinates
+U_X = 35.0
+U1_CY = 51.0
+U2_CY = 22.0
+TRIG_BUS_X = 13.0
+GND_BUS_X = 115.0
+
+RES_X1 = 82.0
+RES_X2 = 94.0
+CAM_SIG_X = 106.0
+CAM_GND_X = 112.0
+
+# Output Y positions after fanout
+OUT_Y = [
+    60.0, 54.5, 49.0, 43.5, 38.0,
+    31.0, 25.5, 20.0, 14.5, 9.0
+]
+
+# External input pads
+TRIG_IN = (6.0, 37.0)
+V18_IN  = (6.0, 8.0)
+GND_IN  = (6.0, 13.0)
+
+# 1.8 V jumper landing pads near each chip
+U1_V18_J = (25.0, 65.5)
+U2_V18_J = (25.0, 35.8)
+
+# -------------------------
+# Helpers
+# -------------------------
+def feat(name, shape, color=None, transparency=0):
+    o = doc.addObject("PartDesign::Feature", name)
+    o.Shape = shape
+    if color:
+        o.ViewObject.ShapeColor = color
+    o.ViewObject.Transparency = transparency
+    return o
+
+def cyl_cut(x, y, d, z0=-0.5, h=None):
+    if h is None:
+        h = BOARD_T + 1.0
+    return Part.makeCylinder(d/2.0, h, App.Vector(x, y, z0))
+
+def groove_segment(x1, y1, x2, y2, width=TRACE_W):
+    dx, dy = x2-x1, y2-y1
+    L = math.hypot(dx, dy)
+    if L < 1e-6:
+        return Part.Shape()
+    a = math.degrees(math.atan2(dy, dx))
+    s = Part.makeBox(L, width, GROOVE_D,
+                     App.Vector(0, -width/2.0, BOARD_T-GROOVE_D))
+    s.rotate(App.Vector(0,0,0), App.Vector(0,0,1), a)
+    s.translate(App.Vector(x1, y1, 0))
+    return s
+
+def groove_pad(x, y, d=PAD_D):
+    return Part.makeCylinder(d/2.0, GROOVE_D,
+                             App.Vector(x, y, BOARD_T-GROOVE_D))
+
+def press_segment(x1, y1, x2, y2, width=TRACE_W):
+    w = max(0.55, width - PRESS_CLEARANCE)
+    dx, dy = x2-x1, y2-y1
+    L = math.hypot(dx, dy)
+    if L < 1e-6:
+        return Part.Shape()
+    a = math.degrees(math.atan2(dy, dx))
+    s = Part.makeBox(L, w, PRESS_RIB_H,
+                     App.Vector(0, -w/2.0, PRESS_T))
+    s.rotate(App.Vector(0,0,0), App.Vector(0,0,1), a)
+    s.translate(App.Vector(x1, y1, 0))
+    return s
+
+def press_pad(x, y, d=PAD_D):
+    dd = max(0.8, d - PRESS_CLEARANCE)
+    return Part.makeCylinder(dd/2.0, PRESS_RIB_H,
+                             App.Vector(x, y, PRESS_T))
+
+def dip_pin_positions(cx, cy):
+    xl = cx - DIP_ROW/2.0
+    xr = cx + DIP_ROW/2.0
+    top = cy + 9*DIP_PITCH/2.0
+    pts = {}
+    # left side pins 1..10, top -> bottom
+    for p in range(1, 11):
+        pts[p] = (xl, top - (p-1)*DIP_PITCH)
+    # right side pins 11..20, bottom -> top
+    bottom = cy - 9*DIP_PITCH/2.0
+    for p in range(11, 21):
+        pts[p] = (xr, bottom + (p-11)*DIP_PITCH)
+    return pts
+
+U1 = dip_pin_positions(U_X, U1_CY)
+U2 = dip_pin_positions(U_X, U2_CY)
+
+segments = []
+pads = []
+holes = []
+
+def add_seg(a, b, w=TRACE_W):
+    segments.append((a[0],a[1],b[0],b[1],w))
+
+def add_pad(p, d=PAD_D, hole=HOLE_D):
+    pads.append((p[0],p[1],d))
+    if hole:
+        holes.append((p[0],p[1],hole))
+
+# -------------------------
+# DIP pads / holes
+# -------------------------
+for table in (U1, U2):
+    for p in table.values():
+        add_pad(p, CHIP_PAD_D, HOLE_D)
+
+# -------------------------
+# Trigger input + common trigger bus
+# -------------------------
+add_pad(TRIG_IN, PAD_D, WIRE_HOLE_D)
+add_seg(TRIG_IN, (TRIG_BUS_X, TRIG_IN[1]), TRACE_W)
+add_seg((TRIG_BUS_X, 12.0), (TRIG_BUS_X, 64.0), TRACE_W)
+
+# A1..A5 = pins 2..6
+for table in (U1, U2):
+    for pin in range(2,7):
+        p = table[pin]
+        add_seg((TRIG_BUS_X, p[1]), p, NECK_W)
+
+# Unused A6..A8 = pins 7..9. Tie them to pin 10 GND locally.
+for table in (U1, U2):
+    add_seg(table[7], table[10], NECK_W)
+
+# -------------------------
+# Output channels
+# B1..B5 = pins 18..14
+# -------------------------
+b_pins = [18,17,16,15,14]
+channel = 0
+for table in (U1, U2):
+    for pin in b_pins:
+        src = table[pin]
+        ty = OUT_Y[channel]
+        neck_end = (47.0, src[1])
+        fan = (56.0, ty)
+
+        add_seg(src, neck_end, NECK_W)
+        add_seg(neck_end, fan, NECK_W)
+        add_seg(fan, (RES_X1, ty), TRACE_W)
+
+        add_pad((RES_X1, ty), PAD_D, HOLE_D)
+        add_pad((RES_X2, ty), PAD_D, HOLE_D)
+
+        # Physical 68R resistor bridges RES_X1 -> RES_X2
+        add_seg((RES_X2, ty), (CAM_SIG_X, ty), TRACE_W)
+
+        add_pad((CAM_SIG_X, ty), PAD_D, WIRE_HOLE_D)
+        add_pad((CAM_GND_X, ty), PAD_D, WIRE_HOLE_D)
+        add_seg((CAM_GND_X, ty), (GND_BUS_X, ty), GROUND_W)
+        channel += 1
+
+# Main ground bus
+add_seg((GND_BUS_X, 4.5), (GND_BUS_X, 69.0), GROUND_W)
+
+# External GND input runs along the bottom edge
+add_pad(GND_IN, PAD_D, WIRE_HOLE_D)
+add_seg(GND_IN, (6.0,4.5), GROUND_W)
+add_seg((6.0,4.5), (GND_BUS_X,4.5), GROUND_W)
+
+# -------------------------
+# Chip GND and OE
+# Pin 10 = GND, pin 19 = /OE
+# -------------------------
+u1_ground_lane = 35.6
+
+# U1 GND down to inter-chip lane
+add_seg(U1[10], (U1[10][0], u1_ground_lane), NECK_W)
+add_seg((U1[10][0], u1_ground_lane), (GND_BUS_X, u1_ground_lane), GROUND_W)
+
+# U1 /OE up to top ground route
+add_seg(U1[19], (46.0, U1[19][1]), NECK_W)
+add_seg((46.0, U1[19][1]), (46.0, 68.0), NECK_W)
+add_seg((46.0,68.0), (GND_BUS_X,68.0), GROUND_W)
+
+# U2 GND directly to bottom ground route
+add_seg(U2[10], (U2[10][0], 4.5), NECK_W)
+
+# U2 /OE up to the inter-chip ground lane
+add_seg(U2[19], (46.0, U2[19][1]), NECK_W)
+add_seg((46.0, U2[19][1]), (46.0, u1_ground_lane), NECK_W)
+
+# -------------------------
+# 1.8 V input and local chip landing pads
+# DIR pin 1 and VCC pin 20 are tied locally.
+# Two insulated jumper wires go from V18_IN to U1_V18_J/U2_V18_J.
+# -------------------------
+add_pad(V18_IN, PAD_D, WIRE_HOLE_D)
+
+for table, jpad in ((U1,U1_V18_J),(U2,U2_V18_J)):
+    add_pad(jpad, PAD_D, WIRE_HOLE_D)
+    add_seg(jpad, (jpad[0], table[1][1]), TRACE_W)
+    add_seg((jpad[0], table[1][1]), table[1], NECK_W)
+    add_seg(table[1], table[20], NECK_W)
+
+# -------------------------
+# 0.1 uF decoupling capacitors
+# -------------------------
+# U1
+u1_cv = (44.8, U1[20][1])
+u1_cg = (44.8, U1[19][1])
+add_pad(u1_cv, PAD_D, HOLE_D)
+add_pad(u1_cg, PAD_D, HOLE_D)
+add_seg(U1[20], u1_cv, NECK_W)
+add_seg(u1_cg, (46.0,u1_cg[1]), NECK_W)
+
+# U2
+u2_cv = (44.8, U2[20][1])
+u2_cg = (44.8, U2[19][1])
+add_pad(u2_cv, PAD_D, HOLE_D)
+add_pad(u2_cg, PAD_D, HOLE_D)
+add_seg(U2[20], u2_cv, NECK_W)
+add_seg(u2_cg, (46.0,u2_cg[1]), NECK_W)
+
+# -------------------------
+# Mounting holes
+# -------------------------
+for p in [(4.5,71.5),(113.5,71.5),(4.5,4.5),(113.5,4.5)]:
+    holes.append((p[0],p[1],MOUNT_D))
+
+# -------------------------
+# Create carrier
+# -------------------------
+carrier = Part.makeBox(BOARD_W, BOARD_H, BOARD_T)
+
+for x,y,d in holes:
+    carrier = carrier.cut(cyl_cut(x,y,d))
+
+for x1,y1,x2,y2,w in segments:
+    carrier = carrier.cut(groove_segment(x1,y1,x2,y2,w))
+for x,y,d in pads:
+    carrier = carrier.cut(groove_pad(x,y,d))
+
+carrier_obj = feat("Carrier_Print", carrier, (0.82,0.82,0.84))
+carrier_obj.Label = "PRINT - Trigger Distributor Carrier"
+
+# Copper reference
+guide = None
+for x1,y1,x2,y2,w in segments:
+    g = groove_segment(x1,y1,x2,y2,w)
+    guide = g if guide is None else guide.fuse(g)
+for x,y,d in pads:
+    g = groove_pad(x,y,d)
+    guide = g if guide is None else guide.fuse(g)
+
+if guide:
+    guide_obj = feat("Copper_Trace_Guide", guide, (0.75,0.38,0.08), 20)
+    guide_obj.Label = "REFERENCE ONLY - Copper tape areas"
+
+# -------------------------
+# Matching copper-forming press
+# -------------------------
+press = Part.makeBox(BOARD_W, BOARD_H, PRESS_T)
+for x1,y1,x2,y2,w in segments:
+    press = press.fuse(press_segment(x1,y1,x2,y2,w))
+for x,y,d in pads:
+    press = press.fuse(press_pad(x,y,d))
+
+press.translate(App.Vector(BOARD_W+12.0, 0, 0))
+press_obj = feat("Press_Tool", press, (0.55,0.65,0.80))
+press_obj.Label = "PRINT - Copper Forming Press"
+
+# -------------------------
+# Reference IC bodies
+# -------------------------
+def dip_body(cx, cy):
+    body_w = 10.3
+    body_h = 26.0
+    return Part.makeBox(body_w, body_h, 4.0,
+                        App.Vector(cx-body_w/2, cy-body_h/2, BOARD_T+0.4))
+
+feat("U1_74LVC245_REF", dip_body(U_X,U1_CY), (0.15,0.15,0.18), 30)
+feat("U2_74LVC245_REF", dip_body(U_X,U2_CY), (0.15,0.15,0.18), 30)
+
+# -------------------------
+# Reference insulated 1.8 V jumper wires
+# -------------------------
+def rod_between(p1,p2,z=BOARD_T+5.0,d=0.8):
+    x1,y1 = p1; x2,y2 = p2
+    v = App.Vector(x2-x1, y2-y1, 0)
+    L = v.Length
+    if L == 0:
+        return Part.Shape()
+    return Part.makeCylinder(d/2, L, App.Vector(x1,y1,z),
+                             App.Vector(v.x/L,v.y/L,0))
+
+j1 = feat("Jumper_1V8_U1_REF", rod_between(V18_IN,U1_V18_J), (0.90,0.15,0.15))
+j2 = feat("Jumper_1V8_U2_REF", rod_between(V18_IN,U2_V18_J), (0.90,0.15,0.15))
+j1.Label = "REFERENCE - insulated 1.8 V jumper to U1"
+j2.Label = "REFERENCE - insulated 1.8 V jumper to U2"
+
+carrier_obj.addProperty("App::PropertyStringList","CameraChannels","Electrical")
+carrier_obj.CameraChannels = [
+    "CH1..CH5: U1 B1..B5 (pins 18,17,16,15,14)",
+    "CH6..CH10: U2 B1..B5 (pins 18,17,16,15,14)",
+    "Each output: Bx -> 68 ohm axial resistor -> XTR",
+    "Each camera: separate XTR + GND twisted pair",
+]
+carrier_obj.addProperty("App::PropertyString","MaterialNote","Fabrication")
+carrier_obj.MaterialNote = "Use electrically insulating filament (plain PC/ASA/PETG); avoid carbon-filled filament."
+carrier_obj.addProperty("App::PropertyString","CopperNote","Fabrication")
+carrier_obj.CopperNote = "Copper face is the grooved face. Main groove %.2f mm; DIP neck %.2f mm; depth %.2f mm." % (TRACE_W,NECK_W,GROOVE_D)
+carrier_obj.addProperty("App::PropertyString","PowerNote","Electrical")
+carrier_obj.PowerNote = "V18_IN must be a regulated 1.8 V supply. Do not power the ICs from a resistor divider."
+
+doc.recompute()
+Gui.activeDocument().activeView().viewAxonometric()
+Gui.activeDocument().activeView().fitAll()

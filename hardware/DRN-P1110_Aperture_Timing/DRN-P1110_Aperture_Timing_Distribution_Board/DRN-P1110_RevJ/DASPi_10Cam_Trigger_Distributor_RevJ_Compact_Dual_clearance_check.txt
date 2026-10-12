@@ -1,0 +1,35 @@
+DASPi Rev J Compact Dual — connector-footprint correction check
+
+Purchased connector:
+JST B02B-PASK-1
+Vertical, 2-position, 2.00 mm pitch, through-hole
+
+Rev J change from Rev I:
+- Removed ten full-depth rectangular connector boss slots.
+- Retained only two 0.80 mm lead holes per connector at 2.00 mm pitch.
+- Retained ten 0.80 mm-deep underside seating pockets, leaving 1.60 mm local thickness.
+- Solid carrier remaining beneath each top-side trace groove: 1.25 mm.
+- Restored/retained the complete Rev I copper geometry without relocation.
+
+Validation results:
+Python syntax: PASS
+Headless macro geometry construction: PASS
+Rev I copper segments identical: PASS
+Rev I copper pads identical: PASS
+Rev I round holes identical: PASS
+Two lead holes per connector: PASS
+Full-depth rectangular connector openings remaining: 0
+Local thickness under connector seating pockets: 1.600 mm
+Solid web beneath top-side trace grooves: 1.250 mm
+
+Copper segments: 126
+Copper pads: 100
+Drilled round holes: 108
+Different-net copper overlaps: 0
+Minimum different-net copper clearance: 0.700 mm
+Minimum A-to-B copper separation: 7.000 mm
+Minimum mounting-hole-to-copper clearance: 1.200 mm
+C3 V18 route continuity: PASS
+C6 V18 route continuity: PASS
+
+PASS: the Rev I trace/opening interference is removed by deleting the unneeded full-depth connector openings.

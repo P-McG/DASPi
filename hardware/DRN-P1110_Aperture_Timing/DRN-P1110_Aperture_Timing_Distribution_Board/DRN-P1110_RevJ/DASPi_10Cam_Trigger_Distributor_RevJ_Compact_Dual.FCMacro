@@ -1,0 +1,404 @@
+# DASPi 10-Camera Trigger Distributor — Rev J Compact Dual
+#
+# Rev J connector-footprint correction:
+#   B02B-PASK-1 connectors mount with their two 2.00 mm-pitch through-hole
+#   leads.  The Rev I full-depth rectangular boss slots were not required for
+#   the purchased parts and have been removed.  A shallow underside pocket is
+#   retained to provide JST's 1.6 mm local board thickness; it leaves a solid
+#   web beneath the top-side traces.  Rev I copper routing is retained.
+#
+# Board: 110 x 48 mm
+# One 2-inch / 50.8 mm copper sheet covers the complete board height.
+#
+# CIRCUIT A:
+#   3V3_A / GND_A / TRIG_A
+#   MCP1700-A -> 1.8V_A
+#   U1 SN74LVC245A
+#   J1..J5
+#
+# CIRCUIT B:
+#   3V3_B / GND_B / TRIG_B
+#   MCP1700-B -> 1.8V_B
+#   U2 SN74LVC245A
+#   J6..J10
+#
+# No copper connection exists between A and B power, ground or trigger nets.
+#
+# Compactness change:
+#   68-ohm 1/4W axial resistors are mounted VERTICALLY at 3.81 mm pitch.
+#   Add a small neutral-cure silicone/adhesive support after electrical testing
+#   if this board is used on the aircraft.
+#
+# SN74LVC245A pin19 /OE:
+#   Short insulated component-side jumper to the local GND landing pad.
+#
+# Pins 11..13 (unused B6..B8 outputs) keep physical holes but no copper pads.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+DOC_NAME="DASPi_10Cam_Trigger_Distributor_RevJ_Compact_Dual"
+try:
+    App.closeDocument(DOC_NAME)
+except Exception:
+    pass
+doc=App.newDocument(DOC_NAME)
+
+BOARD_W=110.0; BOARD_H=48.0; BOARD_T=2.4
+GROOVE_D=0.35
+TRACE_W=2.4; NECK_W=1.0; FAN_W=0.9; GROUND_W=2.4
+PAD_D=4.6; CHIP_PAD_D=1.7; OE_PAD_D=1.3
+RES_PAD_D=2.2; CONN_PAD_D=1.3; CAP_PAD_D=1.8
+HOLE_D=1.05; WIRE_HOLE_D=1.35; RES_HOLE_D=1.0
+CONN_HOLE_D=0.8; CAP_HOLE_D=0.9; MOUNT_D=3.2
+
+PRESS_T=2.0; PRESS_RIB_H=0.28; PRESS_CLEARANCE=0.25
+ALIGN_PIN_D=2.7; ALIGN_PIN_TIP_D=1.6
+ALIGN_PIN_STRAIGHT=1.8; ALIGN_PIN_TIP_H=0.5
+
+DIP_ROW=7.62; DIP_PITCH=2.54
+CONN_PITCH=2.0; CONN_BODY_X=6.0; CONN_BODY_Y=5.3
+CONN_LOCAL_THICKNESS=1.6
+CONN_RECESS_D=BOARD_T-CONN_LOCAL_THICKNESS
+
+U1_C=(28.0, 24.0); U2_C=(80.0, 24.0)
+A_GND_IN=(9.0, 43.0); A_V3_IN=(9.0, 34.0); A_TRIG_IN=(9.0, 24.0)
+B_GND_IN=(61.0, 43.0); B_V3_IN=(61.0, 34.0); B_TRIG_IN=(61.0, 24.0)
+REG_A={1: (16.0, 43.0), 2: (16.0, 40.46), 3: (16.0, 37.92)}; REG_B={1: (68.0, 43.0), 2: (68.0, 40.46), 3: (68.0, 37.92)}
+TRIG_A_X=19.0; TRIG_B_X=71.0
+A_GBUS=50.5; B_GBUS=102.5
+GND_TOP_Y=45.0; GND_BOTTOM_Y=4.5
+RES_PITCH=3.81
+R1_A=[35.0,39.0,35.0,39.0,35.0]; R1_B=[87.0,91.0,87.0,91.0,87.0]; RES_Y=[34.0, 29.0, 25.0, 19.0, 14.0]
+A_CONN_X=47.0; B_CONN_X=99.0; CONN_Y=[38.0, 31.0, 24.0, 17.0, 10.0]
+MOUNTS=[(3.5, 44.5), (106.5, 44.5), (3.5, 3.5), (106.5, 3.5)]
+
+# Six physical through-hole capacitor footprints, 2.54 mm lead pitch.
+# C1/C4 = 1uF regulator input; C2/C5 = 1uF regulator output;
+# C3/C6 = 0.1uF local 74LVC245 bypass.
+CAPS=[
+    ("C1_CIN_A","A_V3",(10.2,39.2),"A_GND",(10.2,41.74),4.0,"1uF"),
+    ("C2_COUT_A","A_V18",(20.0,39.2),"A_GND",(20.0,41.74),4.0,"1uF"),
+    ("C3_BYP_A","A_V18",(32.5,39.6),"A_GND",(35.04,39.6),3.0,"0.1uF"),
+    ("C4_CIN_B","B_V3",(62.2,39.2),"B_GND",(62.2,41.74),4.0,"1uF"),
+    ("C5_COUT_B","B_V18",(72.0,39.2),"B_GND",(72.0,41.74),4.0,"1uF"),
+    ("C6_BYP_B","B_V18",(84.5,39.6),"B_GND",(87.04,39.6),3.0,"0.1uF"),
+]
+
+def feat(name,shape,color=None,transparency=0):
+    o=doc.addObject("Part::Feature",name)
+    o.Shape=shape
+    if color:
+        o.ViewObject.ShapeColor=color
+    o.ViewObject.Transparency=transparency
+    return o
+
+def dip(cx,cy):
+    xl=cx-DIP_ROW/2; xr=cx+DIP_ROW/2
+    top=cy+9*DIP_PITCH/2; bottom=cy-9*DIP_PITCH/2
+    d={}
+    for p in range(1,11):
+        d[p]=(xl,top-(p-1)*DIP_PITCH)
+    for p in range(11,21):
+        d[p]=(xr,bottom+(p-11)*DIP_PITCH)
+    return d
+
+U1=dip(*U1_C)
+U2=dip(*U2_C)
+
+segments=[]
+pads=[]
+holes=[]
+def add_seg(a,b,w):
+    segments.append((a[0],a[1],b[0],b[1],w))
+def add_pad(p,d,h=None):
+    pads.append((p[0],p[1],d))
+    if h:
+        holes.append((p[0],p[1],h))
+def add_hole(p,h):
+    holes.append((p[0],p[1],h))
+
+def groove_segment(x1,y1,x2,y2,w):
+    dx=x2-x1; dy=y2-y1
+    L=math.hypot(dx,dy)
+    ang=math.degrees(math.atan2(dy,dx))
+    s=Part.makeBox(L,w,GROOVE_D,App.Vector(0,-w/2,BOARD_T-GROOVE_D))
+    s.rotate(App.Vector(),App.Vector(0,0,1),ang)
+    s.translate(App.Vector(x1,y1,0))
+    return s
+
+def groove_pad(x,y,d):
+    return Part.makeCylinder(d/2,GROOVE_D,App.Vector(x,y,BOARD_T-GROOVE_D))
+
+def press_segment(x1,y1,x2,y2,w):
+    rw=max(0.45,w-PRESS_CLEARANCE)
+    dx=x2-x1; dy=y2-y1
+    L=math.hypot(dx,dy)
+    ang=math.degrees(math.atan2(dy,dx))
+    s=Part.makeBox(L,rw,PRESS_RIB_H,App.Vector(0,-rw/2,PRESS_T))
+    s.rotate(App.Vector(),App.Vector(0,0,1),ang)
+    s.translate(App.Vector(x1,y1,0))
+    return s
+
+def press_pad(x,y,d):
+    rd=max(0.7,d-PRESS_CLEARANCE)
+    return Part.makeCylinder(rd/2,PRESS_RIB_H,App.Vector(x,y,PRESS_T))
+
+def alignment_pin(x,y):
+    straight_h=PRESS_RIB_H+ALIGN_PIN_STRAIGHT
+    shaft=Part.makeCylinder(ALIGN_PIN_D/2,straight_h,App.Vector(x,y,PRESS_T))
+    tip=Part.makeCone(ALIGN_PIN_D/2,ALIGN_PIN_TIP_D/2,ALIGN_PIN_TIP_H,
+                      App.Vector(x,y,PRESS_T+straight_h))
+    return shaft.fuse(tip)
+
+# All DIP holes; only used pins receive copper pads.
+used_pins=set(list(range(1,11))+list(range(14,21)))
+for t in (U1,U2):
+    for pin,p in t.items():
+        if pin in used_pins:
+            add_pad(p,OE_PAD_D if pin==19 else CHIP_PAD_D,HOLE_D)
+        else:
+            add_hole(p,HOLE_D)
+
+# Inputs and regulator pins
+for p in (A_GND_IN,A_V3_IN,A_TRIG_IN,B_GND_IN,B_V3_IN,B_TRIG_IN):
+    add_pad(p,PAD_D,WIRE_HOLE_D)
+for reg in (REG_A,REG_B):
+    for p in reg.values():
+        add_pad(p,CHIP_PAD_D,HOLE_D)
+
+# Capacitor copper lands and through-holes.
+for name,n1,p1,n2,p2,body_d,value in CAPS:
+    add_pad(p1,CAP_PAD_D,CAP_HOLE_D)
+    add_pad(p2,CAP_PAD_D,CAP_HOLE_D)
+
+# Trigger
+add_seg(A_TRIG_IN,(TRIG_A_X,A_TRIG_IN[1]),TRACE_W)
+add_seg((TRIG_A_X,U1[9][1]),(TRIG_A_X,U1[2][1]),TRACE_W)
+for pin in range(2,10):
+    add_seg((TRIG_A_X,U1[pin][1]),U1[pin],NECK_W)
+
+add_seg(B_TRIG_IN,(TRIG_B_X,B_TRIG_IN[1]),TRACE_W)
+add_seg((TRIG_B_X,U2[9][1]),(TRIG_B_X,U2[2][1]),TRACE_W)
+for pin in range(2,10):
+    add_seg((TRIG_B_X,U2[pin][1]),U2[pin],NECK_W)
+
+# 3V3
+add_seg(A_V3_IN,(12,A_V3_IN[1]),TRACE_W)
+add_seg((12,A_V3_IN[1]),(12,REG_A[2][1]),NECK_W)
+add_seg((12,REG_A[2][1]),REG_A[2],NECK_W)
+add_seg(B_V3_IN,(64,B_V3_IN[1]),TRACE_W)
+add_seg((64,B_V3_IN[1]),(64,REG_B[2][1]),NECK_W)
+add_seg((64,REG_B[2][1]),REG_B[2],NECK_W)
+
+# GND A
+add_seg(A_GND_IN,REG_A[1],NECK_W)
+add_seg(REG_A[1],(16,GND_TOP_Y),NECK_W)
+add_seg((16,GND_TOP_Y),(A_GBUS,GND_TOP_Y),GROUND_W)
+add_seg((A_GBUS,GND_BOTTOM_Y),(A_GBUS,GND_TOP_Y),GROUND_W)
+add_seg((21,GND_BOTTOM_Y),(A_GBUS,GND_BOTTOM_Y),GROUND_W)
+add_seg(U1[10],(21,U1[10][1]),NECK_W)
+add_seg((21,U1[10][1]),(21,GND_BOTTOM_Y),NECK_W)
+
+# GND B
+add_seg(B_GND_IN,REG_B[1],NECK_W)
+add_seg(REG_B[1],(68,GND_TOP_Y),NECK_W)
+add_seg((68,GND_TOP_Y),(B_GBUS,GND_TOP_Y),GROUND_W)
+add_seg((B_GBUS,GND_BOTTOM_Y),(B_GBUS,GND_TOP_Y),GROUND_W)
+add_seg((73,GND_BOTTOM_Y),(B_GBUS,GND_BOTTOM_Y),GROUND_W)
+add_seg(U2[10],(73,U2[10][1]),NECK_W)
+add_seg((73,U2[10][1]),(73,GND_BOTTOM_Y),NECK_W)
+
+# 1.8V A / B
+add_seg(REG_A[3],(21,REG_A[3][1]),NECK_W)
+add_seg((21,REG_A[3][1]),(21,36.5),TRACE_W)
+add_seg((21,36.5),(U1[20][0],36.5),TRACE_W)
+add_seg((U1[20][0],36.5),U1[20],NECK_W)
+add_seg(U1[1],U1[20],NECK_W)
+
+add_seg(REG_B[3],(73,REG_B[3][1]),NECK_W)
+add_seg((73,REG_B[3][1]),(73,36.5),TRACE_W)
+add_seg((73,36.5),(U2[20][0],36.5),TRACE_W)
+add_seg((U2[20][0],36.5),U2[20],NECK_W)
+add_seg(U2[1],U2[20],NECK_W)
+
+# OE ground landing pads
+add_pad((31.81,45.0),3.2,None)
+add_pad((83.81,45.0),3.2,None)
+
+# Capacitor routing.
+# C1 CIN A
+add_seg(CAPS[0][2],(12,CAPS[0][2][1]),NECK_W)
+add_seg(CAPS[0][4],(CAPS[0][4][0],43),NECK_W)
+add_seg((CAPS[0][4][0],43),(16,43),NECK_W)
+
+# C2 COUT A
+add_seg(CAPS[1][2],(21,CAPS[1][2][1]),NECK_W)
+add_seg(CAPS[1][4],(20,45),NECK_W)
+
+# C3 0.1uF bypass A
+# V18-side pad now positively ties into the existing U1 VCC rail.
+add_seg(CAPS[2][2],(U1[20][0],CAPS[2][2][1]),NECK_W)
+add_seg((U1[20][0],CAPS[2][2][1]),(U1[20][0],36.5),NECK_W)
+add_seg(CAPS[2][4],(CAPS[2][4][0],45),NECK_W)
+
+# C4 CIN B
+add_seg(CAPS[3][2],(64,CAPS[3][2][1]),NECK_W)
+add_seg(CAPS[3][4],(CAPS[3][4][0],43),NECK_W)
+add_seg((CAPS[3][4][0],43),(68,43),NECK_W)
+
+# C5 COUT B
+add_seg(CAPS[4][2],(73,CAPS[4][2][1]),NECK_W)
+add_seg(CAPS[4][4],(72,45),NECK_W)
+
+# C6 0.1uF bypass B
+# V18-side pad now positively ties into the existing U2 VCC rail.
+add_seg(CAPS[5][2],(U2[20][0],CAPS[5][2][1]),NECK_W)
+add_seg((U2[20][0],CAPS[5][2][1]),(U2[20][0],36.5),NECK_W)
+add_seg(CAPS[5][4],(CAPS[5][4][0],45),NECK_W)
+
+# Outputs
+bpins=[18,17,16,15,14]
+for t,rcols,cx,gbus in (
+    (U1,R1_A,A_CONN_X,A_GBUS),
+    (U2,R1_B,B_CONN_X,B_GBUS),
+):
+    for i,pin in enumerate(bpins):
+        r1=rcols[i]
+        r2=r1+RES_PITCH
+        ry=RES_Y[i]
+        cy=CONN_Y[i]
+        src=t[pin]
+
+        add_seg(src,(r1,src[1]),FAN_W)
+        add_seg((r1,src[1]),(r1,ry),FAN_W)
+        add_pad((r1,ry),RES_PAD_D,RES_HOLE_D)
+        add_pad((r2,ry),RES_PAD_D,RES_HOLE_D)
+
+        fx=cx-3
+        add_seg((r2,ry),(fx,ry),FAN_W)
+        add_seg((fx,ry),(fx,cy),FAN_W)
+
+        sig=(cx-1,cy)
+        gnd=(cx+1,cy)
+        add_seg((fx,cy),sig,FAN_W)
+        add_pad(sig,CONN_PAD_D,CONN_HOLE_D)
+        add_pad(gnd,CONN_PAD_D,CONN_HOLE_D)
+        add_seg(gnd,(gbus,cy),FAN_W)
+
+for m in MOUNTS:
+    add_hole(m,MOUNT_D)
+
+# Carrier
+carrier=Part.makeBox(BOARD_W,BOARD_H,BOARD_T)
+for x,y,d in holes:
+    carrier=carrier.cut(Part.makeCylinder(d/2,BOARD_T+1,App.Vector(x,y,-0.5)))
+
+# Shallow component-side seating pockets.  These are not through-openings:
+# 1.60 mm of carrier remains locally, including 1.25 mm beneath the 0.35 mm
+# top-side copper grooves.
+for cx in (A_CONN_X,B_CONN_X):
+    for cy in CONN_Y:
+        seat=Part.makeBox(CONN_BODY_X+0.5,CONN_BODY_Y+0.5,CONN_RECESS_D+0.01,
+                          App.Vector(cx-(CONN_BODY_X+0.5)/2,
+                                     cy-(CONN_BODY_Y+0.5)/2,-0.01))
+        carrier=carrier.cut(seat)
+
+for x1,y1,x2,y2,w in segments:
+    carrier=carrier.cut(groove_segment(x1,y1,x2,y2,w))
+for x,y,d in pads:
+    carrier=carrier.cut(groove_pad(x,y,d))
+
+c=feat("Carrier_Print",carrier,(0.84,0.84,0.86))
+c.Label="PRINT - Rev J Compact Dual Carrier"
+
+# Copper guide
+guide=None
+for x1,y1,x2,y2,w in segments:
+    g=groove_segment(x1,y1,x2,y2,w)
+    guide=g if guide is None else guide.fuse(g)
+for x,y,d in pads:
+    g=groove_pad(x,y,d)
+    guide=g if guide is None else guide.fuse(g)
+feat("Copper_Trace_Guide",guide,(0.72,0.36,0.08),10).Label="REFERENCE ONLY - Copper"
+
+# Forge
+press=Part.makeBox(BOARD_W,BOARD_H,PRESS_T)
+for x1,y1,x2,y2,w in segments:
+    press=press.fuse(press_segment(x1,y1,x2,y2,w))
+for x,y,d in pads:
+    press=press.fuse(press_pad(x,y,d))
+for x,y in MOUNTS:
+    press=press.fuse(alignment_pin(x,y))
+press.translate(App.Vector(BOARD_W+12,0,0))
+feat("Press_Tool",press,(0.55,0.65,0.80)).Label="PRINT - Rev J Copper Forge"
+
+# Reference bodies
+def dip_body(cx,cy):
+    return Part.makeBox(10.3,26,4,App.Vector(cx-5.15,cy-13,-4.4))
+feat("U1_74LVC245_REF",dip_body(*U1_C),(0.15,0.15,0.18),25)
+feat("U2_74LVC245_REF",dip_body(*U2_C),(0.15,0.15,0.18),25)
+feat("U3_MCP1700_A_REF",Part.makeCylinder(2.5,4.5,App.Vector(REG_A[2][0],REG_A[2][1],-4.9)),(0.1,0.1,0.1),20)
+feat("U4_MCP1700_B_REF",Part.makeCylinder(2.5,4.5,App.Vector(REG_B[2][0],REG_B[2][1],-4.9)),(0.1,0.1,0.1),20)
+
+# Capacitor reference solids on component side.
+for name,n1,p1,n2,p2,body_d,value in CAPS:
+    cx=(p1[0]+p2[0])/2
+    cy=(p1[1]+p2[1])/2
+    h=4.0 if value=="0.1uF" else 5.0
+    body=Part.makeCylinder(body_d/2,h,App.Vector(cx,cy,-h))
+    o=feat(name+"_REF",body,(0.20,0.55,0.25),25)
+    o.Label="REFERENCE - %s %s"%(name,value)
+
+for bank,cx,start in (("A",A_CONN_X,1),("B",B_CONN_X,6)):
+    for i,cy in enumerate(CONN_Y):
+        body=Part.makeBox(CONN_BODY_X,CONN_BODY_Y,7.7,
+                          App.Vector(cx-CONN_BODY_X/2,cy-CONN_BODY_Y/2,-7.7))
+        o=feat("J%d_PA_REF"%(start+i),body,(0.92,0.92,0.88),35)
+        o.Label="REFERENCE - J%d B02B-PASK-1"%(start+i)
+
+# Simple standing resistor references
+for bank,rcols,start in (("A",R1_A,1),("B",R1_B,6)):
+    for i,r1 in enumerate(rcols):
+        # resistor body standing above the component side, reference only
+        body=Part.makeCylinder(1.15,6.3,App.Vector(r1,RES_Y[i],-6.3))
+        o=feat("R%d_68R_REF"%(start+i),body,(0.55,0.35,0.18),35)
+        o.Label="REFERENCE - R%d 68ohm 1/4W vertical"%(start+i)
+
+# OE jumpers
+def wire(p1,p2,z=BOARD_T+4,d=0.7):
+    v=App.Vector(p2[0]-p1[0],p2[1]-p1[1],0)
+    L=v.Length
+    return Part.makeCylinder(d/2,L,App.Vector(p1[0],p1[1],z),
+                             App.Vector(v.x/L,v.y/L,0))
+feat("U1_OE_GND_JUMPER_REF",wire(U1[19],(31.81,45.0)),(0.1,0.1,0.9))
+feat("U2_OE_GND_JUMPER_REF",wire(U2[19],(83.81,45.0)),(0.1,0.1,0.9))
+
+# Properties
+c.addProperty("App::PropertyString","Revision","Design"); c.Revision="Rev J Compact Dual"
+c.addProperty("App::PropertyString","Architecture","Electrical")
+c.Architecture="Two separate 5-camera circuits; no A/B copper connection."
+c.addProperty("App::PropertyString","CircuitA","Electrical")
+c.CircuitA="3V3_A/GND_A/TRIG_A -> MCP1700-A -> U1 -> J1..J5."
+c.addProperty("App::PropertyString","CircuitB","Electrical")
+c.CircuitB="3V3_B/GND_B/TRIG_B -> MCP1700-B -> U2 -> J6..J10."
+c.addProperty("App::PropertyString","BypassCorrection","Electrical")
+c.BypassCorrection="Rev I: C3 and C6 V18 pads are directly routed into the corresponding U1/U2 pin20 VCC rails."
+c.addProperty("App::PropertyString","ConnectorClearance","Design")
+c.ConnectorClearance="Rev J: removed all ten full-depth connector slots. Each B02B-PASK-1 uses two 2.00mm-pitch lead holes plus a non-through underside pocket leaving 1.60mm local thickness."
+c.addProperty("App::PropertyString","Capacitors","Electrical")
+c.Capacitors="C1/C4 1uF CIN; C2/C5 1uF COUT; C3/C6 0.1uF bypass. 2.54mm pitch, 0.90mm holes."
+c.addProperty("App::PropertyString","CopperTape","Fabrication")
+c.CopperTape="One 2-inch (50.8mm) copper sheet covers the 48mm board. No seam."
+c.addProperty("App::PropertyString","Resistors","Fabrication")
+c.Resistors="68ohm 1/4W axial, vertical mounting, 3.81mm lead pitch; mechanically support after testing."
+c.addProperty("App::PropertyString","Regulators","Electrical")
+c.Regulators="2 x MCP1700-1802E/TO, each with its own 1uF CIN and 1uF COUT."
+c.addProperty("App::PropertyString","OEJumpers","Electrical")
+c.OEJumpers="Each 74LVC245 pin19 /OE uses a short insulated jumper to its own local GND landing pad."
+
+doc.recompute()
+Gui.activeDocument().activeView().viewAxonometric()
+Gui.activeDocument().activeView().fitAll()

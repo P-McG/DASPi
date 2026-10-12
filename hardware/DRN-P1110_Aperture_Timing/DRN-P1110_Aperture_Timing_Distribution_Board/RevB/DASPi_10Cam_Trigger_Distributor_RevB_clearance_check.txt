@@ -1,0 +1,17 @@
+DASPi 10-camera trigger distributor — Rev B FINAL
+
+Different-net copper overlaps: 0
+PASS: no different-net copper overlap.
+Absolute minimum different-net clearance: 0.840 mm (CH3_PRE vs CH4_PRE)
+Minimum mounting-hole-to-copper clearance: 2.811 mm
+Center GND to CH5 pad-envelope clearance: 2.100 mm
+Center GND to CH6 pad-envelope clearance: 2.100 mm
+Top GND to CH1 pad-envelope clearance: 2.100 mm
+Bottom GND to CH10 pad-envelope clearance: 4.100 mm
+Camera XTR/GND output-pad edge clearance: 2.400 mm
+
+Mounting-hole clearances:
+  (4.0, 84.0): 2.811 mm
+  (126.0, 84.0): 3.204 mm
+  (4.0, 4.0): 2.811 mm
+  (126.0, 4.0): 4.610 mm

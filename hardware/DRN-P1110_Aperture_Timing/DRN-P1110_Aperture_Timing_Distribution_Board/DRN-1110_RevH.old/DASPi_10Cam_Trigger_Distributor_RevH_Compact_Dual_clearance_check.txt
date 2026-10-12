@@ -1,0 +1,25 @@
+DASPi Rev H Compact Dual FINAL — geometric/electrical clearance check
+
+Board: 110.0 x 48.0 mm
+Area reduction vs Rev G: 59.6%
+Different-net copper overlaps: 0
+PASS: no different-net copper overlap.
+Minimum different-net copper clearance: 0.700 mm (B_GND vs CH10_POST)
+Minimum A-to-B copper separation: 7.000 mm
+PA connector XTR/GND pad clearance: 0.700 mm
+Minimum unused DIP-hole to copper clearance: 1.165 mm
+Minimum mounting-hole to copper clearance: 1.200 mm
+
+Mount-hole clearances:
+  (3.5, 44.5): 1.804 mm
+  (106.5, 44.5): 1.200 mm
+  (3.5, 3.5): 14.731 mm
+  (106.5, 3.5): 1.326 mm
+
+Unused DIP-hole clearances:
+  U1_PIN13_UNUSED (31.81, 17.65): 1.165 mm
+  U2_PIN13_UNUSED (83.81, 17.65): 1.165 mm
+  U2_PIN12_UNUSED (83.81, 15.11): 1.754 mm
+  U1_PIN12_UNUSED (31.81, 15.11): 1.754 mm
+  U2_PIN11_UNUSED (83.81, 12.57): 1.872 mm
+  U1_PIN11_UNUSED (31.81, 12.57): 1.872 mm

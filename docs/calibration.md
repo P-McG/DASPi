@@ -10,7 +10,7 @@ meson compile -C ~/DASPi/software/build/computemodule-native
 # ChArUco board
 [Parametric 3D-Printable ChArUco Calibration Target](https://github.com/jywilson2/charuco)
 
-#Gather ChArUco calibration board captures
+# Gather ChArUco calibration board captures
 ```
 rm -f ~/DASPi/software/config/charuco-captures/test_retry_001-*
 

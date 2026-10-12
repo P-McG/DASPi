@@ -1,0 +1,274 @@
+# DASPi 10-Camera Global-Shutter Trigger Distributor — Rev D
+# Integrated MCP1700-1802E/TO 1.8 V regulator
+#
+# Pico interface:
+#   GND
+#   3V3(OUT)
+#   TRIGGER GPIO
+#
+# Regulator:
+#   MCP1700-1802E/TO
+#   TO-92 pin 1 = GND
+#   TO-92 pin 2 = VIN
+#   TO-92 pin 3 = VOUT
+#
+# Capacitors:
+#   C_IN  = 1 uF ceramic between MCP1700 pins 1 and 2
+#   C_OUT = 1 uF ceramic between MCP1700 pins 1 and 3
+#   Mount on the component side, as close as practical to the regulator.
+#
+# 1.8 V distribution:
+#   MCP1700 VOUT is copper-routed directly to U1 pin20 VCC.
+#   U1 pin1 DIR is tied to U1 pin20 in copper.
+#   ONE insulated jumper connects U1 pin20 to U2 pin20.
+#   U2 pin1 DIR is tied to U2 pin20 in copper.
+#
+# 74LVC245 decoupling:
+#   0.1 uF ceramic directly across pins 20 and 19 on each IC.
+#
+# Forge:
+#   Rev C tapered alignment pins retained.
+#
+# Run in FreeCAD and export Carrier_Print / Press_Tool separately.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+DOC_NAME="DASPi_10Cam_Trigger_Distributor_RevD"
+try:
+    App.closeDocument(DOC_NAME)
+except Exception:
+    pass
+doc=App.newDocument(DOC_NAME)
+
+BOARD_W=130.0; BOARD_H=88.0; BOARD_T=2.4
+GROOVE_D=0.35
+TRACE_W=2.4; NECK_W=1.0; GROUND_W=3.2
+PAD_D=4.6; CHIP_PAD_D=1.7
+HOLE_D=1.05; WIRE_HOLE_D=1.35; MOUNT_D=3.2
+PRESS_T=2.0; PRESS_RIB_H=0.28; PRESS_CLEARANCE=0.25
+ALIGN_PIN_D=2.7; ALIGN_PIN_TIP_D=1.6
+ALIGN_PIN_STRAIGHT=1.8; ALIGN_PIN_TIP_H=0.5
+DIP_ROW=7.62; DIP_PITCH=2.54
+
+U_X=36.0; U1_CY=61.0; U2_CY=27.0
+TRIG_BUS_X=14.0
+GND_BUS_X=121.0; GND_CENTER_Y=46.0
+GND_BOTTOM_Y=10.0; GND_TOP_Y=82.0
+RES_X1=80.0; RES_X2=94.0
+CAM_SIG_X=108.0; CAM_GND_X=115.0
+OUT_Y=[74.0, 68.5, 63.0, 57.5, 52.0, 40.0, 34.5, 29.0, 23.5, 18.0]
+GND_IN=(10.0, 82.0); V3_IN=(10.0, 76.5); TRIG_IN=(10.0, 69.0)
+REG={1: (25.0, 82.0), 2: (25.0, 79.46), 3: (25.0, 76.92)}
+MOUNTS=[(4.0, 84.0), (126.0, 84.0), (4.0, 4.0), (126.0, 4.0)]
+
+def feat(name,shape,color=None,transparency=0):
+    o=doc.addObject("Part::Feature",name)
+    o.Shape=shape
+    if color:
+        o.ViewObject.ShapeColor=color
+    o.ViewObject.Transparency=transparency
+    return o
+
+def dip(cx,cy):
+    xl=cx-DIP_ROW/2; xr=cx+DIP_ROW/2
+    top=cy+9*DIP_PITCH/2; bottom=cy-9*DIP_PITCH/2
+    d={}
+    for p in range(1,11):
+        d[p]=(xl,top-(p-1)*DIP_PITCH)
+    for p in range(11,21):
+        d[p]=(xr,bottom+(p-11)*DIP_PITCH)
+    return d
+
+U1,U2=dip(U_X,U1_CY),dip(U_X,U2_CY)
+
+segments=[]; pads=[]; holes=[]
+def add_seg(a,b,w):
+    segments.append((a[0],a[1],b[0],b[1],w))
+def add_pad(p,d,h=None):
+    pads.append((p[0],p[1],d))
+    if h:
+        holes.append((p[0],p[1],h))
+
+def groove_segment(x1,y1,x2,y2,w):
+    dx=x2-x1; dy=y2-y1
+    L=math.hypot(dx,dy)
+    a=math.degrees(math.atan2(dy,dx))
+    s=Part.makeBox(L,w,GROOVE_D,App.Vector(0,-w/2.0,BOARD_T-GROOVE_D))
+    s.rotate(App.Vector(),App.Vector(0,0,1),a)
+    s.translate(App.Vector(x1,y1,0))
+    return s
+
+def groove_pad(x,y,d):
+    return Part.makeCylinder(d/2.0,GROOVE_D,App.Vector(x,y,BOARD_T-GROOVE_D))
+
+def press_segment(x1,y1,x2,y2,w):
+    rw=max(0.55,w-PRESS_CLEARANCE)
+    dx=x2-x1; dy=y2-y1
+    L=math.hypot(dx,dy)
+    a=math.degrees(math.atan2(dy,dx))
+    s=Part.makeBox(L,rw,PRESS_RIB_H,App.Vector(0,-rw/2.0,PRESS_T))
+    s.rotate(App.Vector(),App.Vector(0,0,1),a)
+    s.translate(App.Vector(x1,y1,0))
+    return s
+
+def press_pad(x,y,d):
+    rd=max(0.8,d-PRESS_CLEARANCE)
+    return Part.makeCylinder(rd/2.0,PRESS_RIB_H,App.Vector(x,y,PRESS_T))
+
+def alignment_pin(x,y):
+    straight_h=PRESS_RIB_H+ALIGN_PIN_STRAIGHT
+    z0=PRESS_T
+    shaft=Part.makeCylinder(ALIGN_PIN_D/2.0,straight_h,App.Vector(x,y,z0))
+    tip=Part.makeCone(ALIGN_PIN_D/2.0,ALIGN_PIN_TIP_D/2.0,
+                      ALIGN_PIN_TIP_H,App.Vector(x,y,z0+straight_h))
+    return shaft.fuse(tip)
+
+# DIP pads
+for t in (U1,U2):
+    for p in t.values():
+        add_pad(p,CHIP_PAD_D,HOLE_D)
+
+# Pico input pads
+add_pad(GND_IN,PAD_D,WIRE_HOLE_D)
+add_pad(V3_IN,PAD_D,WIRE_HOLE_D)
+add_pad(TRIG_IN,PAD_D,WIRE_HOLE_D)
+
+# Trigger network
+add_seg(TRIG_IN,(TRIG_BUS_X,TRIG_IN[1]),TRACE_W)
+add_seg((TRIG_BUS_X,16.0),(TRIG_BUS_X,73.0),TRACE_W)
+for t in (U1,U2):
+    for pin in range(2,10):
+        add_seg((TRIG_BUS_X,t[pin][1]),t[pin],NECK_W)
+
+# MCP1700 pads: pin1 GND, pin2 VIN, pin3 VOUT
+for p in REG.values():
+    add_pad(p,CHIP_PAD_D,HOLE_D)
+
+# Ground
+# Wide ground bus necks down around the MCP1700's 2.54 mm pin pitch.
+add_seg(GND_IN,(18.0,GND_TOP_Y),GROUND_W)
+add_seg((18.0,GND_TOP_Y),REG[1],NECK_W)
+add_seg(REG[1],(32.0,GND_TOP_Y),NECK_W)
+add_seg((32.0,GND_TOP_Y),(GND_BUS_X,GND_TOP_Y),GROUND_W)
+add_seg((GND_BUS_X,GND_BOTTOM_Y),(GND_BUS_X,GND_TOP_Y),GROUND_W)
+
+add_seg(U1[10],(U1[10][0],GND_CENTER_Y),NECK_W)
+add_seg((U1[10][0],GND_CENTER_Y),(GND_BUS_X,GND_CENTER_Y),GROUND_W)
+
+add_seg(U2[10],(U2[10][0],GND_BOTTOM_Y),NECK_W)
+add_seg((U2[10][0],GND_BOTTOM_Y),(GND_BUS_X,GND_BOTTOM_Y),GROUND_W)
+
+add_seg(U1[19],(46.0,U1[19][1]),NECK_W)
+add_seg((46.0,U1[19][1]),(46.0,GND_TOP_Y),NECK_W)
+add_seg((46.0,GND_TOP_Y),(GND_BUS_X,GND_TOP_Y),GROUND_W)
+
+add_seg(U2[19],(46.0,U2[19][1]),NECK_W)
+add_seg((46.0,U2[19][1]),(46.0,GND_CENTER_Y),NECK_W)
+
+# 3.3 V to regulator VIN
+add_seg(V3_IN,(21.0,V3_IN[1]),TRACE_W)
+add_seg((21.0,V3_IN[1]),(21.0,REG[2][1]),TRACE_W)
+add_seg((21.0,REG[2][1]),REG[2],NECK_W)
+
+# MCP1700 VOUT to U1 VCC
+add_seg(REG[3],(29.0,REG[3][1]),NECK_W)
+add_seg((29.0,REG[3][1]),(31.0,REG[3][1]),TRACE_W)
+add_seg((31.0,REG[3][1]),(31.0,74.7),TRACE_W)
+add_seg((31.0,74.7),U1[20],NECK_W)
+
+# DIR to VCC
+add_seg(U1[1],U1[20],NECK_W)
+add_seg(U2[1],U2[20],NECK_W)
+
+# Outputs
+b_pins=[18,17,16,15,14]
+ch=0
+for t in (U1,U2):
+    for pin in b_pins:
+        src=t[pin]; ty=OUT_Y[ch]
+        neck=(48.0,src[1]); fan=(59.0,ty)
+        add_seg(src,neck,NECK_W)
+        add_seg(neck,fan,NECK_W)
+        add_seg(fan,(RES_X1,ty),TRACE_W)
+        add_pad((RES_X1,ty),PAD_D,HOLE_D)
+
+        add_pad((RES_X2,ty),PAD_D,HOLE_D)
+        add_seg((RES_X2,ty),(CAM_SIG_X,ty),TRACE_W)
+        add_pad((CAM_SIG_X,ty),PAD_D,WIRE_HOLE_D)
+
+        add_pad((CAM_GND_X,ty),PAD_D,WIRE_HOLE_D)
+        add_seg((CAM_GND_X,ty),(GND_BUS_X,ty),GROUND_W)
+        ch += 1
+
+for m in MOUNTS:
+    holes.append((m[0],m[1],MOUNT_D))
+
+# Carrier
+carrier=Part.makeBox(BOARD_W,BOARD_H,BOARD_T)
+for x,y,d in holes:
+    carrier=carrier.cut(Part.makeCylinder(d/2.0,BOARD_T+1.0,App.Vector(x,y,-0.5)))
+for x1,y1,x2,y2,w in segments:
+    carrier=carrier.cut(groove_segment(x1,y1,x2,y2,w))
+for x,y,d in pads:
+    carrier=carrier.cut(groove_pad(x,y,d))
+
+c=feat("Carrier_Print",carrier,(0.84,0.84,0.86))
+c.Label="PRINT - Rev D Trigger Distributor Carrier"
+
+# Copper guide
+guide=None
+for x1,y1,x2,y2,w in segments:
+    g=groove_segment(x1,y1,x2,y2,w)
+    guide=g if guide is None else guide.fuse(g)
+for x,y,d in pads:
+    g=groove_pad(x,y,d)
+    guide=g if guide is None else guide.fuse(g)
+feat("Copper_Trace_Guide",guide,(0.72,0.36,0.08),10).Label="REFERENCE ONLY - Copper tape"
+
+# Forge with alignment pins
+press=Part.makeBox(BOARD_W,BOARD_H,PRESS_T)
+for x1,y1,x2,y2,w in segments:
+    press=press.fuse(press_segment(x1,y1,x2,y2,w))
+for x,y,d in pads:
+    press=press.fuse(press_pad(x,y,d))
+for x,y in MOUNTS:
+    press=press.fuse(alignment_pin(x,y))
+press.translate(App.Vector(BOARD_W+12.0,0,0))
+feat("Press_Tool",press,(0.55,0.65,0.80)).Label="PRINT - Rev D Copper Forge with Alignment Pins"
+
+# Component-side reference bodies
+def dip_body(cx,cy):
+    return Part.makeBox(10.3,26.0,4.0,App.Vector(cx-5.15,cy-13.0,-4.4))
+feat("U1_74LVC245_REF",dip_body(U_X,U1_CY),(0.15,0.15,0.18),25)
+feat("U2_74LVC245_REF",dip_body(U_X,U2_CY),(0.15,0.15,0.18),25)
+
+# Simple TO-92 regulator reference body on component side.
+reg_body=Part.makeCylinder(2.5,4.5,App.Vector(REG_X,79.46,-4.9))
+feat("U3_MCP1700_REF",reg_body,(0.12,0.12,0.12),20).Label="REFERENCE - MCP1700-1802E/TO"
+
+# One insulated 1.8 V jumper from U1 VCC to U2 VCC.
+def wire(p1,p2,z=BOARD_T+4.0,d=0.8):
+    v=App.Vector(p2[0]-p1[0],p2[1]-p1[1],0)
+    L=v.Length
+    return Part.makeCylinder(d/2.0,L,App.Vector(p1[0],p1[1],z),
+                             App.Vector(v.x/L,v.y/L,0))
+feat("Jumper_1V8_U1_to_U2_REF",wire(U1[20],U2[20]),(0.9,0.1,0.1)).Label="REFERENCE - insulated 1.8 V jumper U1 pin20 to U2 pin20"
+
+c.addProperty("App::PropertyString","Revision","Design"); c.Revision="Rev D"
+c.addProperty("App::PropertyString","PicoInterface","Electrical")
+c.PicoInterface="Three wires: GND, Pico 3V3(OUT), trigger GPIO."
+c.addProperty("App::PropertyString","Regulator","Electrical")
+c.Regulator="MCP1700-1802E/TO: pin1 GND, pin2 VIN=3.3V, pin3 VOUT=1.8V."
+c.addProperty("App::PropertyString","RegulatorCaps","Electrical")
+c.RegulatorCaps="1uF ceramic CIN pins1-2; 1uF ceramic COUT pins1-3, mounted close on component side."
+c.addProperty("App::PropertyString","TransceiverCaps","Electrical")
+c.TransceiverCaps="0.1uF ceramic directly across pins20(VCC) and19(GND/OE) of each SN74LVC245AN."
+c.addProperty("App::PropertyString","Material","Fabrication")
+c.Material="Plain electrically insulating PC/ASA/PETG; do not use PCCF."
+
+doc.recompute()
+Gui.activeDocument().activeView().viewAxonometric()
+Gui.activeDocument().activeView().fitAll()

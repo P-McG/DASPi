@@ -1,0 +1,766 @@
+Create a complete FreeCAD design from scratch for a dual-circuit, 10-camera trigger distribution board named:
+
+`DASPi 10-Camera Trigger Distributor — Rev L Compact Dual`
+
+No earlier revision or source file is available. Generate the complete Rev L carrier, electrical copper-groove pattern, component references, copper forge, documentation, validation report, and preview directly from this specification.
+
+Use FreeCAD Python compatible with FreeCAD 1.1.3 on Ubuntu.
+
+## 1. Required deliverables
+
+Create:
+
+1.
+2.
+3.
+4. `DASPi_10Cam_Trigger_Distributor_RevL_forge_mating_preview.png`
+
+The macro must generate these principal FreeCAD objects:
+
+* `Carrier_Print`
+* `Copper_Trace_Guide`
+* `Press_Tool`
+* Backside component reference objects
+* Insulated jumper reference objects
+
+Do not substitute a conventional PCB layout. This is a 3D-printable carrier with shallow grooves intended to receive copper tape.
+
+## 2. Board architecture
+
+Create two completely independent five-camera trigger circuits:
+
+### Circuit A
+
+* Input nets: `3V3_A`, `GND_A`, and `TRIG_A`
+* One MCP1700-1802E/TO regulator
+* One SN74LVC245A transceiver, U1
+* Five 68 Ω output resistors, R1–R5
+* Five JST B02B-PASK-1 connectors, J1–J5
+* One 1 µF regulator-input capacitor
+* One 1 µF regulator-output capacitor
+* One 0.1 µF SN74LVC245A bypass capacitor
+
+### Circuit B
+
+* Input nets: `3V3_B`, `GND_B`, and `TRIG_B`
+* One MCP1700-1802E/TO regulator
+* One SN74LVC245A transceiver, U2
+* Five 68 Ω output resistors, R6–R10
+* Five JST B02B-PASK-1 connectors, J6–J10
+* One 1 µF regulator-input capacitor
+* One 1 µF regulator-output capacitor
+* One 0.1 µF SN74LVC245A bypass capacitor
+
+There must be no copper connection between the A and B power, ground, or trigger nets.
+
+## 3. Coordinate system
+
+Use millimetres.
+
+When looking at the copper-groove side:
+
+* X increases from the left edge to the right edge.
+* Y increases from the bottom edge to the top edge.
+* Board origin is `(0,0)`.
+* Board dimensions are `110 × 48 × 2.4 mm`.
+
+Use:
+
+```python
+BOARD_W = 110.0
+BOARD_H = 48.0
+BOARD_T = 2.4
+```
+
+## 4. Carrier and groove parameters
+
+Use:
+
+```python
+GROOVE_D = 0.35
+
+TRACE_W = 2.4
+NECK_W = 1.0
+FAN_W = 0.9
+GROUND_W = 2.4
+
+PAD_D = 4.6
+CHIP_PAD_D = 1.7
+OE_PAD_D = 1.3
+RES_PAD_D = 2.2
+CONN_PAD_D = 1.3
+CAP_PAD_D = 1.8
+
+HOLE_D = 1.05
+WIRE_HOLE_D = 1.35
+RES_HOLE_D = 1.0
+CONN_HOLE_D = 0.8
+CAP_HOLE_D = 0.9
+MOUNT_D = 3.2
+```
+
+Cut all copper grooves and pad lands 0.35 mm down from the copper side.
+
+One 2-inch/50.8 mm copper sheet must be capable of covering the entire 48 mm board height without a seam.
+
+## 5. SN74LVC245A backside placement
+
+U1 and U2 are through-hole PDIP-20 devices installed on the back/component side of the carrier.
+
+Locations:
+
+```python
+U1_C = (28.0, 24.0)
+U2_C = (80.0, 24.0)
+
+DIP_ROW = 7.62
+DIP_PITCH = 2.54
+```
+
+The footprints must account for being installed from the backside.
+
+When viewing the copper side:
+
+* Pin 1 is at the lower-left.
+* Pins 1–10 run upward along the left column.
+* Pin 11 is at the upper-right.
+* Pins 11–20 run downward along the right column.
+* Pin 20 is at the lower-right.
+
+Generate the coordinates with:
+
+```python
+def dip_backside(cx, cy):
+    xl = cx - DIP_ROW / 2
+    xr = cx + DIP_ROW / 2
+    top = cy + 9 * DIP_PITCH / 2
+    bottom = cy - 9 * DIP_PITCH / 2
+
+    pins = {}
+
+    for pin in range(1, 11):
+        pins[pin] = (xl, bottom + (pin - 1) * DIP_PITCH)
+
+    for pin in range(11, 21):
+        pins[pin] = (xr, top - (pin - 11) * DIP_PITCH)
+
+    return pins
+```
+
+On the physical back/component side, the notch of each IC must face the bottom edge of the board.
+
+Add visible reference markers for pin 1.
+
+### SN74LVC245A electrical connections
+
+For both U1 and U2:
+
+* Pin 1, DIR: connect to the local 1.8 V rail.
+* Pins 2–9, A1–A8: connect to the common local trigger input.
+* Pin 10, GND: connect to local ground using an insulated component-side over-trace jumper.
+* Pins 11–13, B8–B6: unused. Retain physical holes but do not create copper pads.
+* Pins 14–18, B5–B1: connect to the five output connectors through individual 68 Ω resistors.
+* Pin 19, `/OE`: connect to local ground using an insulated component-side over-trace jumper.
+* Pin 20, VCC: connect to the local regulated 1.8 V rail.
+
+Use copper pads on pins 1–10 and 14–20. Pins 11–13 receive holes only.
+
+## 6. Inputs and regulator coordinates
+
+Use:
+
+```python
+A_GND_IN = (9.0, 43.0)
+A_V3_IN = (9.0, 34.0)
+A_TRIG_IN = (9.0, 24.0)
+
+B_GND_IN = (61.0, 43.0)
+B_V3_IN = (61.0, 34.0)
+B_TRIG_IN = (61.0, 24.0)
+```
+
+MCP1700 regulator lead coordinates:
+
+```python
+REG_A = {
+    1: (16.0, 43.0),     # GND
+    2: (16.0, 40.46),    # VIN
+    3: (16.0, 37.92),    # VOUT
+}
+
+REG_B = {
+    1: (68.0, 43.0),     # GND
+    2: (68.0, 40.46),    # VIN
+    3: (68.0, 37.92),    # VOUT
+}
+```
+
+Use:
+
+```python
+TRIG_A_X = 19.0
+TRIG_B_X = 71.0
+
+A_GBUS = 50.5
+B_GBUS = 102.5
+
+GND_TOP_Y = 45.0
+GND_BOTTOM_Y = 4.5
+```
+
+## 7. Capacitors
+
+Create six physical through-hole capacitor footprints with 2.54 mm lead spacing:
+
+```python
+CAPS = [
+    ("C1_CIN_A",  "A_V3",  (10.2,39.2), "A_GND", (10.2,41.74), 4.0, "1uF"),
+    ("C2_COUT_A", "A_V18", (20.0,39.2), "A_GND", (20.0,41.74), 4.0, "1uF"),
+    ("C3_BYP_A",  "A_V18", (30.0,9.0),  "A_GND", (32.54,9.0),  3.0, "0.1uF"),
+
+    ("C4_CIN_B",  "B_V3",  (62.2,39.2), "B_GND", (62.2,41.74), 4.0, "1uF"),
+    ("C5_COUT_B", "B_V18", (72.0,39.2), "B_GND", (72.0,41.74), 4.0, "1uF"),
+    ("C6_BYP_B",  "B_V18", (82.0,9.0),  "B_GND", (84.54,9.0),  3.0, "0.1uF"),
+]
+```
+
+Use 1.8 mm copper lands and 0.9 mm holes.
+
+C3 and C6 must be beside the actual physical pin-20 ends of the back-mounted SN74LVC245A devices.
+
+## 8. Mounting holes
+
+Use four 3.2 mm mounting holes:
+
+```python
+MOUNTS = [
+    (3.5, 44.5),
+    (106.5, 44.5),
+    (3.5, 3.5),
+    (106.5, 3.5),
+]
+```
+
+These same locations will be used by the forge alignment pins after the required forge transformation.
+
+## 9. Trigger routing
+
+For Circuit A:
+
+1. Route `A_TRIG_IN` horizontally to `(19.0,24.0)` using a 2.4 mm trace.
+2. Create a vertical trigger trunk at X = 19.0 extending between the Y coordinates of U1 pins 9 and 2.
+3. Connect U1 pins 2–9 horizontally from the trigger trunk using 1.0 mm neck traces.
+
+For Circuit B, repeat the same construction at X = 71.0 for U2 pins 2–9.
+
+## 10. 3.3 V regulator-input routing
+
+Circuit A:
+
+```text
+A_V3_IN → (12,34)
+(12,34) → (12,40.46)
+(12,40.46) → REG_A pin 2
+```
+
+Circuit B:
+
+```text
+B_V3_IN → (64,34)
+(64,34) → (64,40.46)
+(64,40.46) → REG_B pin 2
+```
+
+Use 2.4 mm for the first horizontal segment and 1.0 mm for the remaining segments.
+
+## 11. Ground routing
+
+### Circuit A
+
+Route:
+
+```text
+A_GND_IN → REG_A pin 1
+REG_A pin 1 → (16,45)
+(16,45) → (50.5,45)
+(50.5,4.5) → (50.5,45)
+(21,4.5) → (50.5,4.5)
+```
+
+Create a 3.2 mm copper landing pad at:
+
+```python
+(U1[10][0], 45.0)
+```
+
+Connect U1 pin 10 to this pad with an insulated component-side jumper.
+
+### Circuit B
+
+Route:
+
+```text
+B_GND_IN → REG_B pin 1
+REG_B pin 1 → (68,45)
+(68,45) → (102.5,45)
+(102.5,4.5) → (102.5,45)
+(73,4.5) → (102.5,4.5)
+```
+
+Create a 3.2 mm copper landing pad at:
+
+```python
+(U2[10][0], 45.0)
+```
+
+Connect U2 pin 10 to this pad with an insulated component-side jumper.
+
+Use 2.4 mm ground-bus widths and 1.0 mm necks.
+
+## 12. Regulated 1.8 V routing
+
+Circuit A:
+
+```text
+REG_A pin 3 → (U1 centre X, REG_A pin-3 Y)
+Vertical to the Y coordinate of U1 pin 20
+Horizontal to U1 pin 20
+U1 pin 1 → U1 pin 20
+```
+
+Circuit B uses the same arrangement around U2.
+
+The rail between pins 1 and 20 runs between the two DIP rows on the copper side.
+
+## 13. `/OE` ground pads and jumpers
+
+Use:
+
+```python
+OE_GND_A = (39.0, 6.5)
+OE_GND_B = (91.0, 6.5)
+```
+
+Create 3.2 mm copper landing pads at these coordinates.
+
+Connect each landing pad vertically to its corresponding bottom ground bus at Y = 4.5.
+
+Create insulated component-side jumpers:
+
+```text
+U1 pin 19 → OE_GND_A
+U2 pin 19 → OE_GND_B
+```
+
+## 14. Capacitor routing
+
+Route the capacitors exactly as follows.
+
+### C1
+
+```text
+(10.2,39.2) → (12,39.2)
+(10.2,41.74) → (10.2,43)
+(10.2,43) → (16,43)
+```
+
+### C2
+
+```text
+(20.0,39.2) → (20,37.92)
+(20.0,41.74) → (20,45)
+```
+
+### C3
+
+```text
+(30.0,9.0) → (U1 centre X, U1 pin-20 Y)
+(32.54,9.0) → (32.54,4.5)
+```
+
+### C4
+
+```text
+(62.2,39.2) → (64,39.2)
+(62.2,41.74) → (62.2,43)
+(62.2,43) → (68,43)
+```
+
+### C5
+
+```text
+(72.0,39.2) → (72,37.92)
+(72.0,41.74) → (72,45)
+```
+
+### C6
+
+```text
+(82.0,9.0) → (U2 centre X, U2 pin-20 Y)
+(84.54,9.0) → (84.54,4.5)
+```
+
+Use 1.0 mm traces.
+
+## 15. Resistors and connectors
+
+Use 68 Ω, ¼ W axial resistors mounted vertically at 3.81 mm lead spacing.
+
+```python
+RES_PITCH = 3.81
+
+R1_A = [35.0, 39.0, 35.0, 39.0, 35.0]
+R1_B = [87.0, 91.0, 87.0, 91.0, 87.0]
+
+RES_Y = [34.0, 29.0, 22.73, 19.0, 14.0]
+```
+
+Connector centres:
+
+```python
+A_CONN_X = 47.0
+B_CONN_X = 99.0
+
+CONN_Y = [38.0, 31.0, 24.0, 17.0, 10.0]
+```
+
+Use B5 through B1, SN74LVC245A pins 14 through 18, for the connectors from top to bottom:
+
+```python
+bpins = [14, 15, 16, 17, 18]
+```
+
+For each output index `i`:
+
+```python
+r1 = resistor_x[i]
+r2 = r1 + 3.81
+ry = RES_Y[i]
+cy = CONN_Y[i]
+
+lane = source_pin_x + (
+    2.7 if i == 4
+    else 1.2 if i % 2 == 0
+    else 4.2
+)
+
+fx = connector_x - 3.0
+signal_pin = (connector_x - 1.0, cy)
+ground_pin = (connector_x + 1.0, cy)
+```
+
+Create these segments:
+
+```text
+SN74 source pin → (lane, source-pin Y)
+(lane, source-pin Y) → (lane, resistor Y), when needed
+(lane, resistor Y) → first resistor hole
+second resistor hole → (fx, resistor Y)
+(fx, resistor Y) → (fx, connector Y)
+(fx, connector Y) → connector signal pin
+connector ground pin → local vertical ground bus
+```
+
+Use 0.9 mm fanout traces.
+
+Each resistor lead receives:
+
+* 2.2 mm copper pad
+* 1.0 mm hole
+
+Each connector lead receives:
+
+* 1.3 mm copper pad
+* 0.8 mm hole
+
+## 16. JST connector construction
+
+Use ten JST B02B-PASK-1 connectors.
+
+Each connector must have:
+
+* Two lead holes on 2.00 mm centres
+* No full-depth rectangular opening
+* A shallow component-side seating pocket
+* Nominal connector body: `6.0 × 5.3 mm`
+* Pocket size: `6.5 × 5.8 mm`
+* Pocket depth: 0.8 mm
+* Remaining local carrier thickness: 1.6 mm
+* Remaining material beneath the 0.35 mm copper groove: 1.25 mm
+
+Use:
+
+```python
+CONN_PITCH = 2.0
+CONN_BODY_X = 6.0
+CONN_BODY_Y = 5.3
+CONN_LOCAL_THICKNESS = 1.6
+CONN_RECESS_D = BOARD_T - CONN_LOCAL_THICKNESS
+```
+
+## 17. Carrier construction
+
+Create a solid `110 × 48 × 2.4 mm` board.
+
+Then:
+
+1. Cut all 108 round holes.
+2. Cut the ten shallow connector seating pockets from the component side.
+3. Cut all 128 copper trace segments to a depth of 0.35 mm.
+4. Cut all 102 circular copper pad lands to a depth of 0.35 mm.
+
+Name the object:
+
+`Carrier_Print`
+
+Label it:
+
+`PRINT - Rev L Compact Dual Carrier`
+
+Create a separate copper-coloured reference object named:
+
+`Copper_Trace_Guide`
+
+Label it:
+
+`REFERENCE ONLY - Copper`
+
+## 18. Rev L copper forge
+
+The forge must not use the copper-side XY pattern directly.
+
+Because the forge is physically turned face-down onto the carrier, its printed-upright contact pattern must contain exactly one built-in left-right reflection.
+
+Use:
+
+```python
+PRESS_T = 2.0
+PRESS_RIB_H = 0.28
+PRESS_CLEARANCE = 0.25
+
+ALIGN_PIN_D = 2.7
+ALIGN_PIN_TIP_D = 1.6
+ALIGN_PIN_STRAIGHT = 1.8
+ALIGN_PIN_TIP_H = 0.5
+```
+
+Define:
+
+```python
+def forge_x(x):
+    return BOARD_W - x
+```
+
+Create the forge base at `110 × 48 × 2.0 mm`.
+
+For every copper trace segment:
+
+```python
+press_segment(
+    forge_x(x1), y1,
+    forge_x(x2), y2,
+    width
+)
+```
+
+The raised rib width must be:
+
+```python
+max(0.45, copper_width - PRESS_CLEARANCE)
+```
+
+For every copper pad:
+
+```python
+press_pad(forge_x(x), y, diameter)
+```
+
+The raised boss diameter must be:
+
+```python
+max(0.7, copper_pad_diameter - PRESS_CLEARANCE)
+```
+
+For every mounting-hole coordinate:
+
+```python
+alignment_pin(forge_x(x), y)
+```
+
+Each alignment pin must have:
+
+* 2.7 mm shaft diameter
+* Shaft height equal to `PRESS_RIB_H + 1.8 mm`
+* 0.5 mm tapered tip
+* Tip diameter of 1.6 mm
+
+Translate the completed forge 12 mm to the right of the carrier for display:
+
+```python
+press.translate(App.Vector(BOARD_W + 12.0, 0, 0))
+```
+
+Name the object:
+
+`Press_Tool`
+
+Label it:
+
+`PRINT - Rev L Copper Forge - X MIRRORED`
+
+Add these properties:
+
+```text
+PatternOrientation:
+Printed upright pattern is X-mirrored relative to copper grooves.
+
+UseOrientation:
+Rotate 180 degrees about Y (left-right flip), then place ribs face-down on the copper side.
+
+SlicerInstruction:
+Do not mirror Press_Tool in the slicer; the required X mirror is already built into Rev L.
+```
+
+## 19. Component references
+
+Add reference-only solids for:
+
+* U1 and U2 SN74LVC245A bodies on the back/component side
+* Pin-1 markers
+* Both MCP1700 regulators
+* All six capacitors
+* All ten JST B02B-PASK-1 connectors
+* All ten vertically mounted 68 Ω resistors
+* Four insulated jumpers:
+
+  * U1 pin 10 to its upper ground landing
+  * U1 pin 19 to `OE_GND_A`
+  * U2 pin 10 to its upper ground landing
+  * U2 pin 19 to `OE_GND_B`
+
+Clearly mark these objects as references rather than printable carrier geometry.
+
+## 20. Required validation
+
+Keep a structured list of every segment, pad, hole, component coordinate, net, and forge feature so validation can be performed numerically.
+
+Validate:
+
+```text
+Copper/forge trace segments: 128
+Copper pads/forge bosses: 102
+Drilled round holes: 108
+Forge alignment pins: 4
+```
+
+### Forge mating simulation
+
+Simulate the physical face-down Y-axis rotation with:
+
+```python
+x_contact = BOARD_W - x_forge
+y_contact = y_forge
+```
+
+Confirm that:
+
+* All 128 trace ribs return to their original copper coordinates.
+* All 102 pad bosses return to their original copper coordinates.
+* All four alignment pins return to the carrier mounting-hole coordinates.
+* Maximum trace registration error is 0.000000 mm.
+* Maximum pad registration error is 0.000000 mm.
+* Maximum alignment-pin registration error is 0.000000 mm.
+* Overall maximum registration error is 0.000000 mm.
+* The printed forge contains exactly one X reflection.
+* No Y reflection is present.
+
+### Electrical and mechanical clearance
+
+Validate:
+
+* Different-net copper overlaps: 0
+* Minimum different-net copper clearance: at least 0.700 mm
+* Minimum Circuit-A-to-Circuit-B copper separation: at least 7.000 mm
+* Minimum mounting-hole-to-copper clearance: at least 1.200 mm
+* No copper connection exists between Circuit A and Circuit B.
+* Connector seating pockets are not through-openings.
+* At least 1.60 mm carrier thickness remains beneath every connector pocket.
+
+If a calculated result does not meet these requirements, stop and report the conflict rather than silently moving geometry away from the specified coordinates.
+
+## 21. README requirements
+
+Explain:
+
+* The function of both five-camera circuits.
+* The complete capacitor list and locations.
+* The backside SN74LVC245A orientation.
+* Copper-side pin 1 and pin 20 locations.
+* Both IC notches face the bottom board edge.
+* Pins 14–18/B5–B1 feed the connectors from top to bottom.
+* Pins 10 and 19 require insulated ground jumpers.
+* Resistors are mounted vertically.
+* The copper sheet covers the carrier without a seam.
+* Connector pockets are shallow and not through-openings.
+* The forge is intentionally X-mirrored.
+* Do not mirror the forge in the slicer.
+* Turn the printed forge face-down by rotating it 180° left-to-right about its Y axis.
+* Do not flip it top-to-bottom about its X axis.
+* Dry-fit all four alignment pins and inspect asymmetric pad positions before pressing the copper.
+
+## 22. Validation-report requirements
+
+List every required check with `PASS` or `FAIL`.
+
+Do not report `PASS` unless the check was actually calculated.
+
+Distinguish between:
+
+* Python syntax validation
+* Geometry-data validation
+* FreeCAD execution testing
+
+Do not claim that the macro was executed successfully inside FreeCAD unless FreeCAD was available and the macro was actually run.
+
+## 23. Preview image
+
+Create a high-resolution PNG containing three labelled panels:
+
+1. `Rev L Carrier — Copper Side`
+2. `Rev L Forge — Printed Upright, X-Mirrored`
+3. `Face-Down Contact Simulation`
+
+The third panel must reverse the printed forge using the physical-use transformation and overlay it on the copper geometry.
+
+Use distinct colours for:
+
+* Carrier
+* Copper grooves
+* Forge ribs
+* Pads
+* Alignment pins
+
+Add:
+
+```text
+PASS
+Maximum registration error: 0.000 mm
+```
+
+Only display `PASS` if the numerical mating validation succeeds.
+
+## 24. Final quality checks
+
+Before delivering:
+
+1. Run a Python syntax/compile check on the macro.
+2. Confirm the four required files exist.
+3. Confirm the macro contains all specified coordinates and dimensions.
+4. Confirm the exact geometry counts.
+5. Confirm the forge contains the built-in X mirror.
+6. Confirm the simulated face-down forge matches the carrier.
+7. Confirm the preview and written instructions agree with the macro.
+8. Preserve all electrical isolation and clearance requirements.
+9. Report any test that could not be run.
+10. Provide links to all four completed deliverables.
+

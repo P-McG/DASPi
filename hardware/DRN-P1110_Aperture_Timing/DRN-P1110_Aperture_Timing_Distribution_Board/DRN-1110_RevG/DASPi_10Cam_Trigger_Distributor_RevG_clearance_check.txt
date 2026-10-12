@@ -1,0 +1,23 @@
+DASPi trigger distributor Rev G — JST PA copper check
+
+Different-net overlaps: 0
+PASS: no different-net copper overlap.
+Minimum different-net clearance: 0.700 mm (CH1_POST vs GND)
+JST PA pin-pad edge clearance: 0.700 mm
+Minimum PA body-to-body gap: 1.000 mm
+Minimum mounting-hole clearance: 2.428 mm
+
+JST PA B02B-PASK-1 footprint:
+  Pitch: 2.00 mm
+  Electrical hole: 0.80 mm used (datasheet Ø0.7 +0.1)
+  Copper pad: 1.30 mm
+  Body width B: 6.0 mm
+  Body depth: 5.3 mm
+  Header height: 7.7 mm
+  Local printed-board thickness: 1.6 mm via 0.8 mm component-side recess
+  Boss: oversized relief slot; electrical pins define alignment
+PA boss relief:
+  Offset behind electrical pin row: 1.7 mm
+  Through-slot: 2.4 x 7.0 mm
+  Purpose: tolerate boss location/orientation and FDM error; electrical pins locate header
+PA reference header height: 7.7 mm

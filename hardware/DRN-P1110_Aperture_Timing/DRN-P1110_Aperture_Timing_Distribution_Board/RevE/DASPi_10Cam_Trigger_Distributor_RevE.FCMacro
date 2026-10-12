@@ -1,0 +1,275 @@
+# DASPi 10-Camera Trigger Distributor — Rev E
+# Ten JST PLI 2-pin secure-locking camera connectors
+#
+# Connector set:
+#   Header: B02B-PLISK-1
+#   Cable housing: PLIP-02V-S
+#   Contact for AWG28..24: SPLI-002T-P0.5
+#
+# Header pin assignment:
+#   Pin 1 = camera XTR
+#   Pin 2 = camera GND
+#
+# The PLI header is specified for a 1.6 mm PCB.
+# This carrier is 2.4 mm overall, so each connector has a 0.8 mm component-side
+# seating recess, leaving 1.6 mm local thickness at the header posts.
+#
+# The boss relief is intentionally an oversized slot. This avoids depending
+# on FDM accuracy for the non-electrical locating boss while the two electrical
+# pin holes control the actual connector position.
+#
+# Rev D MCP1700 regulator and Rev C forge alignment pins retained.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+DOC_NAME="DASPi_10Cam_Trigger_Distributor_RevE"
+try:
+    App.closeDocument(DOC_NAME)
+except Exception:
+    pass
+doc=App.newDocument(DOC_NAME)
+
+BOARD_W=136.0; BOARD_H=96.0; BOARD_T=2.4
+GROOVE_D=0.35
+TRACE_W=2.4; NECK_W=1.0; GROUND_W=3.2
+PAD_D=4.6; CHIP_PAD_D=1.7
+HOLE_D=1.05; WIRE_HOLE_D=1.35; MOUNT_D=3.2
+
+CONN_PITCH=2.0
+CONN_PIN_HOLE_D=0.8
+CONN_PAD_D=1.3
+CONN_BODY_ROW=6.0
+CONN_BODY_DEPTH=6.1
+CONN_LOCAL_THICKNESS=1.6
+CONN_RECESS_D=0.7999999999999998
+CONN_PIN_X=116.0
+CONN_BOSS_OFFSET_X=2.3
+CONN_BOSS_SLOT_X=2.2
+CONN_BOSS_SLOT_Y=5.0
+
+PRESS_T=2.0; PRESS_RIB_H=0.28; PRESS_CLEARANCE=0.25
+ALIGN_PIN_D=2.7; ALIGN_PIN_TIP_D=1.6
+ALIGN_PIN_STRAIGHT=1.8; ALIGN_PIN_TIP_H=0.5
+
+DIP_ROW=7.62; DIP_PITCH=2.54
+U_X=36.0; U1_CY=65.0; U2_CY=29.0
+TRIG_BUS_X=14.0
+GND_BUS_X=126.0; GND_CENTER_Y=47.0
+GND_BOTTOM_Y=6.0; GND_TOP_Y=90.0
+RES_X1=80.0; RES_X2=94.0
+CONN_CY=[81.0, 74.0, 67.0, 60.0, 53.0, 41.0, 34.0, 27.0, 20.0, 13.0]; OUT_Y=[82.0, 75.0, 68.0, 61.0, 54.0, 42.0, 35.0, 28.0, 21.0, 14.0]
+GND_IN=(10.0, 90.0); V3_IN=(10.0, 84.5); TRIG_IN=(10.0, 77.0)
+REG={1: (25.0, 90.0), 2: (25.0, 87.46), 3: (25.0, 84.92)}; MOUNTS=[(4.0, 92.0), (132.0, 92.0), (4.0, 4.0), (132.0, 4.0)]
+
+def feat(name,shape,color=None,transparency=0):
+    o=doc.addObject("Part::Feature",name)
+    o.Shape=shape
+    if color: o.ViewObject.ShapeColor=color
+    o.ViewObject.Transparency=transparency
+    return o
+
+def dip(cx,cy):
+    xl=cx-DIP_ROW/2; xr=cx+DIP_ROW/2
+    top=cy+9*DIP_PITCH/2; bottom=cy-9*DIP_PITCH/2
+    d={}
+    for p in range(1,11): d[p]=(xl,top-(p-1)*DIP_PITCH)
+    for p in range(11,21): d[p]=(xr,bottom+(p-11)*DIP_PITCH)
+    return d
+U1,U2=dip(U_X,U1_CY),dip(U_X,U2_CY)
+
+segments=[]; pads=[]; holes=[]
+def add_seg(a,b,w): segments.append((a[0],a[1],b[0],b[1],w))
+def add_pad(p,d,h=None):
+    pads.append((p[0],p[1],d))
+    if h: holes.append((p[0],p[1],h))
+
+def groove_segment(x1,y1,x2,y2,w):
+    dx=x2-x1; dy=y2-y1; L=math.hypot(dx,dy)
+    a=math.degrees(math.atan2(dy,dx))
+    s=Part.makeBox(L,w,GROOVE_D,App.Vector(0,-w/2,BOARD_T-GROOVE_D))
+    s.rotate(App.Vector(),App.Vector(0,0,1),a)
+    s.translate(App.Vector(x1,y1,0))
+    return s
+
+def groove_pad(x,y,d):
+    return Part.makeCylinder(d/2,GROOVE_D,App.Vector(x,y,BOARD_T-GROOVE_D))
+
+def press_segment(x1,y1,x2,y2,w):
+    rw=max(0.55,w-PRESS_CLEARANCE)
+    dx=x2-x1; dy=y2-y1; L=math.hypot(dx,dy)
+    a=math.degrees(math.atan2(dy,dx))
+    s=Part.makeBox(L,rw,PRESS_RIB_H,App.Vector(0,-rw/2,PRESS_T))
+    s.rotate(App.Vector(),App.Vector(0,0,1),a)
+    s.translate(App.Vector(x1,y1,0))
+    return s
+
+def press_pad(x,y,d):
+    rd=max(0.8,d-PRESS_CLEARANCE)
+    return Part.makeCylinder(rd/2,PRESS_RIB_H,App.Vector(x,y,PRESS_T))
+
+def alignment_pin(x,y):
+    straight_h=PRESS_RIB_H+ALIGN_PIN_STRAIGHT
+    shaft=Part.makeCylinder(ALIGN_PIN_D/2,straight_h,App.Vector(x,y,PRESS_T))
+    tip=Part.makeCone(ALIGN_PIN_D/2,ALIGN_PIN_TIP_D/2,ALIGN_PIN_TIP_H,
+                      App.Vector(x,y,PRESS_T+straight_h))
+    return shaft.fuse(tip)
+
+# IC pads
+for t in (U1,U2):
+    for p in t.values(): add_pad(p,CHIP_PAD_D,HOLE_D)
+
+# Inputs + regulator
+for p in (GND_IN,V3_IN,TRIG_IN): add_pad(p,PAD_D,WIRE_HOLE_D)
+for p in REG.values(): add_pad(p,CHIP_PAD_D,HOLE_D)
+
+# Trigger
+add_seg(TRIG_IN,(TRIG_BUS_X,TRIG_IN[1]),TRACE_W)
+add_seg((TRIG_BUS_X,16),(TRIG_BUS_X,77),TRACE_W)
+for t in (U1,U2):
+    for pin in range(2,10):
+        add_seg((TRIG_BUS_X,t[pin][1]),t[pin],NECK_W)
+
+# Ground
+add_seg(GND_IN,(18,GND_TOP_Y),GROUND_W)
+add_seg((18,GND_TOP_Y),REG[1],NECK_W)
+add_seg(REG[1],(32,GND_TOP_Y),NECK_W)
+add_seg((32,GND_TOP_Y),(GND_BUS_X,GND_TOP_Y),GROUND_W)
+add_seg((GND_BUS_X,GND_BOTTOM_Y),(GND_BUS_X,GND_TOP_Y),GROUND_W)
+
+add_seg(U1[10],(U1[10][0],GND_CENTER_Y),NECK_W)
+add_seg((U1[10][0],GND_CENTER_Y),(GND_BUS_X,GND_CENTER_Y),GROUND_W)
+add_seg(U2[10],(U2[10][0],GND_BOTTOM_Y),NECK_W)
+add_seg((U2[10][0],GND_BOTTOM_Y),(GND_BUS_X,GND_BOTTOM_Y),GROUND_W)
+
+add_seg(U1[19],(46,U1[19][1]),NECK_W)
+add_seg((46,U1[19][1]),(46,GND_TOP_Y),NECK_W)
+add_seg((46,GND_TOP_Y),(GND_BUS_X,GND_TOP_Y),GROUND_W)
+add_seg(U2[19],(46,U2[19][1]),NECK_W)
+add_seg((46,U2[19][1]),(46,GND_CENTER_Y),NECK_W)
+
+# 3V3 -> regulator
+add_seg(V3_IN,(21,V3_IN[1]),TRACE_W)
+add_seg((21,V3_IN[1]),(21,REG[2][1]),TRACE_W)
+add_seg((21,REG[2][1]),REG[2],NECK_W)
+
+# 1.8 V
+add_seg(REG[3],(29,REG[3][1]),NECK_W)
+add_seg((29,REG[3][1]),(31,REG[3][1]),TRACE_W)
+add_seg((31,REG[3][1]),(31,78.7),TRACE_W)
+add_seg((31,78.7),U1[20],NECK_W)
+add_seg(U1[1],U1[20],NECK_W)
+add_seg(U2[1],U2[20],NECK_W)
+
+# Outputs + JST PLI headers
+b_pins=[18,17,16,15,14]
+ch=0
+for t in (U1,U2):
+    for pin in b_pins:
+        src=t[pin]; y=OUT_Y[ch]; cy=CONN_CY[ch]
+        neck=(48,src[1]); fan=(59,y)
+        add_seg(src,neck,NECK_W)
+        add_seg(neck,fan,NECK_W)
+        add_seg(fan,(RES_X1,y),TRACE_W)
+        add_pad((RES_X1,y),PAD_D,HOLE_D)
+        add_pad((RES_X2,y),PAD_D,HOLE_D)
+        add_seg((RES_X2,y),(108,y),TRACE_W)
+
+        p1=(CONN_PIN_X,cy+CONN_PITCH/2)
+        p2=(CONN_PIN_X,cy-CONN_PITCH/2)
+        add_seg((108,y),p1,NECK_W)
+        add_pad(p1,CONN_PAD_D,CONN_PIN_HOLE_D)
+        add_pad(p2,CONN_PAD_D,CONN_PIN_HOLE_D)
+        add_seg(p2,(GND_BUS_X,p2[1]),NECK_W)
+        ch+=1
+
+for m in MOUNTS: holes.append((m[0],m[1],MOUNT_D))
+
+# Base carrier
+carrier=Part.makeBox(BOARD_W,BOARD_H,BOARD_T)
+
+# Through holes
+for x,y,d in holes:
+    carrier=carrier.cut(Part.makeCylinder(d/2,BOARD_T+1,App.Vector(x,y,-0.5)))
+
+# JST PLI component-side seating recesses and boss-relief slots.
+# Component side is Z=0; copper face is Z=BOARD_T.
+for cy in CONN_CY:
+    # 0.8mm deep local seat, slightly larger than 6.0 x 6.1mm header body.
+    seat_x=CONN_PIN_X-CONN_BODY_DEPTH/2-0.25
+    seat_y=cy-CONN_BODY_ROW/2-0.25
+    seat=Part.makeBox(CONN_BODY_DEPTH+0.5,CONN_BODY_ROW+0.5,CONN_RECESS_D+0.02,
+                      App.Vector(seat_x,seat_y,-0.01))
+    carrier=carrier.cut(seat)
+
+    # Oversized boss slot behind the electrical pin row.
+    boss_x=CONN_PIN_X+CONN_BOSS_OFFSET_X-CONN_BOSS_SLOT_X/2
+    boss_y=cy-CONN_BOSS_SLOT_Y/2
+    boss=Part.makeBox(CONN_BOSS_SLOT_X,CONN_BOSS_SLOT_Y,BOARD_T+1,
+                      App.Vector(boss_x,boss_y,-0.5))
+    carrier=carrier.cut(boss)
+
+# Copper grooves
+for x1,y1,x2,y2,w in segments:
+    carrier=carrier.cut(groove_segment(x1,y1,x2,y2,w))
+for x,y,d in pads:
+    carrier=carrier.cut(groove_pad(x,y,d))
+
+c=feat("Carrier_Print",carrier,(0.84,0.84,0.86))
+c.Label="PRINT - Rev E JST PLI Locking Connector Carrier"
+
+# Copper guide
+guide=None
+for x1,y1,x2,y2,w in segments:
+    g=groove_segment(x1,y1,x2,y2,w)
+    guide=g if guide is None else guide.fuse(g)
+for x,y,d in pads:
+    g=groove_pad(x,y,d)
+    guide=g if guide is None else guide.fuse(g)
+feat("Copper_Trace_Guide",guide,(0.72,0.36,0.08),10).Label="REFERENCE ONLY - Copper tape"
+
+# Forge
+press=Part.makeBox(BOARD_W,BOARD_H,PRESS_T)
+for x1,y1,x2,y2,w in segments:
+    press=press.fuse(press_segment(x1,y1,x2,y2,w))
+for x,y,d in pads:
+    press=press.fuse(press_pad(x,y,d))
+for x,y in MOUNTS:
+    press=press.fuse(alignment_pin(x,y))
+press.translate(App.Vector(BOARD_W+12,0,0))
+feat("Press_Tool",press,(0.55,0.65,0.80)).Label="PRINT - Rev E Copper Forge"
+
+# Component references
+def dip_body(cx,cy):
+    return Part.makeBox(10.3,26,4,App.Vector(cx-5.15,cy-13,-4.4))
+feat("U1_74LVC245_REF",dip_body(U_X,U1_CY),(0.15,0.15,0.18),25)
+feat("U2_74LVC245_REF",dip_body(U_X,U2_CY),(0.15,0.15,0.18),25)
+feat("U3_MCP1700_REF",Part.makeCylinder(2.5,4.5,App.Vector(REG[2][0],REG[2][1],-4.9)),(0.1,0.1,0.1),20)
+
+# Approximate PLI header bodies on component side.
+for i,cy in enumerate(CONN_CY,1):
+    body=Part.makeBox(CONN_BODY_DEPTH,CONN_BODY_ROW,8.5,
+                      App.Vector(CONN_PIN_X-CONN_BODY_DEPTH/2,cy-CONN_BODY_ROW/2,-7.7))
+    o=feat("J%d_PLI_REF"%i,body,(0.92,0.92,0.88),35)
+    o.Label="REFERENCE - J%d B02B-PLISK-1"%i
+
+# One insulated 1.8V jumper U1->U2.
+def wire(p1,p2,z=BOARD_T+4,d=0.8):
+    v=App.Vector(p2[0]-p1[0],p2[1]-p1[1],0); L=v.Length
+    return Part.makeCylinder(d/2,L,App.Vector(p1[0],p1[1],z),App.Vector(v.x/L,v.y/L,0))
+feat("Jumper_1V8_U1_to_U2_REF",wire(U1[20],U2[20]),(0.9,0.1,0.1))
+
+c.addProperty("App::PropertyString","CameraConnector","Electrical")
+c.CameraConnector="JST PLI: B02B-PLISK-1 header + PLIP-02V-S housing; pin1 XTR, pin2 GND."
+c.addProperty("App::PropertyString","ConnectorWire","Electrical")
+c.ConnectorWire="Use SPLI-002T-P0.5 contacts for AWG28..24. 28AWG twisted XTR/GND pair recommended."
+c.addProperty("App::PropertyString","ConnectorSeat","Fabrication")
+c.ConnectorSeat="Local connector seat is recessed 0.8mm so effective header board thickness is 1.6mm."
+c.addProperty("App::PropertyString","Material","Fabrication")
+c.Material="Plain insulating PC/ASA/PETG; no carbon-filled filament."
+
+doc.recompute()
+Gui.activeDocument().activeView().viewAxonometric()
+Gui.activeDocument().activeView().fitAll()

@@ -1,0 +1,54 @@
+DASPi 10-Camera Trigger Distributor — Rev L Compact Dual
+Forge orientation and carrier validation report
+
+REVISION SCOPE
+PASS  Carrier geometry unchanged from Rev K
+PASS  Copper segments unchanged from Rev K
+PASS  Copper pads unchanged from Rev K
+PASS  All drilled holes unchanged from Rev K
+PASS  Electrical routing unchanged from Rev K
+
+FORGE GENERATION
+PASS  Printed-upright forge uses x_forge = 110.0 mm - x_copper
+PASS  Forge trace ribs mirrored in X
+PASS  Forge pad bosses mirrored in X
+PASS  Forge alignment pins mirrored in X
+PASS  Y coordinates retained
+PASS  Printed forge contains exactly one X reflection
+
+FACE-DOWN MATING SIMULATION
+Applied use transform: x_contact = 110.0 mm - x_forge
+Applied use transform: y_contact = y_forge
+
+PASS  All 128 trace ribs return to their copper coordinates
+PASS  All 102 raised pads return to their copper coordinates
+PASS  All 4 alignment pins return to their carrier-hole coordinates
+PASS  Maximum trace registration error: 0.000000 mm
+PASS  Maximum pad registration error: 0.000000 mm
+PASS  Maximum alignment-pin registration error: 0.000000 mm
+PASS  Overall maximum registration error: 0.000000 mm
+
+INHERITED CARRIER CLEARANCE
+PASS  Different-net copper overlaps: 0
+PASS  Minimum different-net copper clearance: 0.700 mm
+PASS  Minimum A-to-B copper separation: 7.000 mm
+PASS  Minimum mounting-hole-to-copper clearance: 1.200 mm
+
+GEOMETRY COUNTS
+Copper / forge trace segments: 128
+Copper pads / forge pad bosses: 102
+Drilled round holes: 108
+Forge alignment pins: 4
+
+MANDATORY USE ORIENTATION
+1. Do not mirror Press_Tool in the slicer.
+2. Turn the printed forge face-down by rotating it left-to-right 180 degrees
+   about its Y axis.
+3. Do not flip it top-to-bottom about its X axis.
+4. Dry-fit all four alignment pins and inspect asymmetric pad locations before
+   pressing copper.
+
+DISPOSITION
+Rev K forge: DO NOT USE
+Rev K carrier: ACCEPTABLE; geometry retained in Rev L
+Rev L forge: ACCEPTABLE after the stated face-down Y-axis flip

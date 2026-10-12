@@ -1,0 +1,9 @@
+DASPi 10-camera trigger distributor — Rev D FINAL copper check
+
+Different-net copper overlaps: 0
+PASS: no different-net copper overlap.
+Minimum different-net copper clearance: 0.840 mm (CH3_PRE vs CH4_PRE)
+Minimum mounting-hole-to-copper clearance: 2.186 mm
+Natural 2.54 mm-pitch pad clearance at MCP1700/DIP = 0.840 mm.
+Center GND to CH5/CH6 routing clearance = 2.100 mm.
+Camera XTR-to-GND pad edge clearance = 2.400 mm.

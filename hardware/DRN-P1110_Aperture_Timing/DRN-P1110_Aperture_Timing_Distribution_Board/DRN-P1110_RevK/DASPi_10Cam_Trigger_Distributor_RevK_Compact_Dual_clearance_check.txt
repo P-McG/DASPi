@@ -1,0 +1,58 @@
+DASPi 10-Camera Trigger Distributor — Rev K Compact Dual
+Validation and clearance report
+
+REVISION PURPOSE
+PASS  U1/U2 footprints mirrored and rotated for back-side PDIP installation
+PASS  Component-side IC notches specified toward the bottom board edge
+PASS  Copper-side pin positions: pin 1 lower-left; pin 20 lower-right
+
+SN74LVC245A ELECTRICAL CHECK
+PASS  Pin 1 DIR -> local 1.8 V
+PASS  Pins 2..9 A1..A8 -> common trigger
+PASS  Pin 10 GND -> insulated jumper to upper local GND bus
+PASS  Pins 11..13 B8..B6 -> unused holes without copper pads
+PASS  Pins 14..18 B5..B1 -> five 68-ohm camera-output paths
+PASS  Pin 19 /OE -> insulated jumper to lower local GND landing
+PASS  Pin 20 VCC -> local 1.8 V
+PASS  C3/C6 -> local 1.8 V and GND beside corrected pin-20 end
+
+OUTPUT MAPPING
+J1/J6   B5   pin 14
+J2/J7   B4   pin 15
+J3/J8   B3   pin 16
+J4/J9   B2   pin 17
+J5/J10  B1   pin 18
+
+GEOMETRY CHECK
+PASS  Macro Python syntax
+PASS  Back-side rotated pin map for pins 1, 10, 11 and 20
+PASS  Circuit A/B footprint and routing symmetry
+PASS  All validation-net seed points resolved
+PASS  Different-net copper overlaps: 0
+PASS  Minimum different-net copper clearance: 0.700 mm
+PASS  Minimum A-to-B copper separation: 7.000 mm
+PASS  Minimum mounting-hole-to-copper clearance: 1.200 mm
+
+CONNECTOR CHECK
+PASS  B02B-PASK-1 lead holes: 20 total; exactly two per connector
+PASS  Lead-hole diameter: 0.80 mm
+PASS  Lead-hole pitch: 2.00 mm
+PASS  Full-depth rectangular connector openings: 0
+PASS  Underside seating-pocket depth: 0.80 mm
+PASS  Local carrier thickness beneath each connector: 1.60 mm
+PASS  Solid web beneath top copper grooves at pockets: 1.25 mm
+
+COUNTS
+Copper segments: 128
+Copper pads: 102
+Drilled round holes: 108
+Physical capacitor footprints: 6
+Insulated IC jumpers: 4
+
+ASSEMBLY HOLD POINT
+Before power is applied, verify continuity at both ICs:
+  pin 1  -> 1.8 V
+  pin 10 -> local GND
+  pin 19 -> local GND
+  pin 20 -> 1.8 V
+Also verify that neither 1.8 V rail is shorted to its local GND rail.

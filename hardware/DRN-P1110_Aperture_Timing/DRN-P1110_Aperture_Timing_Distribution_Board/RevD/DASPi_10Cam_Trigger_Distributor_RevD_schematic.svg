@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1250" height="700" viewBox="0 0 1250 700">
+<rect width="1250" height="700" fill="white"/>
+<text x="40" y="45" font-family="sans-serif" font-size="28">DASPi 10-camera trigger distributor — Rev D power + trigger schematic</text>
+
+<!-- Pico -->
+<rect x="60" y="120" width="210" height="230" fill="#f3f3f3" stroke="black" stroke-width="2"/>
+<text x="105" y="155" font-family="sans-serif" font-size="22">Raspberry Pi Pico</text>
+<text x="95" y="215" font-family="sans-serif" font-size="18">3V3(OUT)</text>
+<text x="95" y="265" font-family="sans-serif" font-size="18">GND</text>
+<text x="95" y="315" font-family="sans-serif" font-size="18">TRIGGER GPIO</text>
+
+<!-- LDO -->
+<rect x="395" y="150" width="220" height="180" fill="#f8f8f8" stroke="black" stroke-width="2"/>
+<text x="430" y="185" font-family="sans-serif" font-size="21">MCP1700-1802</text>
+<text x="420" y="225" font-family="sans-serif" font-size="16">pin 2 VIN</text>
+<text x="420" y="265" font-family="sans-serif" font-size="16">pin 1 GND</text>
+<text x="520" y="225" font-family="sans-serif" font-size="16">pin 3 VOUT</text>
+
+<!-- 3V3 -->
+<line x1="270" y1="205" x2="395" y2="205" stroke="black" stroke-width="3"/>
+<text x="310" y="195" font-family="sans-serif" font-size="15">3.3 V</text>
+
+<!-- GND -->
+<line x1="270" y1="255" x2="395" y2="255" stroke="black" stroke-width="3"/>
+<line x1="300" y1="255" x2="300" y2="600" stroke="black" stroke-width="3"/>
+<text x="305" y="590" font-family="sans-serif" font-size="15">common GND</text>
+
+<!-- LDO output -->
+<line x1="615" y1="215" x2="765" y2="215" stroke="black" stroke-width="3"/>
+<text x="650" y="202" font-family="sans-serif" font-size="16">1.8 V</text>
+
+<!-- caps -->
+<text x="400" y="370" font-family="sans-serif" font-size="17">CIN 1 µF: pin 2 ↔ pin 1</text>
+<text x="400" y="400" font-family="sans-serif" font-size="17">COUT 1 µF: pin 3 ↔ pin 1</text>
+
+<!-- U1 -->
+<rect x="765" y="120" width="190" height="230" fill="#f5f5f5" stroke="black" stroke-width="2"/>
+<text x="805" y="155" font-family="sans-serif" font-size="21">U1 74LVC245</text>
+<text x="790" y="205" font-family="sans-serif" font-size="16">VCC pin20 = 1.8 V</text>
+<text x="790" y="240" font-family="sans-serif" font-size="16">DIR pin1 = 1.8 V</text>
+<text x="790" y="275" font-family="sans-serif" font-size="16">/OE pin19 = GND</text>
+<text x="790" y="310" font-family="sans-serif" font-size="16">B1..B5 → XTR1..5</text>
+
+<!-- U2 -->
+<rect x="1010" y="120" width="190" height="230" fill="#f5f5f5" stroke="black" stroke-width="2"/>
+<text x="1050" y="155" font-family="sans-serif" font-size="21">U2 74LVC245</text>
+<text x="1035" y="205" font-family="sans-serif" font-size="16">VCC pin20 = 1.8 V</text>
+<text x="1035" y="240" font-family="sans-serif" font-size="16">DIR pin1 = 1.8 V</text>
+<text x="1035" y="275" font-family="sans-serif" font-size="16">/OE pin19 = GND</text>
+<text x="1035" y="310" font-family="sans-serif" font-size="16">B1..B5 → XTR6..10</text>
+
+<!-- 1.8 jumper -->
+<line x1="955" y1="215" x2="1010" y2="215" stroke="#cc3333" stroke-width="3" stroke-dasharray="8,5"/>
+<text x="930" y="195" font-family="sans-serif" font-size="14" fill="#aa2222">insulated jumper</text>
+
+<!-- Trigger bus -->
+<line x1="270" y1="305" x2="720" y2="305" stroke="#555" stroke-width="3"/>
+<line x1="720" y1="305" x2="720" y2="450" stroke="#555" stroke-width="3"/>
+<line x1="720" y1="450" x2="1090" y2="450" stroke="#555" stroke-width="3"/>
+<line x1="860" y1="350" x2="860" y2="450" stroke="#555" stroke-width="3"/>
+<line x1="1105" y1="350" x2="1105" y2="450" stroke="#555" stroke-width="3"/>
+<text x="360" y="292" font-family="sans-serif" font-size="16">3.3 V trigger → A inputs</text>
+
+<!-- Output blocks -->
+<text x="760" y="520" font-family="sans-serif" font-size="18">Each channel:</text>
+<text x="760" y="555" font-family="monospace" font-size="18">74LVC245 Bx ── 68 Ω ── XTR</text>
+<text x="760" y="590" font-family="monospace" font-size="18">GND ───────────────── camera GND</text>
+</svg>

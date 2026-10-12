@@ -582,3 +582,12 @@ sudo apt install qtwayland5 qt6-wayland
 ```
 ffplay -f rawvideo -pixel_format bayer_rggb16le -video_size 1456x1088 output-10.0.2.3_0.bayer
 ```
+
+## Incorrect hostnames
+Root cause: Cloud-init was overriding the PXE-assigned hostnames.
+Permanent fix: preserve_hostname: true in the shared NFS root's cloud-init configuration.
+
+sudo mv /srv/nfs/default/etc/hostname \
+  /srv/nfs/default/etc/hostname.bak
+
+

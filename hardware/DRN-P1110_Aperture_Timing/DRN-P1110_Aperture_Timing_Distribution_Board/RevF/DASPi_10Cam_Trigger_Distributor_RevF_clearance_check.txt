@@ -1,0 +1,15 @@
+DASPi 10-camera trigger distributor — Rev F FINAL tape-seam check
+
+Different-net overlaps: 0
+PASS: no different-net copper overlap.
+Minimum different-net clearance: 0.700 mm (CH1_POST vs GND)
+Trigger seam-land clearance: 13.590 mm
+GND seam-land clearances: 3.307, 1.500, 5.787 mm
+Minimum GND seam-land clearance: 1.500 mm
+Minimum mounting-hole clearance: 2.428 mm
+
+Visible upper-tape edge / solder seam: Y=47.0 mm
+Lower-tape hidden edge: Y=52.6 mm
+Overlap: 5.6 mm
+Trigger land: (14,47), diameter 6.0 mm
+GND lands: (87.0, 112.0, 124.0), Y=47, diameter 6.0 mm

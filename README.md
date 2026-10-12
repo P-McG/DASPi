@@ -45,6 +45,7 @@ System starts automatically via systemd
 - PXE not booting? → [PXE Setup](docs/pxe.md)
 - Build failing? → [Build Guide](docs/build.md)
 - Bad frames? → [Pipeline Debugging](docs/pipeline.md)
+- Need direct camera access? → [direct camera access](docs/direct_camera_access.md) 
 
 ## Repo Structure
 ```

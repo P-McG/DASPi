@@ -13,15 +13,16 @@
 
 namespace DASPi {
 
-//The following used the full Topology to be instantiated
-//using tpgy_t = IcosahedronSphereTopology<IcosahedronSphereSpace>;
-using tpgy_t =  IcosahedronSphereTopology<IcosahedronModuleSphereSpace<0, 1>>;
+using ConfiguredSphereSpace =
+    IcosahedronModuleSphereSpace<9, 2, 19, 18>;
 
-//The following uses the Topology that will be transmitted to the computemodule
-//template <unsigned int FacetIndex>
-//using tpgydp_t = TopologyDataPacket<typename IcosahedronSphereSpace::SubSpace_t<FacetIndex>>;
+using tpgy_t =
+    IcosahedronSphereTopology<ConfiguredSphereSpace>;
+
 template <unsigned int FacetIndex>
 using tpgydp_t =
-    TopologyDataPacket<typename tpgy_t::template OverlapSpace_t<FacetIndex>>;
+    TopologyDataPacket<
+        typename tpgy_t::template OverlapSpace_t<FacetIndex>
+    >;
 
 } // namespace DASPi

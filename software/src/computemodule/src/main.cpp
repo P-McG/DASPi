@@ -2071,6 +2071,7 @@ Eigen::Vector3d MakeFaceSeamTangent(const RigFace<N>& face,
     return edgeWorld / norm;
 }
 
+[[maybe_unused]]
 Eigen::Matrix3d MakeCameraRcwFromForwardAndUpHint(const Eigen::Vector3d& forward,
                                                   const Eigen::Vector3d& upHint)
 {
@@ -4913,7 +4914,7 @@ int main(int argc, char* argv[])
          *   - module-owned face indices
          */
         using SphereSpaceType =
-            DASPi::IcosahedronModuleSphereSpace<0, 1>;
+            DASPi::ConfiguredSphereSpace;
 
         static_assert(DASPi::IcosahedronSphereSpace_t<SphereSpaceType>);
 

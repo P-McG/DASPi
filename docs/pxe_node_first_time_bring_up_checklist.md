@@ -18,9 +18,38 @@ Steps:
 1. Flash Raspberry Pi OS Lite (64-bit) to an SD card
 2. Insert SD card into the node
 3. Power on and allow full boot
-4. (Optional) Log in via SSH or console
-5. Power down the node
-6. Remove the SD card
+4. [Fix hostname](docs/hostname.md)
+
+With the SD card installed in the new node, run:
+vcgencmd bootloader_config
+
+You want to find:
+BOOT_ORDER=0xf21
+
+0xf21 means, reading right-to-left:
+1 = SD card
+2 = Network
+f = restart/retry
+
+If it is not 0xf21, the easiest fix is:
+sudo raspi-config
+
+Then:
+Advanced Options
+    → Boot Order
+        → Network Boot
+
+Reboot with the SD card still installed so that the EEPROM change is actually applied:
+sudo reboot
+
+After it comes back up, verify again:
+vcgencmd bootloader_config
+
+Then shut down:
+sudo poweroff
+
+Remove the SD card and power the Pi back on.
+
 
 ---
 
@@ -34,6 +63,11 @@ ip link
 Look for:
 ```bash
 eth0: ... link/ether AA:BB:CC:DD:EE:FF
+```
+
+On one of the computers on the network can do 
+```bash
+sudo nmap -sn 10.0.2.0/24
 ```
 
 ### 3. Configure DHCP (PXE Server)
