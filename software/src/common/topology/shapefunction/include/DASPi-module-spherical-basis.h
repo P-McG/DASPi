@@ -11,6 +11,7 @@
 
 #include <Eigen/Dense>
 
+#include "DASPi-config.h"
 #include "DASPi-icosahedronspace.h"
 #include "DASPi-icosahedronspherespace.h"
 #include "DASPi-mesh_topology.h"
@@ -499,11 +500,22 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
     const RigFace<N>& anchorFace =
         faces[anchorFaceIndex];
 
-    const Eigen::Matrix3d Rrig =
-        RotationAligningAToB(
-            anchorFace.lookDir,
-            Eigen::Vector3d(0.0, 0.0, 1.0)
-        );
+	const Eigen::Matrix3d Ranchor =
+	    RotationAligningAToB(
+	        anchorFace.lookDir,
+	        Eigen::Vector3d::UnitZ()
+	    );
+	
+	/*
+	 * Extra roll around the centered viewing direction.
+	 *
+	 * The current M0 triangle is sideways in the output image.
+	 * Start with -90 deg so the base becomes horizontal.
+	 */
+	const Eigen::Matrix3d RanchorRoll =
+	    CameraRollDeg(80.96325-60.0+180);
+	
+	const Eigen::Matrix3d Rrig = RanchorRoll * Ranchor;
 
     const Eigen::Matrix3d Ralign =
         CameraModelToRigAlignment();

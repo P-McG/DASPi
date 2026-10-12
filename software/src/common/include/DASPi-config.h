@@ -10,5 +10,6 @@ inline constexpr size_t NUM_REGIONS = NUM_SIDES + 1;
 inline constexpr double orientationValue_ = 0.75;
 inline constexpr double overlapScaleValue_ = 0.75;
 inline constexpr double faceNormalAngle_ = std::acos(std::sqrt(5.0) / 3.0);
+inline constexpr double kPanoramaRollDeg = -9.03675;
 
 } // namespace DASPi}

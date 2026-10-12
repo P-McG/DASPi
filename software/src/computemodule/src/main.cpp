@@ -2379,11 +2379,17 @@ CameraSetup<N> makeCameraConfigs()
     const RigFace<N>& anchorFace =
         faces[static_cast<std::size_t>(moduleFaceIndices[0])];
 
-    const Eigen::Matrix3d Rrig =
+    const Eigen::Matrix3d Ranchor =
         RotationAligningAToB(
             anchorFace.lookDir,
             Eigen::Vector3d(0.0, 0.0, 1.0)
         );
+    
+    const Eigen::Matrix3d RanchorRoll =
+        CameraRollDeg(80.96325-60.0+180);
+    
+    const Eigen::Matrix3d Rrig =
+        RanchorRoll * Ranchor;
 
     const Eigen::Matrix3d Ralign =
         CameraModelToRigAlignment();
@@ -4297,11 +4303,16 @@ void RunStitchLoop(std::vector<CameraView>& cameras,
             throw std::runtime_error("forwardFaceIndex out of range");
         }
 
+        //stitchConfig.projectionToWorld =
+            //RotationAligningAToB(
+                //Eigen::Vector3d(0.0, 0.0, 1.0),
+                //rig.faces[static_cast<std::size_t>(forwardFaceIndex)].lookDir
+            //);
+            
+        // M0 has already been aligned to global +Z
+        // by makeCameraConfigs().
         stitchConfig.projectionToWorld =
-            RotationAligningAToB(
-                Eigen::Vector3d(0.0, 0.0, 1.0),
-                rig.faces[static_cast<std::size_t>(forwardFaceIndex)].lookDir
-            );
+            Eigen::Matrix3d::Identity();
 
         std::cout << "[projection forward] face="
                   << forwardFaceIndex

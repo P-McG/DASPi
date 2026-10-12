@@ -109,28 +109,28 @@ struct IcosahedronTables {
 
     static inline constexpr std::array<MaskOrientationData, facetsN_>
     maskOrientations_{{
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face0
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face1
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face2
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face3
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face4
 
-        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},
-        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},
-        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},
-        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},
-        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},
-        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},
-        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},
-        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},
-        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},
-        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},
+        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face5
+        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face6
+        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face7
+        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face8
+        MaskOrientationData{maskRadius, cos1Pi, -sin1Pi},//face9
+        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face10
+        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face11
+        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face12
+        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face13
+        MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face14
 
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face15
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face16
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face17
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face18
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face19
     }};
 
     static inline constexpr std::array<SensorOrientationData, facetsN_>
