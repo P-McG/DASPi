@@ -2103,7 +2103,7 @@ Eigen::Matrix3d CameraRollDeg(double deg)
 double CameraLocalRollDegForModule(int module)
 {
     switch (module) {
-    case 0: return 0.0;
+    case 0: return 180.0;
     case 1: return 0.0;
     case 2: return 0.0;
     case 3: return 0.0;

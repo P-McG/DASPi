@@ -119,7 +119,7 @@ struct IcosahedronTables {
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face6
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face7
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face8
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face9
+        MaskOrientationData{maskRadius, 0.5, -std::numbers::sqrt3 / 2.0},//face9
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face10
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face11
         MaskOrientationData{maskRadius, cos1Pi, sin1Pi},//face12
