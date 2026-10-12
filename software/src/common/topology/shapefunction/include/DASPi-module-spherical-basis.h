@@ -297,7 +297,7 @@ template<std::size_t ModuleIndex>
 inline constexpr double CameraLocalRollDegForModule()
 {
     if constexpr (ModuleIndex == 0) {
-        return 180.0;
+        return 180.0+120.0;
     } else if constexpr (ModuleIndex == 1) {
         return 0.0;
     } else if constexpr (ModuleIndex == 2) {
@@ -311,7 +311,7 @@ template<std::size_t ModuleIndex>
 inline constexpr double CameraLocalRollCorrectionDegForModule()
 {
     if constexpr (ModuleIndex == 0) {
-        return 180.0+120;      // keep module 0 as the reference
+        return 180.0;      // keep module 0 as the reference
     } else if constexpr (ModuleIndex == 1) {
         return 0.0/*-12.0*/;      // tune this: try +/- 0.25, +/- 0.5, +/- 1.0
     } else {
@@ -604,7 +604,8 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
 	    );
 	
 	const Eigen::Matrix3d Rcal =
-		CameraLocalExtrinsicCorrection<ModuleIndex>();
+		Eigen::Matrix3d::Identity();
+	    //CameraLocalExtrinsicCorrection<ModuleIndex>();
 	
 	return Rrig * Rface * Ralign * Rimg * Rcal;
 }
