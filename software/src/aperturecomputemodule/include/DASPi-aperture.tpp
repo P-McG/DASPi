@@ -1784,36 +1784,7 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
 
     std::vector<uint16_t> activeFrame(expectedElems);
     
-    if (frameNumber == 30) {
-    cv::Mat raw16(
-        activeHeight, activeWidth,
-        CV_16UC1, activeFrame.data()
-    );
 
-    cv::Mat bgr16, preview;
-    cv::cvtColor(raw16, bgr16, cv::COLOR_BayerBG2BGR);
-    cv::normalize(
-        bgr16, preview, 0, 255,
-        cv::NORM_MINMAX, CV_8UC3
-    );
-
-    auto drawTriangle = [&](const auto& points,
-                            const cv::Scalar& color) {
-        std::vector<cv::Point> vertices;
-
-        for (const auto& p : points) {
-            vertices.emplace_back(
-                static_cast<int>(p.x()),
-                static_cast<int>(p.y())
-            );
-        }
-
-        cv::polylines(
-            preview,
-            std::vector<std::vector<cv::Point>>{vertices},
-            true, color, 2, cv::LINE_AA
-        );
-    };
 
     using CoverageTopology =
         typename OverlapTopologyType::CoverageTopology_t;
@@ -1941,6 +1912,50 @@ void Aperture<FacetIndex, ModuleIndex>::FrameBufferToUDP(
 
     const auto tMapCopyDone = std::chrono::steady_clock::now();
     
+        if (frameNumber == 30) {
+        cv::Mat raw16(
+            activeHeight, activeWidth,
+            CV_16UC1, activeFrame.data()
+        );
+    
+        cv::Mat bgr16, preview;
+        
+        double minValue = 0.0;
+        double maxValue = 0.0;
+        
+        cv::minMaxLoc(raw16, &minValue, &maxValue);
+        
+        std::cout
+            << "[mask overlay] module=" << ModuleIndex
+            << " facet=" << FacetIndex
+            << " rawMin=" << minValue
+            << " rawMax=" << maxValue
+            << std::endl;
+        
+        cv::cvtColor(raw16, bgr16, cv::COLOR_BayerBG2BGR);
+        cv::normalize(
+            bgr16, preview, 0, 255,
+            cv::NORM_MINMAX, CV_8UC3
+        );
+    
+        auto drawTriangle = [&](const auto& points,
+                                const cv::Scalar& color) {
+            std::vector<cv::Point> vertices;
+    
+            for (const auto& p : points) {
+                vertices.emplace_back(
+                    static_cast<int>(p.x()),
+                    static_cast<int>(p.y())
+                );
+            }
+    
+            cv::polylines(
+                preview,
+                std::vector<std::vector<cv::Point>>{vertices},
+                true, color, 2, cv::LINE_AA
+            );
+        };
+        
     /*
      * ChArUco calibration observation capture.
      *
