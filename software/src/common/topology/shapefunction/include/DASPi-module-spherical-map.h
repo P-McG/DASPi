@@ -386,9 +386,9 @@ private:
         const double pixelY = static_cast<double>(y) + 0.5;
     
         // Mirror M0 / face 9 horizontally.
-        //if constexpr (ModuleIndex == 0 && FacetIndex == 9) {
+        if constexpr (ModuleIndex == 0 && FacetIndex == 9) {
             pixelX = static_cast<double>(sensorWidthValue_) - pixelX;
-        //}
+        }
     
         return SensorPointToCameraRay(pixelX, pixelY);
     }

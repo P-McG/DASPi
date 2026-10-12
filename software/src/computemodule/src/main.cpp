@@ -2103,9 +2103,9 @@ Eigen::Matrix3d CameraRollDeg(double deg)
 double CameraLocalRollDegForModule(int module)
 {
     switch (module) {
-    case 0: return 30.0-90.0;
-    case 1: return 30.0-90.0;
-    case 2: return 30.0;
+    case 0: return 0.0;
+    case 1: return 0.0;
+    case 2: return 0.0;
     case 3: return 0.0;
     default: return 0.0;
     }
@@ -2385,11 +2385,11 @@ CameraSetup<N> makeCameraConfigs()
             Eigen::Vector3d(0.0, 0.0, 1.0)
         );
     
-    const Eigen::Matrix3d RanchorRoll =
-        CameraRollDeg(80.96325-60.0+180);
+    //const Eigen::Matrix3d RanchorRoll =
+        //CameraRollDeg(80.96325-60.0+180);
     
     const Eigen::Matrix3d Rrig =
-        RanchorRoll * Ranchor;
+        /*RanchorRoll * */Ranchor;
 
     const Eigen::Matrix3d Ralign =
         CameraModelToRigAlignment();

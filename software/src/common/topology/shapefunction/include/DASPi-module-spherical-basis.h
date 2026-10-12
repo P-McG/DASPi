@@ -297,11 +297,11 @@ template<std::size_t ModuleIndex>
 inline constexpr double CameraLocalRollDegForModule()
 {
     if constexpr (ModuleIndex == 0) {
-        return 30.0-90.0;
+        return 0.0;
     } else if constexpr (ModuleIndex == 1) {
-        return 30.0-90.0;
+        return 0.0;
     } else if constexpr (ModuleIndex == 2) {
-        return 30.0;
+        return 0.0;
     } else {
         return 0.0;
     }
@@ -514,10 +514,10 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
 	 * The current M0 triangle is sideways in the output image.
 	 * Start with -90 deg so the base becomes horizontal.
 	 */
-	const Eigen::Matrix3d RanchorRoll =
-	    CameraRollDeg(80.96325-60.0+180);
+	//const Eigen::Matrix3d RanchorRoll =
+	    //CameraRollDeg(80.96325-60.0+180);
 	
-	const Eigen::Matrix3d Rrig = RanchorRoll * Ranchor;
+	const Eigen::Matrix3d Rrig = /*RanchorRoll **/ Ranchor;
 
     const Eigen::Matrix3d Ralign =
         CameraModelToRigAlignment();
