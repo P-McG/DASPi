@@ -604,8 +604,7 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
 	    );
 	
 	const Eigen::Matrix3d Rcal =
-		Eigen::Matrix3d::Identity();
-	    //CameraLocalExtrinsicCorrection<ModuleIndex>();
+		CameraLocalExtrinsicCorrection<ModuleIndex>();
 	
 	return Rrig * Rface * Ralign * Rimg * Rcal;
 }
