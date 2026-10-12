@@ -520,7 +520,8 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
 	const Eigen::Matrix3d Rrig = /*RanchorRoll **/ Ranchor;
 
     const Eigen::Matrix3d Ralign =
-        CameraModelToRigAlignment();
+        Eigen::Matrix3d::Identity();
+        //CameraModelToRigAlignment();
 
     Eigen::Matrix3d Rface =
         Eigen::Matrix3d::Identity();
@@ -598,12 +599,14 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
     }
 
 	const Eigen::Matrix3d Rimg =
-	    CameraRollDeg(
-	        CameraLocalRollDegForModule<ModuleIndex>()
-	    );
+        Eigen::Matrix3d::Identity();
+	    //CameraRollDeg(
+	        //CameraLocalRollDegForModule<ModuleIndex>()
+	    //);
 	
 	const Eigen::Matrix3d Rcal =
-	    CameraLocalExtrinsicCorrection<ModuleIndex>();
+		Eigen::Matrix3d::Identity();
+	    //CameraLocalExtrinsicCorrection<ModuleIndex>();
 	
 	return Rrig * Rface * Ralign * Rimg * Rcal;
 }
