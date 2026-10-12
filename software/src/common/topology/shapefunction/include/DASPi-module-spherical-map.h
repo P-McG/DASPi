@@ -394,7 +394,7 @@ private:
             SensorPointToCameraRay(pixelX, pixelY);
         
         if constexpr (ModuleIndex == 0 && FacetIndex == 9) {
-            //ray.y() = -ray.y();
+            ray.x() = -ray.x();
         }
         
         return ray;
