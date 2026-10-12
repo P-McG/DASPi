@@ -390,7 +390,14 @@ private:
             //pixelX = static_cast<double>(sensorWidthValue_) - pixelX;
         //}
     
-        return SensorPointToCameraRay(pixelX, pixelY);
+        Eigen::Vector3d ray =
+            SensorPointToCameraRay(pixelX, pixelY);
+        
+        if constexpr (ModuleIndex == 0 && FacetIndex == 9) {
+            ray.y() = -ray.y();
+        }
+        
+        return ray;
     }
     
     std::uint32_t SensorIndexToOutputIndex(
