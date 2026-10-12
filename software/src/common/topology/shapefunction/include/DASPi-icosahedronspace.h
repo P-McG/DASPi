@@ -145,7 +145,7 @@ struct IcosahedronTables {
         SensorOrientationData{cos1Pi, sin1Pi},//face6
         SensorOrientationData{cos1Pi, sin1Pi},//face7
         SensorOrientationData{cos1Pi, sin1Pi},//face8
-        SensorOrientationData{cos0Pi, sin0Pi},//face9
+        SensorOrientationData{-cos0Pi, -sin0Pi},//face9
         SensorOrientationData{cos1Pi, sin1Pi},//face10
         SensorOrientationData{cos1Pi, sin1Pi},//face11
         SensorOrientationData{cos1Pi, sin1Pi},//face12
