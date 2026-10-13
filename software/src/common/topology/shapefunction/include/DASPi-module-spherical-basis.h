@@ -502,11 +502,11 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
     const RigFace<N>& anchorFace =
         faces[anchorFaceIndex];
 
-	const Eigen::Matrix3d Ranchor =
-	    RotationAligningAToB(
-	        anchorFace.lookDir,
-	        Eigen::Vector3d::UnitZ()
-	    );
+	//const Eigen::Matrix3d Ranchor =
+	    //RotationAligningAToB(
+	        //anchorFace.lookDir,
+	        //Eigen::Vector3d::UnitZ()
+	    //);
 	
 	/*
 	 * Extra roll around the centered viewing direction.
@@ -514,10 +514,35 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
 	 * The current M0 triangle is sideways in the output image.
 	 * Start with -90 deg so the base becomes horizontal.
 	 */
-	const Eigen::Matrix3d RanchorRoll =
-	    CameraRollDeg(180);
+	const Eigen::Matrix3d Ranchor =
+	    RotationAligningAToB(
+	        anchorFace.lookDir,
+	        Eigen::Vector3d::UnitZ()
+	    );
 	
-	const Eigen::Matrix3d Rrig = RanchorRoll * Ranchor;
+	// First vertex of face 9 is our chosen apex.
+	const std::size_t apexVertex =
+	    anchorFace.indices[0];
+	
+	const Eigen::Vector3d apexDirection =
+	    Ranchor * vertices.at(apexVertex);
+	
+	// Rotate the projected apex toward world +Y.
+	const double globalRollDeg =
+	    std::atan2(
+	        apexDirection.x(),
+	        apexDirection.y()
+	    ) * 180.0 / std::numbers::pi;
+	
+	const Eigen::Matrix3d RanchorRoll =
+	    CameraRollDeg(globalRollDeg);
+	
+	const Eigen::Matrix3d Rrig =
+	    RanchorRoll * Ranchor;
+	
+	std::cout
+	    << "[Rig] globalRollDeg="
+	    << globalRollDeg << '\n';
 
     const Eigen::Matrix3d Ralign =
         Eigen::Matrix3d::Identity();

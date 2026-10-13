@@ -2385,8 +2385,20 @@ CameraSetup<N> makeCameraConfigs()
             Eigen::Vector3d(0.0, 0.0, 1.0)
         );
     
+    const std::size_t apexVertex =
+        anchorFace.indices[0];
+    
+    const Eigen::Vector3d apexDirection =
+        Ranchor * rig.vertices.at(apexVertex);
+    
+    const double globalRollDeg =
+        std::atan2(
+            apexDirection.x(),
+            apexDirection.y()
+        ) * 180.0 / M_PI;
+    
     const Eigen::Matrix3d RanchorRoll =
-        CameraRollDeg(180);
+        CameraRollDeg(globalRollDeg);
     
     const Eigen::Matrix3d Rrig =
         RanchorRoll * Ranchor;
