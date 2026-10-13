@@ -2385,11 +2385,11 @@ CameraSetup<N> makeCameraConfigs()
             Eigen::Vector3d(0.0, 0.0, 1.0)
         );
     
-    //const Eigen::Matrix3d RanchorRoll =
-        //CameraRollDeg(80.96325-60.0+180);
+    const Eigen::Matrix3d RanchorRoll =
+        CameraRollDeg(180);
     
     const Eigen::Matrix3d Rrig =
-        /*RanchorRoll * */Ranchor;
+        RanchorRoll * Ranchor;
 
     const Eigen::Matrix3d Ralign =
         CameraModelToRigAlignment();
