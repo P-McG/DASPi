@@ -395,7 +395,7 @@ private:
         
         if constexpr (ModuleIndex == 0 && FacetIndex == 9) {
             //ray.x() = -ray.x();
-            //ray.y() = -ray.y();
+            ray.y() = -ray.y();
         }
         
         return ray;
