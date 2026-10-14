@@ -3026,9 +3026,9 @@ bool haveNewPrimaryFrames(
     for (std::size_t i = 0; i < liveCameras.size(); ++i) {
         LiveCameraState& live = liveCameras[i];
 
-        //if (live.localStreamIndex != 0) {
-            //continue;
-        //}
+        if (live.localStreamIndex != 0) {
+            continue;
+        }
 
         std::scoped_lock lock(live.frame.mutex);
 
@@ -4105,9 +4105,9 @@ cv::Mat CompositePreprojectedFrames(
          streamIndex < liveCameras.size();
          ++streamIndex) {
          
-        if (liveCameras[streamIndex].localStreamIndex != 0) {
-            continue;
-        }    
+        //if (liveCameras[streamIndex].localStreamIndex != 0) {
+            //continue;
+        //}    
              
         cv::Mat frame;
 
