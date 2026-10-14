@@ -301,7 +301,7 @@ inline constexpr double CameraLocalRollDegForModule()
     } else if constexpr (ModuleIndex == 1) {
         return +60.0;
     } else if constexpr (ModuleIndex == 2) {
-        return +60.0;
+        return +120.0;
     } else if constexpr (ModuleIndex == 3) {
         return +60.0;
     } else {

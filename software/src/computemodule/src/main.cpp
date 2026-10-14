@@ -2105,8 +2105,8 @@ double CameraLocalRollDegForModule(int module)
     switch (module) {
     case 0: return +60.0;
     case 1: return +60.0;
-    case 2: return +60.0;
-    case 3: return 0.0;
+    case 2: return +120.0;
+    case 3: return +60.0;
     default: return 0.0;
     }
 }

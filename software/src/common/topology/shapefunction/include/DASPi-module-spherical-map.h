@@ -393,15 +393,11 @@ private:
         Eigen::Vector3d ray =
             SensorPointToCameraRay(pixelX, pixelY);
         
-        if constexpr (ModuleIndex == 0 && FacetIndex == 9)
-        {
-            //ray.x() = -ray.x();
-            ray.y() = -ray.y();
-        } else if constexpr (ModuleIndex == 1 && FacetIndex == 2) 
-        {
-            //ray.x() = -ray.x();
-            ray.y() = -ray.y();
-        } else if constexpr (ModuleIndex == 3 && FacetIndex == 19) 
+        if constexpr (
+            (ModuleIndex == 0 && FacetIndex == 9)
+            || (ModuleIndex == 1 && FacetIndex == 2) 
+            || (ModuleIndex == 2 && FacetIndex == 19)
+        ) 
         {
             //ray.x() = -ray.x();
             ray.y() = -ray.y();
