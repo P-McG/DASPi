@@ -184,8 +184,8 @@ struct IcosahedronTables {
     > facetAdjacencies_{{
         {4, 6, 1},//facet0
         {0, 5, 2},//facet1
-        {9, 1, 3},//facet2
-        {4, 8, 2},//facet3
+        {9, 3, 1},//facet2
+        {2, 8, 4},//facet3
         {3, 7, 0},//facet4
         {1, 15, 19},//facet5
         {0, 16, 15},//facet6
