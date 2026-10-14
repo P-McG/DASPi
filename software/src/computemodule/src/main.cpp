@@ -2386,7 +2386,7 @@ CameraSetup<N> makeCameraConfigs()
         );
     
     const std::size_t apexVertex =
-        anchorFace.indices[0];
+        anchorFace.indices[1];
     
     const Eigen::Vector3d apexDirection =
         Ranchor * rig.vertices.at(apexVertex);
@@ -3026,9 +3026,9 @@ bool haveNewPrimaryFrames(
     for (std::size_t i = 0; i < liveCameras.size(); ++i) {
         LiveCameraState& live = liveCameras[i];
 
-        if (live.localStreamIndex != 0) {
-            continue;
-        }
+        //if (live.localStreamIndex != 0) {
+            //continue;
+        //}
 
         std::scoped_lock lock(live.frame.mutex);
 

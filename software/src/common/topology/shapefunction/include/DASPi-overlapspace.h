@@ -27,7 +27,7 @@
 
 #include <concepts>
 #include <cstddef>
-
+#include "DASPi-config.h"
 #include "DASPi-pointdata2di.h"
 #include "DASPi-maskorientationdata.h"
 #include "DASPi-sensororientationdata.h"
@@ -44,7 +44,13 @@ struct OverlapSpace
     static constexpr std::size_t n_{n};
     static constexpr MaskOrientationData maskOrientation_{maskOrientation};
     static constexpr SensorOrientationData sensorOrientation_{sensorOrientation};
-    static constexpr double nonOverlapScale_ {0.75};
+	static constexpr double nonOverlapScale_{
+		overlapScaleValue_
+	};
+	static_assert(
+		nonOverlapScale_ > 0.0 &&
+		nonOverlapScale_ < 1.0
+	);
     static constexpr Matrix3dData ImageTransformMatrix = IdentityMatrix3d();
     
 	using SubSpaceCoverage_t = RegularPolygonalSpace<n_, maskOrientation_, sensorOrientation_>;

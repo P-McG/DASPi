@@ -110,7 +110,7 @@ struct IcosahedronTables {
     static inline constexpr std::array<MaskOrientationData, facetsN_>
     maskOrientations_{{
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face0
-        MaskOrientationData{maskRadius, cos0Pi,sin0Pi},//face1
+        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face1
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face2
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face3
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face4
