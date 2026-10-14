@@ -4105,9 +4105,9 @@ cv::Mat CompositePreprojectedFrames(
          streamIndex < liveCameras.size();
          ++streamIndex) {
          
-        //if (liveCameras[streamIndex].localStreamIndex != 0) {
-            //continue;
-        //}    
+        if (liveCameras[streamIndex].localStreamIndex != 0) {
+            continue;
+        }    
              
         cv::Mat frame;
 
