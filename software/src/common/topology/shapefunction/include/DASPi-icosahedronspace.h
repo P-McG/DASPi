@@ -32,6 +32,10 @@ inline constexpr double sin0Pi{0.0};
 inline constexpr double cos1Pi{0.0};
 inline constexpr double sin1Pi{1.0};
 
+inline constexpr double cos2PiOver3{0.5};
+inline constexpr double sin2PiOver3{0.86602540378};
+
+
 /*
  * Based on the facet triangle spanning across the smallest sensor dimension,
  * which is the height in this case.
@@ -111,7 +115,7 @@ struct IcosahedronTables {
     maskOrientations_{{
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face0
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face1
-        MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face2
+        MaskOrientationData{maskRadius, cos0Pi+cos2PiOver3, sin0Pi+sin2PiOver3},//face2
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face3
         MaskOrientationData{maskRadius, cos0Pi, sin0Pi},//face4
 
