@@ -122,7 +122,7 @@ struct IcosahedronTables {
         {4, 9, 5},//facet15
         {2, 4, 11},//facet16
         {6, 2, 10},//facet17
-        {8, 6, 7},//facet18
+        {6, 7, 8},//facet18
         {1, 9, 8},//facet19
     }};
 
@@ -200,7 +200,7 @@ struct IcosahedronTables {
         {10, 5, 6},//facet15
         {11, 6, 7},//facet16
         {12, 7, 8},//facet17
-        {13, 8, 9},//facet18
+        {8, 9, 13},//facet18
         {5, 14, 9},//facet19
     }};
 
