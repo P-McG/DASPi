@@ -301,7 +301,9 @@ inline constexpr double CameraLocalRollDegForModule()
     } else if constexpr (ModuleIndex == 1) {
         return +60.0;
     } else if constexpr (ModuleIndex == 2) {
-        return 0.0;
+        return +60.0;
+    } else if constexpr (ModuleIndex == 3) {
+        return +60.0;
     } else {
         return 0.0;
     }
@@ -313,6 +315,10 @@ inline constexpr double CameraLocalRollCorrectionDegForModule()
     if constexpr (ModuleIndex == 0) {
         return 0.0;      // keep module 0 as the reference
     } else if constexpr (ModuleIndex == 1) {
+        return 0.0/*-12.0*/;      // tune this: try +/- 0.25, +/- 0.5, +/- 1.0
+    } else if constexpr (ModuleIndex == 2) {
+        return 0.0/*-12.0*/;      // tune this: try +/- 0.25, +/- 0.5, +/- 1.0
+    } else if constexpr (ModuleIndex == 3) {
         return 0.0/*-12.0*/;      // tune this: try +/- 0.25, +/- 0.5, +/- 1.0
     } else {
         return 0.0;

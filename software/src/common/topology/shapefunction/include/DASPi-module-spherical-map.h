@@ -397,9 +397,11 @@ private:
         {
             //ray.x() = -ray.x();
             ray.y() = -ray.y();
-        }
-        
-        if constexpr (ModuleIndex == 1 && FacetIndex == 2) 
+        } else if constexpr (ModuleIndex == 1 && FacetIndex == 2) 
+        {
+            //ray.x() = -ray.x();
+            ray.y() = -ray.y();
+        } else if constexpr (ModuleIndex == 3 && FacetIndex == 19) 
         {
             //ray.x() = -ray.x();
             ray.y() = -ray.y();
