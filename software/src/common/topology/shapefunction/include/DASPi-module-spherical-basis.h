@@ -297,9 +297,9 @@ template<std::size_t ModuleIndex>
 inline constexpr double CameraLocalRollDegForModule()
 {
     if constexpr (ModuleIndex == 0) {
-        return -60.0;
+        return +60.0;
     } else if constexpr (ModuleIndex == 1) {
-        return -60.0-90.0;
+        return -60.0;
     } else if constexpr (ModuleIndex == 2) {
         return 0.0;
     } else {
@@ -522,7 +522,7 @@ inline Eigen::Matrix3d MakeModuleCameraRcw()
 	
 	// First vertex of face 9 is our chosen apex.
 	const std::size_t apexVertex =
-	    anchorFace.indices[0];
+	    anchorFace.indices[1];
 	
 	const Eigen::Vector3d apexDirection =
 	    Ranchor * vertices.at(apexVertex);

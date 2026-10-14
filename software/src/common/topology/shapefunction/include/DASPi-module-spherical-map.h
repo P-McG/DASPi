@@ -401,7 +401,7 @@ private:
         
         if constexpr (ModuleIndex == 1 && FacetIndex == 2)) 
         {
-            ray.x() = -ray.x();
+            //ray.x() = -ray.x();
             ray.y() = -ray.y();
         }
         
