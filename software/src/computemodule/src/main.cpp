@@ -2386,7 +2386,7 @@ CameraSetup<N> makeCameraConfigs()
         );
     
     const std::size_t apexVertex =
-        anchorFace.indices[1];
+        anchorFace.indices[0];
     
     const Eigen::Vector3d apexDirection =
         Ranchor * rig.vertices.at(apexVertex);
