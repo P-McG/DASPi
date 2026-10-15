@@ -398,7 +398,6 @@ private:
             || (ModuleIndex == 1 && FacetIndex == 2) 
             || (ModuleIndex == 2 && FacetIndex == 19)
             || (ModuleIndex == 3 && FacetIndex == 18)
-
         ) 
         {
             //ray.x() = -ray.x();
