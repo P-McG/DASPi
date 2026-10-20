@@ -966,6 +966,32 @@ void Aperture<FacetIndex, ModuleIndex>::QueueCameraRequests(bool isRequests){
     if (request->status() == libcamera::Request::RequestCancelled)
         return;
         
+    static int64_t previousTimestamp = 0;
+    static double accumulatedIntervalMs = 0.0;
+    static unsigned int intervalCount = 0;
+    static unsigned int longIntervals = 0;
+    
+    if (auto timestamp =
+            request->metadata().get(libcamera::controls::SensorTimestamp)) {
+    
+        const int64_t currentTimestamp = *timestamp;
+    
+        if (previousTimestamp > 0) {
+            const double intervalMs =
+                (currentTimestamp - previousTimestamp) / 1000000.0;
+    
+            if (intervalMs > 0.0) {
+                accumulatedIntervalMs += intervalMs;
+                ++intervalCount;
+    
+                if (intervalMs > 50.0)
+                    ++longIntervals;
+            }
+        }
+    
+        previousTimestamp = currentTimestamp;
+    }
+        
     static uint64_t completedRequests = 0;
     static auto lastCamPrint = std::chrono::steady_clock::now();
     
@@ -982,6 +1008,19 @@ void Aperture<FacetIndex, ModuleIndex>::QueueCameraRequests(bool isRequests){
     
         completedRequests = 0;
         lastCamPrint = now;
+        
+        if (intervalCount > 0) {
+            std::cout
+                << "[CAM sensor timing]"
+                << " mean_interval_ms="
+                << accumulatedIntervalMs / intervalCount
+                << " intervals_gt50ms=" << longIntervals
+                << '\n';
+        }
+        
+        accumulatedIntervalMs = 0.0;
+        intervalCount = 0;
+        longIntervals = 0;
     }
 
     ProcessRequest(request);;
