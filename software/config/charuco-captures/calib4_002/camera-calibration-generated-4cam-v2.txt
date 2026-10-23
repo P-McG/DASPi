@@ -1,0 +1,10 @@
+# DASPi candidate four-camera mounting corrections
+# CAM0 anchored; nominal relative rotations read from computemodule's current topology
+# module_index yaw_deg pitch_deg roll_deg
+# pose_csv=/home/pmcgrath/DASPi/software/config/charuco-captures/calib4_002/charuco-pose-report.csv
+# nominal_log=/tmp/daspi-nominal-4cam-corrected.log
+# VALIDATE with seam geometry before installing
+0 0.000000000 -0.000000000 0.000000000
+1 -1.197897735 2.374010220 0.376946111
+2 1.634721400 0.225944724 1.017823326
+3 -1.191670885 -1.472201418 0.471274795

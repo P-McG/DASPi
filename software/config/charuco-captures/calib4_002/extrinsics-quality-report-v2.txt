@@ -1,0 +1,22 @@
+DASPi four-camera orientation calibration (CAM0 reference)
+Source PnP: /home/pmcgrath/DASPi/software/config/charuco-captures/calib4_002/charuco-pose-report.csv
+Source nominal: /tmp/daspi-nominal-4cam-corrected.log
+Board placements: 39
+Pairs: total / accepted / median residual (deg) / max accepted (deg)
+CAM0-CAM1: 15 / 14 / 0.687 / 1.883; rejected=1
+CAM0-CAM2: 16 / 16 / 0.906 / 2.084; rejected=0
+CAM0-CAM3: 16 / 16 / 0.423 / 0.750; rejected=0
+CAM1-CAM2:  4 /  4 / 0.638 / 1.058; rejected=0
+CAM1-CAM3:  3 /  3 / 0.457 / 1.182; rejected=0
+CAM2-CAM3:  5 /  5 / 0.452 / 0.861; rejected=0
+
+Loop consistency: direct CAM0 links vs independent CAMi-CAMj estimates
+CAM1-CAM2: difference 1.037 degrees
+CAM1-CAM3: difference 1.112 degrees
+CAM2-CAM3: difference 0.760 degrees
+
+Proposed local yaw pitch roll corrections (degrees):
+CAM0: yaw=+0.000000 pitch=-0.000000 roll=+0.000000 total_angle=0.000
+CAM1: yaw=-1.197898 pitch=+2.374010 roll=+0.376946 total_angle=2.689
+CAM2: yaw=+1.634721 pitch=+0.225945 roll=+1.017823 total_angle=1.937
+CAM3: yaw=-1.191671 pitch=-1.472201 roll=+0.471275 total_angle=1.948
