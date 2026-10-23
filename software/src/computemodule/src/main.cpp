@@ -2106,7 +2106,7 @@ double CameraLocalRollDegForModule(int module)
     case 0: return -60.0;
     case 1: return -60.0;
     case 2: return -60.0;
-    case 3: return +60.0;
+    case 3: return -60.0;
     default: return 0.0;
     }
 }
@@ -4858,59 +4858,40 @@ void PrintNominalModule0ToModule1RvecDeg(
     const CameraConfig* module0 =
         FindMainModuleCameraConfig(configs, 0);
 
-    const CameraConfig* module1 =
-        FindMainModuleCameraConfig(configs, 1);
-
-    if (module0 == nullptr || module1 == nullptr) {
-        std::cerr
-            << "[nominal relative] unable to find module 0/1 main camera configs\n";
+    if (module0 == nullptr) {
+        std::cerr << "[nominal relative] unable to find module 0 main camera config\n";
         return;
     }
 
-    /*
-     * Rcw is camera -> world.
-     *
-     * Camera0 -> camera1:
-     *
-     *   X_world = Rcw0 * X_cam0
-     *   X_cam1  = Rcw1^T * X_world
-     *
-     * Therefore:
-     *
-     *   R10 = Rcw1^T * Rcw0
-     */
-    const Eigen::Matrix3d R10 =
-        module1->Rcw.transpose() * module0->Rcw;
+    // Rcw maps camera rays to world rays. For CAM0 -> CAMi:
+    // R_i0 = Rcw_i^T * Rcw_0.
+    for (int module = 1; module <= 3; ++module) {
+        const CameraConfig* other =
+            FindMainModuleCameraConfig(configs, module);
 
-    Eigen::AngleAxisd aa(R10);
+        if (other == nullptr) {
+            continue;
+        }
 
-    if (aa.angle() < 0.0) {
-        aa.angle() = -aa.angle();
-        aa.axis() = -aa.axis();
+        const Eigen::Matrix3d R_i0 =
+            other->Rcw.transpose() * module0->Rcw;
+
+        const Eigen::AngleAxisd aa(R_i0);
+        const double pi = 3.141592653589793238462643383279502884;
+        const Eigen::Vector3d rvecDeg =
+            aa.axis() * aa.angle() * (180.0 / pi);
+
+        std::cout
+            << std::fixed << std::setprecision(9)
+            << "[nominal relative] module0_to_module"
+            << module << "_rvec_deg="
+            << rvecDeg.x() << ',' << rvecDeg.y() << ',' << rvecDeg.z()
+            << '\n';
+        std::cout
+            << "[nominal relative] module0_config=" << module0->name
+            << " module" << module << "_config=" << other->name
+            << '\n';
     }
-
-    const double pi =
-        3.141592653589793238462643383279502884;
-
-    const Eigen::Vector3d rvecDeg =
-        aa.axis() * aa.angle() * 180.0 / pi;
-
-    std::cout
-        << std::fixed << std::setprecision(9)
-        << "[nominal relative]"
-        << " module0_to_module1_rvec_deg="
-        << rvecDeg.x() << ','
-        << rvecDeg.y() << ','
-        << rvecDeg.z()
-        << '\n';
-
-    std::cout
-        << "[nominal relative]"
-        << " module0_config="
-        << module0->name
-        << " module1_config="
-        << module1->name
-        << '\n';
 }
 
 } // namespace
